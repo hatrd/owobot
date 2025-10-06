@@ -302,6 +302,11 @@ function activate (botInstance, options = {}) {
   // Feature: auto-equip best armor/weapon/shield from inventory
   try { require('./auto-gear').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('gear') }) } catch (e) { coreLog.warn('auto-gear install error:', e?.message || e) }
 
+  // Feature: respond to ".bot here" with "/tpa <username>"
+  try { require('./tpa-here').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('tpa') }) } catch (e) { coreLog.warn('tpa-here install error:', e?.message || e) }
+
+  // (removed) iron-bar tree farm feature
+
   // Feature: AI chat (owk prefix routed to DeepSeek-compatible API)
   try { require('./ai-chat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('ai') }) } catch (e) { coreLog.warn('ai-chat install error:', e?.message || e) }
 
