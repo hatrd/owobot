@@ -301,6 +301,8 @@ function activate (botInstance, options = {}) {
 
   // Feature: auto-equip best armor/weapon/shield from inventory
   try { require('./auto-gear').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('gear') }) } catch (e) { coreLog.warn('auto-gear install error:', e?.message || e) }
+  // Feature: auto-craft iron armor if possible (requires nearby crafting table)
+  try { require('./auto-armor-craft').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('autoarmor') }) } catch (e) { coreLog.warn('auto-armor-craft install error:', e?.message || e) }
 
   // Feature: respond to ".bot here" with "/tpa <username>"
   try { require('./tpa-here').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('tpa') }) } catch (e) { coreLog.warn('tpa-here install error:', e?.message || e) }
