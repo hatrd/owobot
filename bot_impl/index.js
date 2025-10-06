@@ -256,7 +256,14 @@ function activate (botInstance, options = {}) {
     greetedPlayers: new Set(),
     readyForGreeting: false,
     extinguishing: false,
-    hasSpawned: false
+    hasSpawned: false,
+    cleanups: []
+  }
+
+  if (!Array.isArray(state.cleanups)) state.cleanups = []
+
+  function registerCleanup (fn) {
+    try { if (typeof fn === 'function') state.cleanups.push(fn) } catch {}
   }
 
   // Event: display server messages
@@ -264,6 +271,15 @@ function activate (botInstance, options = {}) {
     const rendered = typeof message.toAnsi === 'function' ? message.toAnsi() : message.toString()
     console.log(rendered)
   })
+
+  // Feature: sleep when item dropped onto a bed at night
+  try { require('./bed-sleep').install(bot, { on, dlog, state, registerCleanup }) } catch (e) { dlog('bed-sleep install error:', e?.message || e) }
+
+  // Feature: follow any nearby player holding an Iron Nugget (needs pathfinder)
+  try { require('./follow-iron-nugget').install(bot, { on, dlog, state, registerCleanup }) } catch (e) { dlog('follow-iron-nugget install error:', e?.message || e) }
+
+  // Feature: auto-eat when hungry
+  try { require('./auto-eat').install(bot, { on, dlog, state, registerCleanup }) } catch (e) { dlog('auto-eat install error:', e?.message || e) }
 
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
@@ -343,6 +359,12 @@ function deactivate () {
     offAll()
     if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
     clearAllPendingGreets()
+    // Run module cleanups registered during install
+    if (Array.isArray(state?.cleanups)) {
+      for (const fn of state.cleanups.splice(0)) {
+        try { fn() } catch {}
+      }
+    }
   } catch (e) {
     console.error('Error during deactivate:', e)
   }

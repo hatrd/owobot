@@ -8,7 +8,8 @@
     "dev": "nodemon"
   },
   "dependencies": {
-    "mineflayer": "^4.11.0"
+    "mineflayer": "^4.11.0",
+    "mineflayer-pathfinder": "^2.4.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
