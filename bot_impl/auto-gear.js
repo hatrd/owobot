@@ -76,7 +76,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   async function ensureBestHandsOnce () {
-    try { const pvp = require('./pvp'); await pvp.ensureBestWeapon(bot); await pvp.ensureShieldEquipped(bot) } catch {}
+    try {
+      // Respect temporary hand lock (e.g., fishing rod)
+      if (state && state.holdItemLock) return
+      const pvp = require('./pvp'); await pvp.ensureBestWeapon(bot); await pvp.ensureShieldEquipped(bot)
+    } catch {}
   }
 
   async function tick () {

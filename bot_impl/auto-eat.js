@@ -60,6 +60,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function tryEatOnce () {
     const now = Date.now()
     if (!state.autoEat.enabled) return
+    // Yield to higher priority/locked-hand activities (e.g., fishing)
+    if (state && (state.isFishing || state.holdItemLock)) return
     if (now < pauseUntil) return
     if (state.autoEat.eating) return
     if (!bot.food && bot.food !== 0) return
