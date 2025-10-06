@@ -1,29 +1,47 @@
 # Mineflayer Bot Helper
 
+An opinionated Mineflayer bot with hot‑reloaded behaviors and optional DeepSeek‑powered AI chat. Edit logic live without disconnecting.
+
 ## Setup
-- **Install dependencies**: `npm install`
-- **Configure (optional)**: set `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD` env vars for custom servers. Set `MC_DEBUG=0` to disable debug logs (enabled by default).
+- Install deps: `npm install`
+- Server env (optional): `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD`, `MC_DEBUG` (default 1)
+- AI env (optional): `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_PATH`, `DEEPSEEK_MODEL`
 
 ## Run
-- **Standard**: `npm start`
-- **Hot reload (no reconnect)**: edit any file under `bot_impl/` while running; the bot reloads logic in-process without disconnecting.
-- **Legacy dev (process restart)**: `npm run dev` uses nodemon to restart the process; this causes a reconnect. Prefer the built-in hot reload by editing files in `bot_impl/`.
+- `npm start` — single process with in‑place hot reload
+- `npm run dev` — nodemon restart (reconnects). Prefer editing under `bot_impl/` to hot reload.
 
-## Features
-- Logs every server message to the terminal.
- - Debug logging for greeting and fire logic (toggle with `MC_DEBUG`).
-- Allows interactive chat input (use `/login <password>` after join).
-- Automatically searches for nearby fire and extinguishes it.
-- Sends anime-style time-of-day greetings to players who join after the bot arrives. The bot waits ~2 seconds after the join event and then greets, regardless of entity availability (leaving the server within that time cancels the greeting).
+## Highlights
+- Hot reload without reconnect: change files under `bot_impl/` and the bot reloads logic in‑process; shared state persists when possible.
+- DeepSeek API integration: chat messages starting with `owk` are routed to DeepSeek for concise replies; the AI can call safe tools via a simple TOOL line.
+
+## Built‑in Behaviors
+- Auto‑swim: if feet/head are in water, keep jump pressed; in deep water push a short surface goal to break the waterline.
+- Auto‑eat: replenish hunger with best available food and avoid conflicting with higher‑priority actions.
+- Auto‑gear: equip best armor/weapon/shield; no thrash when already wearing the best.
+- Auto‑armor‑craft: craft and equip iron armor when you have enough ingots and a nearby crafting table.
+- Auto‑plant: plant saplings on valid blocks with spacing.
+- Auto‑fish: approach shoreline, equip rod and fish; coordinates with other modules using locks.
+- Follow (iron nugget): follow nearest holder; explicit door open‑and‑pass; no block breaking.
+- Fire watch: detect/put out nearby fire.
+- World sense: lightweight sensing + simple anti‑trap.
+
+## CLI (terminal) Commands
+- `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
+- `.place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`)
+- `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
+- `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
+- `.autofish on|off|status|interval ms|radius N|now|debug on|off`
+- `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
+- `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
+- `.ai ...` — configure AI key/model/base/path, list tools
 
 ## Hot Reload Details
-- The entry `bot.js` creates one Mineflayer instance and watches the `bot_impl/` directory recursively.
-- On any change inside `bot_impl/`, it purges the module cache for all files under that directory, deactivates the old impl, requires the new code, and reattaches listeners/timers in-process.
-- You can add new modules/files under `bot_impl/` and require them from `bot_impl/index.js`; they will hot reload too.
-- Shared state (e.g., greeted players) persists across reloads when possible.
+- `bot.js` watches `bot_impl/` recursively, unloads old modules, calls `deactivate()`, and loads the new `index.js`.
+- Modules use a reload‑safe start pattern (see AGENTS.md): start timers on `spawn`, when `state.hasSpawned` is true, and immediately on install (guarded) to work under hot reload.
+- Shared state is handed back via `activate()` → `{ sharedState }` and persisted across reloads.
 
-## Ideas To Try Next
-- Pathfinding patrols via `mineflayer-pathfinder`.
-- Resource monitoring: report nearby chests or ores.
-- Combat guard mode for base protection.
-- DeepSeek-powered dialogue mode with richer replies.
+## Development
+- CommonJS, 2‑space indent, no semicolons.
+- Prefer adding features under `bot_impl/` to benefit from hot reload.
+- Save atomically under `bot_impl/` (watcher debounce ~120ms).

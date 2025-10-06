@@ -54,6 +54,18 @@ If you need one‑time “post‑spawn init”, extract a common function (e.g. 
 ## Architecture Notes
 - Single bot process; `bot_impl` can maintain shared state across reloads via `activate()` return value. Clean up timers/listeners in `deactivate()`.
 
+### Priority & Locks (module coordination)
+- `state.externalBusy`: set true while executing player/AI‑triggered tools. Self‑running automations should pause when this is true.
+- `state.holdItemLock`: set to a string (e.g. `'fishing_rod'`) to lock the main hand; modules that equip should skip main‑hand changes but may still equip off‑hand (shield).
+- `state.autoLookSuspended`: suspend auto‑look loops while a module needs precise aim (e.g., fishing).
+
+Recommended usage in modules:
+```
+if (state.externalBusy) return // yield to external actions
+if (state.holdItemLock) { /* avoid main-hand changes */ }
+if (state.autoLookSuspended) { /* skip cosmetic look controls */ }
+```
+
 ## Agent & Skills Policy
 - No placeholders allowed. Do not add, register, or mention any unfinished features or stubbed implementations. If a skill/tool is not production‑ready, keep it out of `bot_impl/` (or behind a disabled flag and not registered) so it never loads during hot reload.
 - Prefer fully automatic skills. Skills must encapsulate perception → planning → action → recovery internally. They should not require the LLM to micro‑decide low‑level steps. If a behavior cannot be made fully automatic yet, do not expose it to AI at all.
