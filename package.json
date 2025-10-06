@@ -5,7 +5,8 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "nodemon"
+    "dev": "nodemon",
+    "test": "node --test"
   },
   "dependencies": {
     "mineflayer": "^4.11.0",

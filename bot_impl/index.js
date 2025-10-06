@@ -289,6 +289,9 @@ function activate (botInstance, options = {}) {
   // Feature: runtime log control via chat
   try { require('./log-control').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('log') }) } catch (e) { coreLog.warn('log-control install error:', e?.message || e) }
 
+  // Feature: AI chat (owk prefix routed to DeepSeek-compatible API)
+  try { require('./ai-chat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('ai') }) } catch (e) { coreLog.warn('ai-chat install error:', e?.message || e) }
+
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')
