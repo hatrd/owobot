@@ -1,186 +1,140 @@
 const mineflayer = require('mineflayer')
 const readline = require('readline')
+const fs = require('fs')
+const path = require('path')
 
+// Config
 const options = {
   host: process.env.MC_HOST,
   port: Number(process.env.MC_PORT),
   username: process.env.MC_USERNAME,
   auth: process.env.MC_AUTH || 'offline'
 }
+if (process.env.MC_PASSWORD) options.password = process.env.MC_PASSWORD
 
-if (process.env.MC_PASSWORD) {
-  options.password = process.env.MC_PASSWORD
-}
+const DEBUG = (() => {
+  const v = String(process.env.MC_DEBUG ?? '1').toLowerCase()
+  return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
+})()
+function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
 
+console.log('Starting bot with config:', {
+  host: options.host,
+  port: options.port,
+  username: options.username,
+  auth: options.auth,
+  hasPassword: Boolean(options.password),
+  debug: DEBUG
+})
+
+// Create a single bot instance that stays connected
 const bot = mineflayer.createBot(options)
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-})
-
-let fireWatcher = null
-let extinguishing = false
-const pendingGreets = new Map()
-const greetedPlayers = new Set()
-let readyForGreeting = false
-
-bot.on('message', (message) => {
-  const rendered = typeof message.toAnsi === 'function' ? message.toAnsi() : message.toString()
-  console.log(rendered)
-})
-
+// Persistent console input
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
 rl.on('line', (line) => {
   const trimmed = line.trim()
   if (!trimmed) return
-  bot.chat(trimmed)
+  try { bot.chat(trimmed) } catch (e) { console.error('Chat error:', e) }
 })
 
-bot.once('spawn', () => {
-  console.log(`Connected to ${bot._client.socketServerHost || options.host}:${options.port} as ${bot.username}`)
-  console.log('Type chat messages or commands here (e.g. /login <password>)')
-  greetedPlayers.clear()
-  for (const timeout of pendingGreets.values()) {
-    clearTimeout(timeout)
-  }
-  pendingGreets.clear()
+// Hot-reloadable implementation loader (directory-based)
+const pluginRoot = path.resolve(__dirname, 'bot_impl')
+let plugin = null
+let sharedState = { pendingGreets: new Map(), greetedPlayers: new Set(), readyForGreeting: false, extinguishing: false }
 
-  for (const username of Object.keys(bot.players)) {
-    if (username && username !== bot.username) {
-      greetedPlayers.add(username)
+function clearPluginCache() {
+  for (const id of Object.keys(require.cache)) {
+    if (id.startsWith(pluginRoot + path.sep)) delete require.cache[id]
+  }
+}
+
+function loadPlugin() {
+  try {
+    if (plugin && typeof plugin.deactivate === 'function') {
+      dlog('Deactivating previous implementation...')
+      plugin.deactivate()
     }
+  } catch (e) {
+    console.error('Error during previous deactivate:', e)
   }
+  try {
+    clearPluginCache()
+  } catch {}
+  try {
+    plugin = require(pluginRoot) // resolves to bot_impl/index.js
+    const res = plugin.activate(bot, { sharedState })
+    if (res && res.sharedState) sharedState = res.sharedState
+    console.log('Loaded bot implementation from', path.basename(pluginRoot))
+  } catch (e) {
+    console.error('Failed to load bot implementation:', e)
+  }
+}
 
-  readyForGreeting = true
+loadPlugin()
 
-  fireWatcher = setInterval(() => {
-    extinguishNearbyFire().catch((err) => {
-      console.log('Fire watcher error:', err.message || err)
+// Watch the entire plugin directory recursively and reload on change
+let reloadTimer = null
+const watchers = new Map()
+let shuttingDown = false
+
+function debounceReload(label) {
+  clearTimeout(reloadTimer)
+  reloadTimer = setTimeout(() => {
+    console.log('Detected change in', label, '- reloading...')
+    loadPlugin()
+  }, 120)
+}
+
+function watchDirRecursive(dir) {
+  if (watchers.has(dir)) return
+  try {
+    const watcher = fs.watch(dir, { persistent: true }, (event, filename) => {
+      if (!filename) { debounceReload(dir); return }
+      const full = path.join(dir, filename.toString())
+      debounceReload(path.relative(pluginRoot, full) || 'plugin')
+      // If a new directory is added, start watching it too
+      fs.promises.stat(full).then(stat => {
+        if (stat.isDirectory()) watchDirRecursive(full)
+      }).catch(() => {})
     })
-  }, 1500)
-})
-
-bot.on('playerJoined', (player) => {
-  const username = resolvePlayerUsername(player)
-  if (!username) return
-  if (username === bot.username) return
-  if (!readyForGreeting) return
-  if (greetedPlayers.has(username)) return
-  if (pendingGreets.has(username)) return
-
-  const timeout = setTimeout(() => {
-    pendingGreets.delete(username)
-    const tracked = bot.players[username]
-    if (!tracked?.entity) return
-
-    const message = buildGreeting(username)
-    bot.chat(message)
-    greetedPlayers.add(username)
-  }, 2000)
-
-  pendingGreets.set(username, timeout)
-})
-
-bot.on('playerLeft', (player) => {
-  const username = resolvePlayerUsername(player)
-  if (!username) return
-  greetedPlayers.delete(username)
-  const timeout = pendingGreets.get(username)
-  if (timeout) {
-    clearTimeout(timeout)
-    pendingGreets.delete(username)
+    watchers.set(dir, watcher)
+    fs.readdirSync(dir, { withFileTypes: true }).forEach((de) => {
+      if (de.name === 'node_modules' || de.name.startsWith('.git')) return
+      if (de.isDirectory()) watchDirRecursive(path.join(dir, de.name))
+    })
+  } catch (e) {
+    console.error('Watcher error on', dir, e)
   }
-})
+}
 
-bot.on('end', () => {
-  console.log('Bot connection closed')
-  if (fireWatcher) clearInterval(fireWatcher)
-  for (const timeout of pendingGreets.values()) {
-    clearTimeout(timeout)
+watchDirRecursive(pluginRoot)
+console.log('Hot reload watching directory', path.basename(pluginRoot))
+
+function closeAllWatchers() {
+  for (const [dir, w] of watchers) {
+    try { w.close() } catch {}
   }
-  pendingGreets.clear()
-  greetedPlayers.clear()
-  readyForGreeting = false
-  rl.close()
-})
-
-bot.on('kicked', (reason) => {
-  console.log('Kicked:', reason)
-})
-
-bot.on('error', (err) => {
-  console.error('Error:', err)
-})
+  watchers.clear()
+}
 
 process.on('SIGINT', () => {
+  if (shuttingDown) return
+  shuttingDown = true
   console.log('Shutting down bot...')
-  for (const timeout of pendingGreets.values()) {
-    clearTimeout(timeout)
-  }
-  pendingGreets.clear()
-  greetedPlayers.clear()
-  readyForGreeting = false
-  rl.close()
-  bot.end('Interrupt received')
+  try { if (plugin && plugin.deactivate) plugin.deactivate() } catch {}
+  try { closeAllWatchers() } catch {}
+  try { rl.close() } catch {}
+  try {
+    bot.once('end', () => {
+      setTimeout(() => process.exit(0), 0)
+    })
+    bot.end('Interrupt received')
+  } catch {}
+  // Safety timeout in case 'end' never fires
+  setTimeout(() => process.exit(0), 2000)
 })
 
-async function extinguishNearbyFire () {
-  if (extinguishing || bot.targetDigBlock) return
-
-  const fireBlock = bot.findBlock({
-    matching: (block) => block && block.name === 'fire',
-    maxDistance: 6
-  })
-
-  if (!fireBlock) return
-
-  extinguishing = true
-
-  try {
-    await bot.lookAt(fireBlock.position.offset(0.5, 0.5, 0.5), true)
-    await bot.dig(fireBlock)
-    console.log(`Extinguished fire at ${fireBlock.position}`)
-  } catch (err) {
-    if (err?.message === 'Block is not currently diggable') return
-    console.log('Failed to extinguish fire:', err.message || err)
-  } finally {
-    extinguishing = false
-  }
-}
-
-function buildGreeting (username) {
-  const now = new Date()
-  const hour = now.getHours()
-
-  let salutation
-  if (hour >= 5 && hour < 11) salutation = '早上好呀'
-  else if (hour >= 11 && hour < 14) salutation = '午安午安~'
-  else if (hour >= 14 && hour < 18) salutation = '下午好喔'
-  else if (hour >= 18 && hour < 23) salutation = '晚上好呀'
-  else salutation = '深夜好喔'
-
-  const suffix = '☆ (≧▽≦)ﾉ'
-
-  return `${salutation} ${username}酱~ 这里是${bot.username}，${suffix}`
-}
-
-function resolvePlayerUsername (player) {
-  if (!player) return null
-  if (typeof player === 'string') return player
-  if (player.username && typeof player.username === 'string') return player.username
-  if (player.name && typeof player.name === 'string') return player.name
-  if (player.profile?.name && typeof player.profile.name === 'string') return player.profile.name
-  if (player.uuid && bot.players) {
-    const match = Object.values(bot.players).find((entry) => entry?.uuid === player.uuid && typeof entry.username === 'string')
-    if (match?.username) return match.username
-  }
-  if (typeof player.displayName?.toString === 'function') {
-    const rendered = player.displayName.toString().trim()
-    if (rendered) {
-      const sanitized = rendered.replace(/\u00a7./g, '').trim()
-      return sanitized || rendered
-    }
-  }
-  if (player.entity?.username && typeof player.entity.username === 'string') return player.entity.username
-  return null
-}
+process.on('unhandledRejection', (reason) => {
+  console.error('UnhandledRejection:', reason)
+})
