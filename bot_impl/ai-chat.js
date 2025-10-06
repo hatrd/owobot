@@ -7,6 +7,7 @@ const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
 const H = require('./ai-chat-helpers')
 const actionsMod = require('./actions')
+const observer = require('./agent/observer')
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
@@ -168,7 +169,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '优先使用“游戏上下文”和“聊天上下文”的信息作答，直接引用其中的数值与列表。',
       '风格：中文、极简、单句；',
       '如果用户请求执行游戏内操作，请只输出一行: TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具示例: attack_player{name}, hunt_player{name,range?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{}, stop_all{}, say{text}, equip{name,dest?}, toss{name,count?}, toss_hand{}, dig_down{maxSteps?}, auto_mine{target?,radius?,maxBlocks?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
+      '可用工具示例: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...]}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,collect?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, observe_detail{what?=entities|players|hostiles|blocks|inventory,radius?,max?}, skill_start{skill,args,expected?}, skill_status{taskId}, skill_cancel{taskId}.',
       '提到：',
       ' - 位置/维度/时间：引用 游戏上下文 的 位置/维度/昼夜。',
       ' - 附近玩家/掉落物：引用相应列表或说“没有”。',
@@ -188,164 +189,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return H.buildContextPrompt(username, state.aiRecent, state.aiOwk, ctx)
   }
 
-  // --- Game context collectors ---
-  function fmtNum (n) { return Number.isFinite(n) ? n.toFixed(1) : String(n) }
-  function ensureMcData () { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} return bot.mcData }
-
-  function dimName () {
-    try { return bot.game?.dimension || 'overworld' } catch { return 'overworld' }
-  }
-
-  function timeBrief () {
-    try {
-      const tod = bot.time?.timeOfDay || 0
-      const night = (tod >= 13000 && tod <= 23000)
-      return night ? '夜间' : '白天'
-    } catch { return '' }
-  }
-
-  function collectNearbyPlayers () {
-    try {
-      const range = Math.max(1, state.ai.context?.game?.nearPlayerRange || 16)
-      const max = Math.max(0, state.ai.context?.game?.nearPlayerMax || 5)
-      const me = bot.entity?.position
-      if (!me) return ''
-      const list = []
-      for (const [name, rec] of Object.entries(bot.players || {})) {
-        const e = rec?.entity
-        if (!e || e === bot.entity) continue
-        const d = e.position.distanceTo(me)
-        if (d <= range) list.push({ name, d })
-      }
-      list.sort((a, b) => a.d - b.d)
-      const kept = list.slice(0, max)
-      if (kept.length === 0) return '附近玩家: 无'
-      return '附近玩家: ' + kept.map(x => `${x.name}@${fmtNum(x.d)}m`).join(', ')
-    } catch { return '' }
-  }
-
-  function collectDrops () {
-    try {
-      const range = Math.max(1, state.ai.context?.game?.dropsRange || 8)
-      const max = Math.max(0, state.ai.context?.game?.dropsMax || 6)
-      const me = bot.entity?.position
-      if (!me) return ''
-      const arr = []
-      for (const e of Object.values(bot.entities || {})) {
-        const isItem = (e?.type === 'object' && e?.name === 'item') || String(e?.kind || '').toLowerCase() === 'drops'
-        if (!isItem || !e.position) continue
-        const d = e.position.distanceTo(me)
-        if (d <= range) arr.push(d)
-      }
-      if (arr.length === 0) return '附近掉落物: 0个'
-      arr.sort((a, b) => a - b)
-      const kept = arr.slice(0, max)
-      return `附近掉落物: ${kept.length}个, 最近=${fmtNum(kept[0])}m`
-    } catch { return '' }
-  }
-
-  function collectInventory () {
-    try {
-      const inv = bot.inventory?.items() || []
-      const held = bot.heldItem ? (bot.heldItem.name || String(bot.heldItem.type)) : null
-      const mcData = ensureMcData()
-      const foodsByName = mcData?.foodsByName || {}
-      let foodCount = 0
-      const byName = new Map()
-      for (const it of inv) {
-        const name = it.name || String(it.type)
-        byName.set(name, (byName.get(name) || 0) + (it.count || 0))
-        if (foodsByName[name]) foodCount += it.count || 0
-      }
-      const torch = byName.get('torch') || 0
-      const water = (byName.get('water_bucket') || 0) > 0
-      const bed = Array.from(byName.keys()).some(n => n.endsWith('_bed'))
-      const pearl = (byName.get('ender_pearl') || 0) > 0
-      // best pickaxe by tier
-      const tiers = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden']
-      let bestPick = null
-      for (const t of tiers) {
-        const key = `${t}_pickaxe`
-        if (byName.get(key)) { bestPick = key; break }
-      }
-      const top = Math.max(1, state.ai.context?.game?.invTop || 6)
-      const rows = Array.from(byName.entries()).sort((a, b) => b[1] - a[1]).slice(0, top)
-      const invLine = rows.length ? ('背包: ' + rows.map(([n, c]) => `${n}x${c}`).join(', ')) : '背包: 无'
-      const heldLine = '手持: ' + (held || '无')
-      const sumLine = `食物:${foodCount} | 火把:${torch}` + (bestPick ? ` | 最优镐:${bestPick}` : '') + ` | 工具:${water?'水桶✓':'水桶×'}/${bed?'床✓':'床×'}/${pearl?'珍珠✓':'珍珠×'}`
-      return `${invLine} | ${heldLine} | ${sumLine}`
-    } catch { return '' }
-  }
-
-  function collectVitals () {
-    try {
-      const hp = bot.health ?? null
-      const food = bot.food ?? null
-      const sat = bot.foodSaturation ?? null
-      const parts = []
-      if (hp != null) parts.push(`生命:${Math.round(hp)}/20`)
-      if (food != null) parts.push(`饥饿:${food}/20`)
-      if (sat != null) parts.push(`饱和:${sat.toFixed ? sat.toFixed(1) : sat}`)
-      return parts.length ? parts.join(' | ') : ''
-    } catch { return '' }
-  }
-
-  function collectBlocks () {
-    try {
-      const pos = bot.entity?.position
-      if (!pos) return ''
-      const under = bot.blockAt(pos.offset(0, -1, 0))
-      let look = null
-      try { const r = bot.blockAtCursor?.(5); look = r?.block || null } catch {}
-      const a = under ? `脚下:${under.name}` : ''
-      const b = look ? `准星:${look.name}` : ''
-      return [a, b].filter(Boolean).join(' | ')
-    } catch { return '' }
-  }
-
-  function collectEnv () {
-    try {
-      const pos = bot.entity?.position
-      if (!pos) return ''
-      const here = bot.blockAt(pos)
-      const biome = here?.biome?.name || here?.biome?.id || '未知'
-      const weather = (bot.isRaining ? '下雨' : '晴')
-      return `群系:${biome} | 天气:${weather}`
-    } catch { return '' }
-  }
-
-  function collectHostiles () {
-    try {
-      const range = 24
-      const hostileSet = new Set(['creeper','zombie','skeleton','spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma_cube','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden'])
-      const me = bot.entity?.position
-      if (!me) return ''
-      const list = []
-      for (const e of Object.values(bot.entities || {})) {
-        if (e?.type !== 'mob' || !e.position) continue
-        const nm = (e.name || e.displayName || '').toLowerCase()
-        if (!hostileSet.has(nm)) continue
-        const d = e.position.distanceTo(me)
-        if (d <= range) list.push({ nm, d })
-      }
-      if (!list.length) return '敌对: 无'
-      list.sort((a, b) => a.d - b.d)
-      const nearest = list[0]
-      return `敌对: ${list.length}个(最近${nearest.nm}@${fmtNum(nearest.d)}m)`
-    } catch { return '' }
-  }
-
+  // --- Game context via observer ---
   function buildGameContext () {
     try {
       const g = state.ai.context?.game
       if (!g || g.include === false) return ''
-      const me = bot.entity?.position?.floored?.() || bot.entity?.position
-      const pos = me ? `位置:${me.x},${me.y},${me.z}` : '位置:未知'
-      const dim = `维度:${dimName()}`
-      const tod = `时间:${timeBrief()}`
-      const parts = [pos, dim, tod, collectEnv(), collectVitals(), collectNearbyPlayers(), collectHostiles(), collectDrops(), collectInventory(), collectBlocks()].filter(Boolean)
-      if (parts.length === 0) return ''
-      return '游戏上下文: ' + parts.join(' | ')
+      const snap = observer.snapshot(bot, {
+        invTop: g.invTop || 6,
+        nearPlayerRange: g.nearPlayerRange || 16,
+        nearPlayerMax: g.nearPlayerMax || 5,
+        dropsRange: g.dropsRange || 8,
+        dropsMax: g.dropsMax || 6,
+        hostileRange: 24
+      })
+      return observer.toPrompt(snap)
     } catch { return '' }
   }
   function selectMemory (username, budgetTok) {

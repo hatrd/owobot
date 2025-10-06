@@ -8,6 +8,8 @@ let miningAbort = false
 
 function install (bot, { log, on, registerCleanup }) {
   const pvp = require('./pvp')
+  const observer = require('./agent/observer')
+  const skillRunnerMod = require('./agent/runner')
   let pathfinderPkg = null
   function ensurePathfinder () {
     try { if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder'); if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder); return true } catch (e) { log && log.warn && log.warn('pathfinder missing'); return false }
@@ -47,35 +49,83 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`跟随 ${name}`)
   }
 
-  async function stop () {
+  async function stop (args = {}) {
+    const mode = String(args.mode || 'soft').toLowerCase()
+    // soft stop: pause ongoing movement/loops
     try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
     try { bot.clearControlStates() } catch {}
     try { pvp.stopMoveOverrides(bot) } catch {}
     miningAbort = true
     if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null; huntTarget = null }
     if (guardInterval) { try { clearInterval(guardInterval) } catch {}; guardInterval = null; guardTarget = null }
-    return ok('已停止')
+    if (mode === 'hard' || mode === 'reset' || mode === 'all') {
+      try { bot.emit('agent:stop_all') } catch {}
+      try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
+      try { if (bot.isSleeping) await bot.wake() } catch {}
+      try { if (bot.vehicle) await bot.dismount() } catch {}
+      try { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } catch {}
+      try { if (bot.entity && bot.entity.position) bot.lookAt(bot.entity.position, true) } catch {}
+      try { if (bot.state) bot.state.autoLookSuspended = false } catch {}
+      return ok('已重置 (hard stop)')
+    }
+    return ok('已暂停 (soft stop)')
   }
 
-  async function stop_all () {
-    await stop()
-    try { bot.emit('agent:stop_all') } catch {}
-    try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
-    try { bot.clearControlStates() } catch {}
-    try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
-    try { if (bot.isSleeping) await bot.wake() } catch {}
-    try { if (bot.vehicle) await bot.dismount() } catch {}
-    try { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } catch {}
-    try { if (bot.entity && bot.entity.position) bot.lookAt(bot.entity.position, true) } catch {}
-    try { if (bot.state) bot.state.autoLookSuspended = false } catch {}
-    return ok('已停止所有任务')
-  }
+  // Back-compat alias; not advertised to AI
+  async function stop_all () { return stop({ mode: 'hard' }) }
 
   async function say (args = {}) {
     const { text } = args
     if (!text) return fail('缺少内容')
     try { bot.chat(String(text).slice(0, 120)) } catch {}
     return ok('已发送')
+  }
+
+  async function observe_detail (args = {}) {
+    try {
+      const r = observer.detail(bot, args || {})
+      return { ok: Boolean(r && r.ok), msg: (r && r.msg) || '无', data: r && r.data }
+    } catch (e) { return fail(String(e?.message || e)) }
+  }
+
+  // --- High-level skills bridge ---
+  function ensureRunner () {
+    try { return skillRunnerMod.ensure(bot, { on, registerCleanup, log }) } catch { return null }
+  }
+
+  async function skill_start (args = {}) {
+    const { skill, expected = null } = args
+    if (!skill) return fail('缺少技能名')
+    const runner = ensureRunner()
+    if (!runner) return fail('技能运行器不可用')
+    try {
+      // lazy register default skills once (no placeholders)
+      if (runner.listSkills().length === 0) {
+        runner.registerSkill('go', require('./skills/go'))
+        runner.registerSkill('gather', require('./skills/gather'))
+        runner.registerSkill('craft', require('./skills/craft'))
+      }
+    } catch {}
+    const res = runner.startSkill(String(skill), args.args || {}, expected || null)
+    return res.ok ? ok(`任务已启动 ${res.taskId}`, { taskId: res.taskId }) : fail(res.msg || '启动失败')
+  }
+
+  async function skill_status (args = {}) {
+    const { taskId } = args
+    if (!taskId) return fail('缺少taskId')
+    const runner = ensureRunner()
+    if (!runner) return fail('技能运行器不可用')
+    const r = runner.status(String(taskId))
+    return r.ok ? ok('状态', r) : fail(r.msg || '查询失败')
+  }
+
+  async function skill_cancel (args = {}) {
+    const { taskId } = args
+    if (!taskId) return fail('缺少taskId')
+    const runner = ensureRunner()
+    if (!runner) return fail('技能运行器不可用')
+    const r = runner.cancel(String(taskId))
+    return r.ok ? ok('已取消', r) : fail(r.msg || '取消失败')
   }
 
   function normalizeName (name) {
@@ -173,62 +223,60 @@ function install (bot, { log, on, registerCleanup }) {
   }
 
   async function toss (args = {}) {
-    const { name, count = null } = args
-    if (!name) return fail('缺少物品名')
-    const items = findAllByName(name)
-    if (!items || items.length === 0) return fail('背包没有该物品')
-    if (count != null) {
-      // Toss exactly count from the first matching stack
-      const it = items[0]
-      await bot.toss(it.type, null, Number(count))
-      return ok(`已丢出 ${it.name} x${count}`)
+    // Unified interface: support single or multiple via items[]; each item spec may be by name or slot, with optional count
+    // Accepted forms:
+    //  - { name, count? }
+    //  - { items: [{ name|slot, count? }, ...] }
+    //  - { names: [string,...] }
+    const arr = (() => {
+      if (Array.isArray(args.items) && args.items.length) return args.items
+      if (Array.isArray(args.names) && args.names.length) return args.names.map(n => ({ name: n }))
+      if (args.name) return [{ name: args.name, count: args.count }]
+      if (args.slot) return [{ slot: args.slot, count: args.count }]
+      return null
+    })()
+    if (!arr || !arr.length) return fail('缺少物品参数')
+
+    function itemFromSlot (slot) {
+      const key = String(slot).toLowerCase()
+      if (key === 'hand' || key === 'main' || key === 'mainhand') return bot.heldItem || null
+      if (key === 'offhand' || key === 'off-hand' || key === 'off_hand') return bot.inventory?.slots?.[45] || null
+      const idx = parseInt(String(slot), 10)
+      if (Number.isFinite(idx) && bot.inventory?.slots) return bot.inventory.slots[idx] || null
+      return null
     }
-    // Toss all stacks of that item
-    let total = 0
-    for (const it of items) {
-      const c = it.count || 0
-      if (c > 0) {
-        await bot.toss(it.type, null, c)
-        total += c
+
+    const summary = []
+    for (const spec of arr) {
+      const cnt = (spec && spec.count != null) ? Math.max(0, Number(spec.count)) : null
+      if (spec.slot) {
+        const it = itemFromSlot(spec.slot)
+        if (!it) { summary.push(`${spec.slot}:x0`); continue }
+        const n = cnt != null ? Math.min(cnt, it.count || 0) : (it.count || 0)
+        if (n > 0) await bot.toss(it.type, null, n)
+        summary.push(`${it.name}x${n}`)
+        continue
+      }
+      const nm = spec?.name
+      if (!nm) { summary.push('unknown:x0'); continue }
+      const items = findAllByName(nm)
+      if (!items || items.length === 0) { summary.push(`${normalizeName(nm)}x0`); continue }
+      if (cnt != null) {
+        const it = items[0]
+        const n = Math.min(cnt, it.count || 0)
+        if (n > 0) await bot.toss(it.type, null, n)
+        summary.push(`${it.name}x${n}`)
+      } else {
+        let total = 0
+        for (const it of items) { const c = it.count || 0; if (c > 0) { await bot.toss(it.type, null, c); total += c } }
+        summary.push(`${normalizeName(nm)}x${total}`)
       }
     }
-    return ok(`已丢出 ${normalizeName(name)} x${total}`)
-  }
-
-  async function toss_hand () {
-    const it = bot.heldItem
-    if (!it) return fail('当前未手持物品')
-    await bot.toss(it.type, null, it.count)
-    return ok(`已丢出手持 ${it.name} x${it.count}`)
-  }
-
-  async function attack_player (args = {}) {
-    const { name, timeoutMs = 6000 } = args
-    if (!name) return fail('缺少玩家名')
-    const rec = bot.players[name]
-    const ent = rec?.entity
-    if (!ent) return fail('未找到玩家')
-    if (!ensurePathfinder()) return fail('无寻路')
-    const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
-    const m = new Movements(bot, mcData)
-    m.allowSprinting = true; m.canDig = true
-    bot.pathfinder.setMovements(m)
-    bot.pathfinder.setGoal(new goals.GoalFollow(ent, 1.8), true)
-    const ctx = {}
-    const start = Date.now()
-    return await new Promise((resolve) => {
-      const iv = setInterval(() => {
-        const e = bot.players[name]?.entity
-        if (!e) { clearInterval(iv); try { pvp.stopMoveOverrides(bot) } catch {}; resolve(fail('目标消失')) ; return }
-        try { pvp.pvpTick(bot, e, ctx) } catch {}
-        if (Date.now() - start > timeoutMs) { clearInterval(iv); try { pvp.stopMoveOverrides(bot) } catch {}; resolve(ok('攻击已尝试')) }
-      }, 150)
-    })
+    return ok(`已丢出: ${summary.join(', ')}`)
   }
 
   async function hunt_player (args = {}) {
-    const { name, range = 1.8, tickMs = 250 } = args
+    const { name, range = 1.8, tickMs = 250, durationMs = null } = args
     if (!name) return fail('缺少玩家名')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
@@ -239,15 +287,17 @@ function install (bot, { log, on, registerCleanup }) {
     huntTarget = String(name)
     if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null }
     const ctx = {}
+    const startedAt = Date.now()
     huntInterval = setInterval(() => {
       try {
+        if (durationMs != null && (Date.now() - startedAt) > Number(durationMs)) { try { clearInterval(huntInterval) } catch {}; huntInterval = null; return }
         const ent = bot.players[huntTarget]?.entity
         if (!ent) return
         bot.pathfinder.setGoal(new goals.GoalFollow(ent, range), true)
         try { pvp.pvpTick(bot, ent, ctx) } catch {}
       } catch {}
     }, Math.max(150, tickMs))
-    return ok(`开始追击 ${huntTarget}`)
+    return ok(`开始追击 ${huntTarget}` + (durationMs != null ? ` (持续${Math.round(Number(durationMs)/1000)}s)` : ''))
   }
 
   // --- Mining ---
@@ -263,34 +313,9 @@ function install (bot, { log, on, registerCleanup }) {
   }
 
   async function dig_down (args = {}) {
-    const { maxSteps = 16 } = args
-    miningAbort = false
-    const toolSel = require('./tool-select')
-    let done = 0
-    while (!miningAbort && done < maxSteps) {
-      try {
-        if (!bot.entity || !bot.entity.position) break
-        if (isDangerBelow()) return ok(`停止: 下方疑似岩浆, 已下挖 ${done} 格`)
-        const feet = bot.entity.position.offset(0, -1, 0)
-        const target = bot.blockAt(feet)
-        if (!target) break
-        try { await toolSel.ensureBestToolForBlock(bot, target) } catch {}
-        await bot.lookAt(feet.offset(0.5, 0.5, 0.5), true)
-        await bot.dig(target)
-        const startY = Math.floor(bot.entity.position.y)
-        const until = Date.now() + 1500
-        while (Date.now() < until) {
-          await wait(50)
-          const y = Math.floor(bot.entity.position.y)
-          if (y < startY) break
-        }
-        done++
-      } catch (e) {
-        if (String(e?.message || e).includes('not currently diggable')) { await wait(150); continue }
-        break
-      }
-    }
-    return ok(`向下挖掘完成，共 ${done} 格`)
+    // wrapper to unified break_blocks
+    const maxSteps = Math.max(1, parseInt(args.maxSteps || '16', 10))
+    return break_blocks({ area: { shape: 'down', steps: maxSteps }, max: maxSteps, collect: true })
   }
 
   function oreNamesSet () {
@@ -306,7 +331,19 @@ function install (bot, { log, on, registerCleanup }) {
   }
 
   async function auto_mine (args = {}) {
+    // wrapper to unified break_blocks (user may pass target substring)
     const { target = 'any', radius = 12, maxBlocks = 12 } = args
+    const match = target && target !== 'any' ? String(target) : null
+    return break_blocks({ match, area: { shape: 'sphere', radius }, max: maxBlocks, collect: true })
+  }
+
+  async function break_blocks (args = {}) {
+    const toolSel = require('./tool-select')
+    const match = Array.isArray(args.names) && args.names.length ? null : (args.match ? String(args.match).toLowerCase() : null)
+    const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
+    const area = args.area || { shape: 'sphere', radius: 8 }
+    const max = Math.max(1, parseInt(args.max || '12', 10))
+    const collect = (String(args.collect ?? 'true').toLowerCase() !== 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -314,55 +351,110 @@ function install (bot, { log, on, registerCleanup }) {
     m.canDig = true; m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     miningAbort = false
-    const toolSel = require('./tool-select')
-    const wanted = String(target || 'any').toLowerCase().trim()
-    const ores = oreNamesSet()
 
-    let mined = 0
-    while (!miningAbort && mined < maxBlocks) {
-      try {
-        const me = bot.entity?.position
-        if (!me) break
-        const posList = bot.findBlocks({
-          maxDistance: Math.max(4, radius),
-          count: 64,
-          matching: (b) => {
-            if (!b) return false
-            const n = String(b.name || '').toLowerCase()
-            if (!ores.has(n)) return false
-            if (wanted !== 'any' && !n.includes(wanted)) return false
-            return true
-          }
-        }) || []
-        if (!posList || posList.length === 0) return ok(`附近 ${radius} 格没有目标矿物`)
-        // pick nearest
-        posList.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
-        let dugOne = false
-        for (const p of posList) {
-          if (miningAbort) break
-          try {
-            bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
-            // wait until close or timeout
-            const until = Date.now() + 6000
-            while (Date.now() < until) {
-              await wait(120)
-              const d = bot.entity.position.distanceTo(p)
-              if (d <= 2.2) break
-            }
-            const block = bot.blockAt(p)
-            if (!block) continue
-            try { await toolSel.ensureBestToolForBlock(bot, block) } catch {}
-            await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
-            await bot.dig(block)
-            mined++
-            dugOne = true
-            break
-          } catch {}
-        }
-        if (!dugOne) return ok(`未能到达矿物，已挖 ${mined}`)
-      } catch { break }
+    // helpers
+    function matches (b) {
+      const n = String(b?.name || '').toLowerCase()
+      if (!n || n === 'air') return false
+      if (names) return names.includes(n)
+      if (match) return n.includes(match)
+      return true
     }
-    return ok(`自动挖矿完成，挖到 ${mined} 块矿物`)
+
+    async function approachAndDig (p) {
+      // approach
+      bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
+      const until = Date.now() + 8000
+      while (Date.now() < until) {
+        await wait(100)
+        const d = bot.entity.position.distanceTo(p)
+        if (d <= 2.3) break
+      }
+      // stop pathfinder before digging to avoid movement-caused aborts
+      try { bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      await wait(60)
+      let block = bot.blockAt(p)
+      if (!block || !matches(block)) return false
+      // safety: avoid lava neighbor on/below
+      const below = bot.blockAt(p.offset(0, -1, 0))
+      if (isLavaLike(block) || isLavaLike(below)) return false
+      try { await toolSel.ensureBestToolForBlock(bot, block) } catch {}
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
+          await bot.dig(block)
+          break
+        } catch (e) {
+          const msg = String(e?.message || e)
+          if (/aborted/i.test(msg) || /not currently diggable/i.test(msg)) {
+            await wait(150)
+            block = bot.blockAt(p)
+            if (!block || !matches(block)) return false
+            continue
+          }
+          return false
+        }
+      }
+      if (collect) {
+        // move into spot briefly to pick drops
+        try { bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 0), true) } catch {}
+        await wait(300)
+      }
+      return true
+    }
+
+    let broken = 0
+    const me = bot.entity?.position
+    if (!me) return fail('未就绪')
+
+    if ((area.shape || 'sphere') === 'down') {
+      const steps = Math.max(1, parseInt(area.steps || '8', 10))
+      while (!miningAbort && broken < Math.min(max, steps)) {
+        if (!bot.entity || !bot.entity.position) break
+        if (isDangerBelow()) return ok(`停止: 下方疑似岩浆, 已挖 ${broken}`)
+        const feet = bot.entity.position.offset(0, -1, 0)
+        const target = bot.blockAt(feet)
+        if (!target || !matches(target)) break
+        try { await toolSel.ensureBestToolForBlock(bot, target) } catch {}
+        await bot.lookAt(feet.offset(0.5, 0.5, 0.5), true)
+        await bot.dig(target)
+        // wait to fall
+        const startY = Math.floor(bot.entity.position.y)
+        const untilFall = Date.now() + 1500
+        while (Date.now() < untilFall) { await wait(50); const y = Math.floor(bot.entity.position.y); if (y < startY) break }
+        broken++
+      }
+      return ok(`挖掘完成 ${broken}`)
+    }
+
+    // sphere with optional vertical limit (height -> cylinder)
+    const origin = area.origin ? new (require('vec3').Vec3)(area.origin.x, area.origin.y, area.origin.z) : me
+    const radius = Math.max(1, parseInt(area.radius || '8', 10))
+    const height = area.height != null ? Math.max(0, parseInt(area.height, 10)) : null
+
+    while (!miningAbort && broken < max) {
+      const posList = bot.findBlocks({
+        maxDistance: Math.max(2, radius),
+        count: 64,
+        matching: (b) => {
+          if (!matches(b)) return false
+          if (height != null) {
+            const dy = Math.abs(b.position.y - origin.y)
+            if (dy > (height / 2)) return false
+          }
+          return true
+        }
+      }) || []
+      if (!posList.length) break
+      posList.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+      let did = false
+      for (const p of posList) {
+        if (await approachAndDig(p)) { broken++; did = true; break }
+      }
+      if (!did) break
+    }
+    return ok(`挖掘完成 ${broken}`)
   }
 
   // --- Riding ---
@@ -625,7 +717,7 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`开始护卫 ${guardTarget} (半径${radius}格)`)
   }
 
-  const registry = { goto, follow_player, stop, stop_all, say, attack_player, hunt_player, guard, equip, toss, toss_hand, dig_down, auto_mine, mount_near, dismount, flee_trap }
+  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, equip, toss, break_blocks, mount_near, dismount, flee_trap, observe_detail, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

@@ -108,7 +108,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const sys = [
       '你是Minecraft的隐形副手, 接收“环境感知报告”, 用中文简短决定应对。',
       '如果需要执行操作, 只输出一行: TOOL {"tool":"<名字>","args":{...}}。否则输出简短建议。',
-      '工具: stop_all{}, goto{x,y,z,range?}, follow_player{name,range?}, guard{name,radius?}, attack_player{name}, hunt_player{name}, auto_mine{target?,radius?,maxBlocks?}, dig_down{maxSteps?}, mount_near{radius?,prefer?}, dismount{}, say{text}',
+      '工具: stop{mode?="soft"|"hard"}, goto{x,y,z,range?}, follow_player{name,range?}, guard{name,radius?}, hunt_player{name,range?,durationMs?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,collect?}, mount_near{radius?,prefer?}, dismount{}, say{text}',
       '若判断玩家在围堵/困住我, 优先选择悄悄离开: 朝远离人群的方向移动 6~10 格。'
     ].join('\n')
     const msg = [{ role: 'system', content: sys }, { role: 'user', content: `环境感知报告: ${report}` }]
@@ -192,4 +192,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-

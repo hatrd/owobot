@@ -313,8 +313,14 @@ function activate (botInstance, options = {}) {
   // Feature: world sensing -> local heuristics (no AI)
   try { require('./world-sense').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('sense') }) } catch (e) { coreLog.warn('world-sense install error:', e?.message || e) }
 
-  // Feature: random walk when idle (non-AI)
-  try { require('./random-walk').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('walk') }) } catch (e) { coreLog.warn('random-walk install error:', e?.message || e) }
+  // Feature removed: random walk (was unstable)
+
+  // Agent: skill runner (high-level intent executor)
+  try {
+    const runner = require('./agent/runner').install(bot, { on, registerCleanup, log: logging.getLogger('skill') })
+    // lazy register core skills (no placeholders)
+    try { runner.registerSkill('go', require('./skills/go')); runner.registerSkill('gather', require('./skills/gather')); runner.registerSkill('craft', require('./skills/craft')) } catch {}
+  } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
