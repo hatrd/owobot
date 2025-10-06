@@ -313,6 +313,9 @@ function activate (botInstance, options = {}) {
   // Feature: world sensing -> local heuristics (no AI)
   try { require('./world-sense').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('sense') }) } catch (e) { coreLog.warn('world-sense install error:', e?.message || e) }
 
+  // Feature: auto-plant saplings when available in inventory
+  try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
+
   // Feature removed: random walk (was unstable)
 
   // Agent: skill runner (high-level intent executor)
@@ -326,6 +329,8 @@ function activate (botInstance, options = {}) {
   try { require('./drops-debug').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('drops') }) } catch (e) { coreLog.warn('drops-debug install error:', e?.message || e) }
   // CLI: collect dropped items
   try { require('./collect-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('collect') }) } catch (e) { coreLog.warn('collect-cli install error:', e?.message || e) }
+  // CLI: place blocks/saplings
+  try { require('./place-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('place') }) } catch (e) { coreLog.warn('place-cli install error:', e?.message || e) }
 
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)

@@ -276,8 +276,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         try { payload = JSON.parse(toolMatch[1]) } catch {}
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
+          // Mark external-busy for priority: chat-triggered actions > background
+          try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
           const res = await tools.run(payload.tool, payload.args || {})
           if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
+          try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
           // Acknowledge in chat succinctly
           return H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), maxReplyLen || 120)
         }

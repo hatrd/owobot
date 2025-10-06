@@ -885,6 +885,7 @@ function install (bot, { log, on, registerCleanup }) {
   async function place_blocks (args = {}) {
     const item = String(args.item || '').toLowerCase()
     if (!item) return fail('缺少item')
+    const debug = String(args.debug || 'false').toLowerCase() === 'true'
     const on = args.on || { top_of: [] }
     const tops = Array.isArray(on.top_of) ? on.top_of.map(n => String(n).toLowerCase()) : []
     const max = Math.max(1, parseInt(args.max || '8', 10))
@@ -908,8 +909,9 @@ function install (bot, { log, on, registerCleanup }) {
     if (baseNames.length === 0) return fail('缺少on.top_of')
 
     const me = bot.entity.position
+    if (debug) try { console.log('[PLACE] item=', item, 'tops=', baseNames, 'radius=', radius, 'me=', `${me.x},${me.y},${me.z}`) } catch {}
     const radius = Math.max(1, parseInt(area.radius || '8', 10))
-    const candidates = bot.findBlocks({
+    let candidates = bot.findBlocks({
       maxDistance: Math.max(2, radius),
       count: 128,
       matching: (b) => {
@@ -917,13 +919,43 @@ function install (bot, { log, on, registerCleanup }) {
         const n = String(b.name || '').toLowerCase()
         if (!baseNames.includes(n)) return false
         // top must be air/replaceable
-        const top = bot.blockAt(b.position.offset(0, 1, 0))
+        const pos = b && b.position ? b.position : null
+        if (!pos || typeof pos.offset !== 'function') return false
+        const top = bot.blockAt(pos.offset(0, 1, 0))
         const tn = String(top?.name || 'air').toLowerCase()
         if (tn === 'air') return true
-        if (['tall_grass','fern','large_fern','snow','seagrass'].includes(tn)) return true
+        if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) return true
         return false
       }
     }) || []
+    if (debug) try { const c0 = candidates[0]; console.log('[PLACE] candidates=', candidates.length, 'first=', c0 ? `${c0.x},${c0.y},${c0.z}` : 'none') } catch {}
+    // Fallback scan if mineflayer findBlocks didn't return candidates
+    if (!candidates.length) {
+      try {
+        const V = require('vec3').Vec3
+        const center = me.floored ? me.floored() : new V(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z))
+        const r = Math.max(1, radius)
+        const extra = []
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dz = -r; dz <= r; dz++) {
+            const p = new V(center.x + dx, center.y - 1, center.z + dz)
+            const b = bot.blockAt(p)
+            if (!b) continue
+            const n = String(b.name || '').toLowerCase()
+            if (!baseNames.includes(n)) continue
+            const top = bot.blockAt(p.offset(0, 1, 0))
+            const tn = String(top?.name || 'air').toLowerCase()
+            const replaceable = (tn === 'air') || ['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)
+            if (!replaceable) continue
+            extra.push(p)
+          }
+        }
+        if (extra.length) {
+          candidates = extra
+          if (debug) try { console.log('[PLACE] fallback candidates=', candidates.length) } catch {}
+        }
+      } catch (e) { if (debug) try { console.log('[PLACE] fallback scan error:', e?.message || e) } catch {} }
+    }
     if (!candidates.length) return fail('附近没有可放置位置')
     // sort by distance
     candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
@@ -937,11 +969,19 @@ function install (bot, { log, on, registerCleanup }) {
       const V = require('vec3').Vec3
       const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
       bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 1), true)
-      const until = Date.now() + 8000
+      const until = Date.now() + 5000
+      let lastD = Infinity
+      let stall = 0
       while (Date.now() < until) {
         await wait(100)
-        const d = bot.entity.position.distanceTo(pv.offset(0,1,0))
-        if (d <= 2.3) break
+        const me = bot.entity?.position
+        if (!me) break
+        const d = me.distanceTo(pv.offset(0,1,0))
+        if (d <= 1.6) break
+        // detect stall
+        if (Math.abs(lastD - d) < 0.01) { stall++ } else { stall = 0 }
+        lastD = d
+        if (stall >= 10) break
       }
       try { bot.pathfinder.setGoal(null) } catch {}
       try { bot.clearControlStates() } catch {}
@@ -950,32 +990,54 @@ function install (bot, { log, on, registerCleanup }) {
 
     function farEnough (p) { return placed.every(pp => p.distanceTo(pp) >= spacing) }
 
+    function isReplaceable (top) {
+      try {
+        const tn = String(top?.name || 'air').toLowerCase()
+        if (tn === 'air') return true
+        if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) return true
+        return false
+      } catch { return false }
+    }
+
     for (const p of candidates) {
       if (remaining <= 0) break
       if (!farEnough(p)) continue
-      if (!p) continue
-      const V = require('vec3').Vec3
-      const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
-      const base = bot.blockAt(pv)
-      if (!base) continue
-      const top = bot.blockAt(pv.offset(0,1,0))
-      // clear small plants if any
-      const tn = String(top?.name || 'air').toLowerCase()
-      if (['tall_grass','fern','large_fern','snow','seagrass'].includes(tn)) {
-        try { await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
-      }
-      await approach(pv)
-      try { await ensureItemEquipped(item) } catch (e) { return fail(String(e?.message || e)) }
       try {
-        await bot.lookAt(pv.offset(0.5, 1.2, 0.5), true)
-        await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0))
-        placed.push(pv)
-        remaining--
-        if (collect) { try { bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y + 1, p.z, 0), true) } catch {}; await wait(200) }
+        if (!p) continue
+        const V = require('vec3').Vec3
+        const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
+        const base = bot.blockAt(pv)
+        if (!base) continue
+        const above = pv.offset(0,1,0)
+        const top = bot.blockAt(above)
+        if (debug) try { console.log('[PLACE] try at', `${pv.x},${pv.y},${pv.z}`, 'base=', base?.name, 'top=', top?.name) } catch {}
+        // Skip if already occupied (sapling/leaf/etc.)
+        if (!isReplaceable(top)) continue
+        // clear small plants if any
+        const tn = String(top?.name || 'air').toLowerCase()
+        if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) {
+          try { if (top?.position) await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
+        }
+        await approach(pv)
+        try { await ensureItemEquipped(item) } catch (e) { return fail(String(e?.message || e)) }
+        try {
+          // re-check top right before placing (might have changed)
+          const top2 = bot.blockAt(pv.offset(0,1,0))
+          if (!isReplaceable(top2)) continue
+          await bot.lookAt(pv.offset(0.5, 1.2, 0.5), true)
+          await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0))
+          placed.push(pv)
+          remaining--
+          if (debug) try { console.log('[PLACE] placed at', `${pv.x},${pv.y+1},${pv.z}`) } catch {}
+          if (collect) { try { bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 0), true) } catch {}; await wait(200) }
+        } catch (e) {
+          // try once more after a tiny nudge
+          try { await bot.lookAt(pv.offset(0.5, 1.0, 0.5), true) } catch {}
+          try { await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0)); placed.push(pv); remaining--; if (debug) try { console.log('[PLACE] placed (retry) at', `${pv.x},${pv.y+1},${pv.z}`) } catch {} } catch (e2) { if (debug) try { console.log('[PLACE] place failed:', e2?.message || e2) } catch {} }
+        }
       } catch (e) {
-        // try once more after a tiny nudge
-        try { await bot.lookAt(pv.offset(0.5, 1.0, 0.5), true) } catch {}
-        try { await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0)); placed.push(pv); remaining-- } catch {}
+        if (debug) try { console.log('[PLACE] attempt error:', e?.message || e) } catch {}
+        // swallow and continue to next candidate
       }
     }
     if (placed.length === 0) return fail('未能放置任何方块')

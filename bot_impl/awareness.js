@@ -48,6 +48,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch {}
   }
 
+  function hasRecentPlayerNear (pos, t, range = 4, winMs = 1500) {
+    try {
+      const from = t - Math.max(200, winMs)
+      for (const a of recentActs) {
+        if ((a.t || 0) < from) continue
+        if (!a.pos) continue
+        const d = a.pos.distanceTo(pos)
+        if (Number.isFinite(d) && d <= range) return true
+      }
+      return false
+    } catch { return false }
+  }
+
   function trapSuspicionScore () {
     try {
       if (!bot.entity || !bot.entity.position) return 0
@@ -60,7 +73,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       for (const cp of checks) { const b = bot.blockAt(cp); if (isSolid(b)) solidNear++ }
       // Recent placements around us also increase suspicion
       const cutoff = now() - 3000
-      const recentNear = recentBlocks.filter(r => r.t >= cutoff && r.kind === 'placed' && within(r.pos, 3)).length
+      const recentNear = recentBlocks.filter(r => r.t >= cutoff && r.kind === 'placed' && within(r.pos, 3) && hasRecentPlayerNear(r.pos, r.t, 4, 1500)).length
       return solidNear + recentNear
     } catch { return 0 }
   }
@@ -124,10 +137,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const tool = toolLineFrom(out)
     if (!tool) return
     try {
+      try { (state || (state = {})).externalBusy = true; bot.emit('external:begin', { source: 'sense', tool: tool.tool }) } catch {}
       const actions = require('./actions').install(bot, { log })
       const r = await actions.run(tool.tool, tool.args || {})
       L.info('AI tool ->', tool.tool, tool.args, 'result=', r && (r.ok ? 'ok' : 'fail'))
     } catch (e) { L.warn('tool exec failed:', e?.message || e) }
+    finally { try { (state || (state = {})).externalBusy = false; bot.emit('external:end', { source: 'sense', tool: tool.tool }) } catch {} }
   }
 
   function maybeAutoEscape () {
