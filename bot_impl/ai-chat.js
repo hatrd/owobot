@@ -6,6 +6,7 @@ const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
 const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
 const H = require('./ai-chat-helpers')
+const actionsMod = require('./actions')
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
@@ -165,7 +166,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return [
       '你是Minecraft服务器中的简洁助手。',
       '优先使用“游戏上下文”和“聊天上下文”的信息作答，直接引用其中的数值与列表。',
-      '风格：中文、极简、单句；若上下文缺失就答“不清楚”。',
+      '风格：中文、极简、单句；',
+      '如果用户请求执行游戏内操作，请只输出一行: TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
+      '可用工具示例: attack_player{name}, hunt_player{name,range?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{}, say{text}, equip{name,dest?}, toss{name,count?}, toss_hand{}.',
       '提到：',
       ' - 位置/维度/时间：引用 游戏上下文 的 位置/维度/昼夜。',
       ' - 附近玩家/掉落物：引用相应列表或说“没有”。',
@@ -409,6 +412,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       const data = await res.json()
       const reply = data?.choices?.[0]?.message?.content || ''
+      // Tool-call protocol: reply can be like \nTOOL {"tool":"attack_player","args":{"name":"Ameyaku"}}\n
+      const toolMatch = reply.match(/^[^\S\n]*TOOL\s*(\{[\s\S]*\})/)
+      if (toolMatch) {
+        let payload = null
+        try { payload = JSON.parse(toolMatch[1]) } catch {}
+        if (payload && payload.tool) {
+          const tools = actionsMod.install(bot, { log })
+          const res = await tools.run(payload.tool, payload.args || {})
+          if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
+          // Acknowledge in chat succinctly
+          return H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), maxReplyLen || 120)
+        }
+      }
       // Usage accounting (if provided), otherwise rough estimate
       const u = data?.usage || {}
       const inTok = Number.isFinite(u.prompt_tokens) ? u.prompt_tokens : estIn
@@ -537,6 +553,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         case 'clear': { state.aiRecent = []; print('recent chat cleared'); break }
         case 'ctx': {
           try { print('gameCtx ->', buildGameContext()); print('chatCtx ->', buildContextPrompt('')) } catch {}
+          break
+        }
+        case 'tools': {
+          const tools = require('./actions').install(bot, { log })
+          print('tools =', tools.list())
           break
         }
         case 'limit': {
