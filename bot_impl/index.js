@@ -305,6 +305,12 @@ function activate (botInstance, options = {}) {
   // Feature: AI chat (owk prefix routed to DeepSeek-compatible API)
   try { require('./ai-chat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('ai') }) } catch (e) { coreLog.warn('ai-chat install error:', e?.message || e) }
 
+  // Feature: world sensing -> local heuristics (no AI)
+  try { require('./world-sense').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('sense') }) } catch (e) { coreLog.warn('world-sense install error:', e?.message || e) }
+
+  // Feature: random walk when idle (non-AI)
+  try { require('./random-walk').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('walk') }) } catch (e) { coreLog.warn('random-walk install error:', e?.message || e) }
+
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')

@@ -62,6 +62,12 @@ function install (bot, { log, on, registerCleanup }) {
     try { bot.emit('agent:stop_all') } catch {}
     try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
     try { bot.clearControlStates() } catch {}
+    try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
+    try { if (bot.isSleeping) await bot.wake() } catch {}
+    try { if (bot.vehicle) await bot.dismount() } catch {}
+    try { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } catch {}
+    try { if (bot.entity && bot.entity.position) bot.lookAt(bot.entity.position, true) } catch {}
+    try { if (bot.state) bot.state.autoLookSuspended = false } catch {}
     return ok('已停止所有任务')
   }
 
@@ -373,46 +379,200 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function mount_near (args = {}) {
     const { radius = 6, prefer = null, timeoutMs = 8000 } = args
-    const me = bot.entity?.position
-    if (!me) return fail('未就绪')
-    // Already mounted
+    if (!bot.entity || !bot.entity.position) return fail('未就绪')
     if (bot.vehicle) return ok('已在乘坐中')
-    // Pick target
-    let target = null; let bestD = Infinity
-    for (const e of Object.values(bot.entities || {})) {
-      if (!isRideableEntity(e)) continue
-      const d = e.position.distanceTo(me)
-      if (d > radius) continue
-      if (prefer && !String(e.name || '').toLowerCase().includes(String(prefer).toLowerCase())) continue
-      if (d < bestD) { bestD = d; target = e }
-    }
-    if (!target) return fail('附近没有可乘坐目标')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
     m.canDig = true; m.allowSprinting = true
     bot.pathfinder.setMovements(m)
-    bot.pathfinder.setGoal(new goals.GoalFollow(target, 1.4), true)
+
+    function pickNearest () {
+      const me = bot.entity?.position
+      if (!me) return null
+      let best = null; let bestD = Infinity
+      for (const e of Object.values(bot.entities || {})) {
+        if (!isRideableEntity(e)) continue
+        if (prefer && !String(e.name || '').toLowerCase().includes(String(prefer).toLowerCase())) continue
+        const d = e.position.distanceTo(me)
+        if (d <= radius && d < bestD) { best = e; bestD = d }
+      }
+      return best
+    }
+
     const start = Date.now()
-    return await new Promise((resolve) => {
-      const iv = setInterval(() => {
-        try {
-          if (bot.vehicle) { clearInterval(iv); resolve(ok('已乘坐')) ; return }
-          const e = bot.entities?.[target.id]
-          if (!e) { clearInterval(iv); resolve(fail('目标消失')) ; return }
-          const d = e.position.distanceTo(bot.entity.position)
+    while (Date.now() - start <= timeoutMs) {
+      try {
+        if (bot.vehicle) return ok('已乘坐')
+        const tgt = pickNearest()
+        if (!tgt) { await wait(150); continue }
+        bot.pathfinder.setGoal(new goals.GoalFollow(tgt, 1.4), true)
+        // Approach until close or target gone or timeout slice
+        const sliceUntil = Date.now() + 2000
+        while (Date.now() < sliceUntil) {
+          if (bot.vehicle) return ok('已乘坐')
+          const cur = bot.entities?.[tgt.id]
+          if (!cur) break
+          const d = cur.position.distanceTo(bot.entity.position)
           if (d <= 2.0) {
-            try { bot.mount(e); clearInterval(iv); resolve(ok('尝试乘坐')) ; return } catch {}
+            try { bot.mount(cur) } catch {}
+            // wait confirmation from mineflayer state
+            const confirmUntil = Date.now() + 1800
+            while (Date.now() < confirmUntil) {
+              if (bot.vehicle) return ok('已乘坐')
+              await wait(80)
+            }
+            break
           }
-          if (Date.now() - start > timeoutMs) { clearInterval(iv); resolve(fail('乘坐超时')) }
-        } catch { clearInterval(iv); resolve(fail('乘坐异常')) }
-      }, 150)
-    })
+          await wait(120)
+        }
+      } catch { await wait(120) }
+    }
+    return fail('乘坐超时')
   }
 
   async function dismount () {
     try { if (!bot.vehicle) return ok('当前未乘坐') ; await bot.dismount(); return ok('已下坐') } catch (e) { return fail('下坐失败: ' + (e?.message || e)) }
+  }
+
+  // --- Flee trap: move to nearest safe open spot
+  function isAir (pos) { try { const b = bot.blockAt(pos); return !b || b.name === 'air' } catch { return false } }
+  function isSolid (pos) { try { const b = bot.blockAt(pos); return b && b.name !== 'air' && !b.boundingBox?.includes('empty') } catch { return false } }
+  function isSafeFeet (pos) {
+    try {
+      const feet = pos
+      const head = pos.offset(0, 1, 0)
+      const under = pos.offset(0, -1, 0)
+      if (!isAir(feet) || !isAir(head)) return false
+      const b = bot.blockAt(under)
+      if (!b) return false
+      const nm = String(b.name || '').toLowerCase()
+      if (nm.includes('lava')) return false
+      return true
+    } catch { return false }
+  }
+  async function flee_trap (args = {}) {
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = true; m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+    const base = bot.entity?.position?.floored?.() || bot.entity?.position
+    if (!base) return fail('未就绪')
+    const R = Math.max(2, Math.min(8, Number(args.radius || 6)))
+    const chatCute = args.cute !== false // default true
+    // Be more aggressive about escaping: default do not strike unless explicitly requested
+    const doStrike = args.strike === true // only if caller opts in
+
+    function cuteFearLine () {
+      const arr = ['呜呜…好可怕(>_<)~', '不要围我啦QAQ', '害怕…我要溜了！', '呀！吓到我了…', '诶诶别这样嘛…']
+      return arr[Math.floor(Math.random() * arr.length)]
+    }
+
+    function pickThreat (radius = 6) {
+      const me = bot.entity?.position
+      if (!me) return null
+      let best = null; let bestScore = -Infinity
+      for (const e of Object.values(bot.entities || {})) {
+        if (!e || e === bot.entity || !e.position) continue
+        if (!(e.type === 'player' || e.type === 'mob')) continue
+        const d = e.position.distanceTo(me)
+        if (!Number.isFinite(d) || d > radius) continue
+        // base by distance (closer = higher), plus threat bonus
+        let score = 100 - d * 10
+        if (e.type === 'player') score += 25
+        if (isHostile(e.name || e.displayName)) score += 20
+        if (score > bestScore) { bestScore = score; best = e }
+      }
+      return best
+    }
+    let target = null; let best = Infinity
+    for (let r = 2; r <= R; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          const p = base.offset(dx, 0, dz)
+          for (let dy = -1; dy <= 2; dy++) {
+            const q = p.offset(0, dy, 0)
+            if (!isSafeFeet(q)) continue
+            const d = q.distanceTo(base)
+            if (d < best) { best = d; target = q }
+          }
+        }
+      }
+      if (target) break
+    }
+    if (!target) return fail('附近没有安全空位')
+    if (log?.info) log.info('[flee] target spot ->', { x: target.x, y: target.y, z: target.z, dist: target.distanceTo(base).toFixed(2) })
+
+    // Try to exit GSit-like states: dismount, wake, toggle sneak, and jump
+    try { if (bot.isSleeping) await bot.wake() } catch {}
+    try { if (bot.vehicle) await bot.dismount() } catch {}
+    try { bot.clearControlStates() } catch {}
+    try { bot.setControlState('sneak', true); await wait(220); bot.setControlState('sneak', false) } catch {}
+    try { bot.setControlState('jump', true); await wait(240); bot.setControlState('jump', false) } catch {}
+
+    if (chatCute) { try { bot.chat(cuteFearLine()) } catch {} }
+
+    // Optional: quick strike the most threatening nearby entity, then flee
+    if (doStrike) {
+      try {
+        const foe = pickThreat(Math.min(8, R + 2))
+        if (foe) {
+          try { await require('./pvp').ensureBestWeapon(bot) } catch {}
+          const approachUntil = Date.now() + 900
+          if (log?.debug) log.debug('[flee] quick strike ->', foe.name || foe.username || foe.id)
+          bot.pathfinder.setGoal(new goals.GoalFollow(foe, 1.8), true)
+          while (Date.now() < approachUntil) {
+            const cur = bot.entities?.[foe.id]
+            if (!cur) break
+            const d = cur.position.distanceTo(bot.entity.position)
+            if (d <= 2.5) { try { bot.attack(cur) } catch {} ; break }
+            await wait(80)
+          }
+          // stop engaging before fleeing
+          try { bot.pathfinder.setGoal(null) } catch {}
+          try { require('./pvp').stopMoveOverrides(bot) } catch {}
+        }
+      } catch {}
+    }
+
+    if (log?.info) log.info('[flee] escaping to ->', { x: target.x, y: target.y, z: target.z })
+    try { bot.clearControlStates() } catch {}
+    bot.pathfinder.setMovements(m)
+    bot.pathfinder.setGoal(new goals.GoalNear(target.x, target.y, target.z, 1))
+    // Aggressive manual assist: face target, sprint+forward with jump pulses for a short burst
+    try {
+      const toward = target.offset(0.5, 0, 0.5)
+      try { await bot.lookAt(toward, true) } catch {}
+      bot.setControlState('sprint', true)
+      bot.setControlState('forward', true)
+      const t0 = Date.now()
+      while (Date.now() - t0 < 1600) {
+        // periodic hop to get over edges
+        if (((Date.now() - t0) % 400) < 60) { bot.setControlState('jump', true) } else { bot.setControlState('jump', false) }
+        await wait(60)
+      }
+    } catch {}
+    // Stop manual controls; keep pathfinder goal
+    try { bot.setControlState('jump', false); bot.setControlState('forward', false); bot.setControlState('sprint', false) } catch {}
+    // Verify motion; if still stuck, nudge again and widen radius once
+    try {
+      const startPos2 = bot.entity.position.clone()
+      await wait(700)
+      const moved2 = (() => { try { return bot.entity.position.distanceTo(startPos2) } catch { return 0 } })()
+      if (moved2 < 0.2) {
+        if (log?.warn) log.warn('[flee] still stuck, nudging again')
+        try { await bot.lookAt(target, true) } catch {}
+        bot.setControlState('sprint', true)
+        bot.setControlState('forward', true)
+        await wait(900)
+        bot.setControlState('forward', false)
+        bot.setControlState('sprint', false)
+      }
+    } catch {}
+    return ok('尝试脱困')
   }
 
   function isHostile (name) {
@@ -465,7 +625,7 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`开始护卫 ${guardTarget} (半径${radius}格)`)
   }
 
-  const registry = { goto, follow_player, stop, stop_all, say, attack_player, hunt_player, guard, equip, toss, toss_hand, dig_down, auto_mine, mount_near, dismount }
+  const registry = { goto, follow_player, stop, stop_all, say, attack_player, hunt_player, guard, equip, toss, toss_hand, dig_down, auto_mine, mount_near, dismount, flee_trap }
 
   async function run (tool, args) {
     const fn = registry[tool]

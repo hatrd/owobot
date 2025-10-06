@@ -168,7 +168,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '优先使用“游戏上下文”和“聊天上下文”的信息作答，直接引用其中的数值与列表。',
       '风格：中文、极简、单句；',
       '如果用户请求执行游戏内操作，请只输出一行: TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具示例: attack_player{name}, hunt_player{name,range?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{}, stop_all{}, say{text}, equip{name,dest?}, toss{name,count?}, toss_hand{}, dig_down{maxSteps?}, auto_mine{target?,radius?,maxBlocks?}, mount_near{radius?,prefer?}, dismount{}.',
+      '可用工具示例: attack_player{name}, hunt_player{name,range?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{}, stop_all{}, say{text}, equip{name,dest?}, toss{name,count?}, toss_hand{}, dig_down{maxSteps?}, auto_mine{target?,radius?,maxBlocks?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
       '提到：',
       ' - 位置/维度/时间：引用 游戏上下文 的 位置/维度/昼夜。',
       ' - 附近玩家/掉落物：引用相应列表或说“没有”。',

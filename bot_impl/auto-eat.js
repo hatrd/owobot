@@ -7,9 +7,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let mcData = null
   state.autoEat = state.autoEat || { enabled: true, eating: false }
 
-  const THRESHOLD = Number(process.env.AUTO_EAT_START_AT || 14) // start eating if food < threshold
+  const THRESHOLD = Number(process.env.AUTO_EAT_START_AT || 18) // start eating if food < threshold
   const COOLDOWN_MS = 1500
   let lastAttemptAt = 0
+  let pauseUntil = 0
 
   function ensureMcData () {
     if (!mcData) {
@@ -59,6 +60,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function tryEatOnce () {
     const now = Date.now()
     if (!state.autoEat.enabled) return
+    if (now < pauseUntil) return
     if (state.autoEat.eating) return
     if (!bot.food && bot.food !== 0) return
     dlog && dlog('eat: tick food=', bot.food, 'health=', bot.health)
@@ -97,6 +99,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     timer = null
     dlog && dlog('eat: watcher stopped')
   })
+
+  // Pause auto-eat briefly on global stop to avoid contention
+  on('agent:stop_all', () => { pauseUntil = Date.now() + 5000; state.autoEat.eating = false })
 
   // If plugin loaded after spawn, start immediately
   if (state?.hasSpawned) startWatcher()
