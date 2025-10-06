@@ -1,0 +1,16 @@
+{
+  "name": "mcbot",
+  "version": "0.1.0",
+  "description": "Simple mineflayer echo bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon"
+  },
+  "dependencies": {
+    "mineflayer": "^4.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

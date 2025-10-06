@@ -1,0 +1,6 @@
+{
+  "watch": ["bot.js", "package.json"],
+  "ext": "js,json",
+  "exec": "node bot.js",
+  "signal": "SIGTERM"
+}
