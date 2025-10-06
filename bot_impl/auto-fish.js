@@ -205,6 +205,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   on('spawn', start)
   if (state?.hasSpawned) start()
+  // Start immediately on install to be hot-reload safe
+  start()
   on('end', stop)
   on('agent:stop_all', () => { /* no-op; session loop checks externalBusy */ })
   registerCleanup && registerCleanup(() => { stop() })

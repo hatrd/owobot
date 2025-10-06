@@ -159,7 +159,6 @@ function buildGreeting (username) {
   else salutation = '深夜好喔'
 
   const suffix = '☆ (≧▽≦)ﾉ'
-
   return `${salutation} ${username}酱~ 这里是${bot.username}，${suffix}`
 }
 
@@ -305,6 +304,8 @@ function activate (botInstance, options = {}) {
   try { require('./auto-armor-craft').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('autoarmor') }) } catch (e) { coreLog.warn('auto-armor-craft install error:', e?.message || e) }
   // Feature: auto-fishing when rod present and near water
   try { require('./auto-fish').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('fish') }) } catch (e) { coreLog.warn('auto-fish install error:', e?.message || e) }
+  // Feature: auto-swim (float in water)
+  try { require('./auto-swim').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('swim') }) } catch (e) { coreLog.warn('auto-swim install error:', e?.message || e) }
 
   // Feature: respond to ".bot here" with "/tpa <username>"
   try { require('./tpa-here').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('tpa') }) } catch (e) { coreLog.warn('tpa-here install error:', e?.message || e) }

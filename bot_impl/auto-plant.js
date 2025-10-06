@@ -58,6 +58,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   on('spawn', start)
   if (state?.hasSpawned) start()
+  // Start immediately on install to handle hot-reload order
+  start()
   on('end', stop)
   on('agent:stop_all', () => { /* keep enabled, just pause this cycle */ })
 

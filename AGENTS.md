@@ -17,6 +17,21 @@
 - If generating files, write to a temp path and `rename` into `bot_impl/` to ensure the new version is complete when reloaded.
 - For large multi-file edits, apply changes outside `bot_impl/` and move them in at once, or stop the bot temporarily.
 
+### Spawn Is Not Reliable Under Hot Reload
+
+Under hot‑reload the `spawn` event is not guaranteed to fire for newly reloaded modules (the bot is already spawned). Do NOT rely solely on `on('spawn', ...)` to start timers/watchers.
+
+Use a reload‑safe start pattern:
+
+```
+function start () { if (!timer) timer = setInterval(tick, 1000) }
+on('spawn', start)
+if (state?.hasSpawned) start()
+start() // immediate guarded start to cover hot‑reload install order
+```
+
+If you need one‑time “post‑spawn init”, extract a common function (e.g. `initAfterSpawn()`) and call it both from the `spawn` handler and from the hot‑reload path when `state.hasSpawned` is true. See `bot_impl/index.js`’s `initAfterSpawn()` as a reference.
+
 ## Coding Style & Naming Conventions
 - Language: Node.js (CommonJS). Indentation: 2 spaces; no semicolons (match existing style).
 - Names: `camelCase` for variables/functions, `SCREAMING_SNAKE_CASE` for constants, `kebab-case` filenames (e.g., `fire-watch.js`) or `index.js` for module roots.

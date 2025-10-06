@@ -36,11 +36,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function bestArmorFor (slotSpec) {
     const items = (bot.inventory?.items() || []).slice()
-    // include any unequipped from offhand/main just in case
+    // include offhand/main
     const extra = []
     if (bot.heldItem) extra.push(bot.heldItem)
     const off = bot.inventory?.slots?.[45]
     if (off) extra.push(off)
+    // include currently equipped armor pieces as candidates too to avoid swap thrash
+    try {
+      const s = bot.inventory?.slots || []
+      for (const idx of [5, 6, 7, 8]) { if (s[idx]) extra.push(s[idx]) }
+    } catch {}
     const all = items.concat(extra)
     const candidates = []
     for (const it of all) {
@@ -77,9 +82,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function ensureBestHandsOnce () {
     try {
-      // Respect temporary hand lock (e.g., fishing rod)
-      if (state && state.holdItemLock) return
-      const pvp = require('./pvp'); await pvp.ensureBestWeapon(bot); await pvp.ensureShieldEquipped(bot)
+      const pvp = require('./pvp')
+      // Respect temporary hand lock for main hand, but still allow off-hand shield equip
+      if (!(state && state.holdItemLock)) {
+        await pvp.ensureBestWeapon(bot)
+      }
+      await pvp.ensureShieldEquipped(bot)
     } catch {}
   }
 
