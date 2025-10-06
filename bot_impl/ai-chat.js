@@ -43,7 +43,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     owkMax: 5,
     recentStoreMax: 200,
     owkStoreMax: 100,
-    game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 6 }
+    game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 }
   }
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
@@ -195,7 +195,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const g = state.ai.context?.game
       if (!g || g.include === false) return ''
       const snap = observer.snapshot(bot, {
-        invTop: g.invTop || 6,
+        invTop: g.invTop || 20,
         nearPlayerRange: g.nearPlayerRange || 16,
         nearPlayerMax: g.nearPlayerMax || 5,
         dropsRange: g.dropsRange || 8,

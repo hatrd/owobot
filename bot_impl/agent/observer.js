@@ -87,16 +87,24 @@ function collectInventorySummary (bot, top = 6) {
       byName.set(name, (byName.get(name) || 0) + (it.count || 0))
       if (foodsByName[name]) foodCount += it.count || 0
     }
-    const torch = byName.get('torch') || 0
-    const water = (byName.get('water_bucket') || 0) > 0
-    const bed = Array.from(byName.keys()).some(n => n.endsWith('_bed'))
-    const pearl = (byName.get('ender_pearl') || 0) > 0
     const tiers = ['netherite','diamond','iron','stone','golden','wooden']
     let bestPick = null
     for (const t of tiers) { const key = `${t}_pickaxe`; if (byName.get(key)) { bestPick = key; break } }
     const rows = Array.from(byName.entries()).sort((a, b) => b[1] - a[1]).slice(0, Math.max(1, top))
-    return { held, top: rows.map(([n, c]) => ({ name: n, count: c })), foodCount, torch, tools: { water, bed, pearl }, bestPick }
-  } catch { return { held: null, top: [], foodCount: 0, torch: 0, tools: { water: false, bed: false, pearl: false }, bestPick: null } }
+    return { held, top: rows.map(([n, c]) => ({ name: n, count: c })), foodCount, bestPick }
+  } catch { return { held: null, top: [], foodCount: 0, bestPick: null } }
+}
+
+function collectHotbar (bot) {
+  try {
+    const slots = bot.inventory?.slots || []
+    const names = []
+    for (let i = 36; i <= 44; i++) {
+      const it = slots[i]
+      if (it && it.name) names.push({ slot: i - 36, name: it.name, count: it.count || 0 })
+    }
+    return names
+  } catch { return [] }
 }
 
 function collectBlocks (bot) {
@@ -136,11 +144,12 @@ function snapshot (bot, opts = {}) {
   const env = collectEnv(bot)
   const vitals = collectVitals(bot)
   const inv = collectInventorySummary(bot, Math.max(1, opts.invTop || 6))
+  const hotbar = collectHotbar(bot)
   const players = collectNearbyPlayers(bot, Math.max(1, opts.nearPlayerRange || 16), Math.max(0, opts.nearPlayerMax || 5))
   const drops = collectDrops(bot, Math.max(1, opts.dropsRange || 8), Math.max(0, opts.dropsMax || 6))
   const hostiles = collectHostiles(bot, Math.max(1, opts.hostileRange || 24))
   const blocks = collectBlocks(bot)
-  return { t: now, pos, dim, time: tod, env, vitals, inv, nearby: { players, drops, hostiles }, blocks }
+  return { t: now, pos, dim, time: tod, env, vitals, inv, hotbar, nearby: { players, drops, hostiles }, blocks }
 }
 
 function toPrompt (snap) {
@@ -151,7 +160,10 @@ function toPrompt (snap) {
     parts.push(pos)
     parts.push(`维度:${snap.dim}`)
     if (snap.time) parts.push(`时间:${snap.time}`)
-    if (snap.env?.biome || snap.env?.weather) parts.push(`群系:${snap.env?.biome || '未知'} | 天气:${snap.env?.weather || ''}`)
+    // Biome: only print when a readable string
+    const biomeVal = snap.env?.biome
+    const biomeStr = (typeof biomeVal === 'string' && biomeVal) ? biomeVal : null
+    if (biomeStr || snap.env?.weather) parts.push(`群系:${biomeStr || '未知'} | 天气:${snap.env?.weather || ''}`)
     const v = snap.vitals || {}
     const vParts = []
     if (v.hp != null) vParts.push(`生命:${Math.round(v.hp)}/20`)
@@ -171,8 +183,9 @@ function toPrompt (snap) {
     const inv = snap.inv || {}
     const invLine = (inv.top && inv.top.length) ? ('背包: ' + inv.top.map(it => `${it.name}x${it.count}`).join(', ')) : '背包: 无'
     const heldLine = '手持: ' + (inv.held || '无')
-    const sumLine = `食物:${inv.foodCount||0} | 火把:${inv.torch||0}` + (inv.bestPick ? ` | 最优镐:${inv.bestPick}` : '') + ` | 工具:${inv.tools?.water?'水桶✓':'水桶×'}/${inv.tools?.bed?'床✓':'床×'}/${inv.tools?.pearl?'珍珠✓':'珍珠×'}`
-    parts.push(invLine + ' | ' + heldLine + ' | ' + sumLine)
+    const hb = Array.isArray(snap.hotbar) ? snap.hotbar : []
+    const hbLine = hb.length ? ('快捷栏: ' + hb.map(it => `${it.name}x${it.count}`).join(', ')) : ''
+    parts.push([invLine, heldLine, hbLine].filter(Boolean).join(' | '))
     // blocks
     const bl = snap.blocks || {}
     const a = bl.under ? `脚下:${bl.under}` : ''
