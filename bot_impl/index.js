@@ -3,10 +3,11 @@
 let bot = null
 const { Vec3 } = require('vec3')
 let DEBUG = true
+const logging = require('./logging')
+logging.init({}) // ensure module initialized; will be rebound to state in activate
+const coreLog = logging.getLogger('core')
 
-function dlog (...args) {
-  if (DEBUG) console.log('[DEBUG]', ...args)
-}
+function dlog (...args) { coreLog.debug(...args) }
 
 // Shared state comes from loader to preserve across reloads
 let state = null
@@ -41,6 +42,9 @@ function initAfterSpawn() {
   
   if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
   playerWatcher = setInterval(() => {
+    // Suppress auto-look while pathfinding/following or when explicitly suspended
+    if (state?.autoLookSuspended) return
+    try { if (bot.pathfinder && bot.pathfinder.goal) return } catch {}
     const entity = bot.nearestEntity()
     if (entity !== null) {
       if (entity.type === 'player') {
@@ -257,6 +261,7 @@ function activate (botInstance, options = {}) {
     readyForGreeting: false,
     extinguishing: false,
     hasSpawned: false,
+    autoLookSuspended: false,
     cleanups: []
   }
 
@@ -273,13 +278,16 @@ function activate (botInstance, options = {}) {
   })
 
   // Feature: sleep when item dropped onto a bed at night
-  try { require('./bed-sleep').install(bot, { on, dlog, state, registerCleanup }) } catch (e) { dlog('bed-sleep install error:', e?.message || e) }
+  try { require('./bed-sleep').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('sleep') }) } catch (e) { coreLog.warn('bed-sleep install error:', e?.message || e) }
 
   // Feature: follow any nearby player holding an Iron Nugget (needs pathfinder)
-  try { require('./follow-iron-nugget').install(bot, { on, dlog, state, registerCleanup }) } catch (e) { dlog('follow-iron-nugget install error:', e?.message || e) }
+  try { require('./follow-iron-nugget').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('follow') }) } catch (e) { coreLog.warn('follow-iron-nugget install error:', e?.message || e) }
 
   // Feature: auto-eat when hungry
-  try { require('./auto-eat').install(bot, { on, dlog, state, registerCleanup }) } catch (e) { dlog('auto-eat install error:', e?.message || e) }
+  try { require('./auto-eat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('eat') }) } catch (e) { coreLog.warn('auto-eat install error:', e?.message || e) }
+
+  // Feature: runtime log control via chat
+  try { require('./log-control').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('log') }) } catch (e) { coreLog.warn('log-control install error:', e?.message || e) }
 
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
@@ -338,6 +346,7 @@ function activate (botInstance, options = {}) {
   on('end', () => {
     console.log('Bot connection closed')
     if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
+    if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
     clearAllPendingGreets()
     state.greetedPlayers.clear()
     state.readyForGreeting = false
@@ -358,6 +367,7 @@ function deactivate () {
   try {
     offAll()
     if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
+    if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
     clearAllPendingGreets()
     // Run module cleanups registered during install
     if (Array.isArray(state?.cleanups)) {

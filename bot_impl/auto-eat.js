@@ -1,7 +1,8 @@
 // Auto-eat: keep hunger up by consuming edible items in inventory.
 // No external deps; uses minecraft-data to detect foods.
 
-function install (bot, { on, dlog, state, registerCleanup }) {
+function install (bot, { on, dlog, state, registerCleanup, log }) {
+  if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
   let timer = null
   let mcData = null
   state.autoEat = state.autoEat || { enabled: true, eating: false }

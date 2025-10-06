@@ -37,7 +37,9 @@ function findBedAroundBot (bot, radius = 3) {
   return best
 }
 
-function install (bot, { on, dlog, state, registerCleanup }) {
+function install (bot, { on, dlog, state, registerCleanup, log }) {
+  // Route dlog through namespaced logger if present
+  if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
   state.sleepingInProgress = state.sleepingInProgress || false
   let timer = null
   let lastAttemptAt = 0
@@ -70,22 +72,25 @@ function install (bot, { on, dlog, state, registerCleanup }) {
   on('spawn', () => {
     if (timer) clearInterval(timer)
     timer = setInterval(trySleepNearby, 1000)
-    dlog && dlog('sleep: watcher started')
+    if (log?.info) log.info('sleep: watcher started')
+    else dlog && dlog('sleep: watcher started')
   })
 
-  on('sleep', () => { dlog && dlog('sleep: entered') })
-  on('wake', () => { dlog && dlog('sleep: woke up') })
+  on('sleep', () => { if (log?.info) log.info('sleep: entered'); else dlog && dlog('sleep: entered') })
+  on('wake', () => { if (log?.info) log.info('sleep: woke up'); else dlog && dlog('sleep: woke up') })
 
   on('end', () => {
     try { if (timer) clearInterval(timer) } catch {}
     timer = null
-    dlog && dlog('sleep: watcher stopped')
+    if (log?.info) log.info('sleep: watcher stopped')
+    else dlog && dlog('sleep: watcher stopped')
   })
 
   // Hot-reload support: start immediately if already spawned
   if (state?.hasSpawned && !timer) {
     timer = setInterval(trySleepNearby, 1000)
-    dlog && dlog('sleep: watcher started (post-reload)')
+    if (log?.info) log.info('sleep: watcher started (post-reload)')
+    else dlog && dlog('sleep: watcher started (post-reload)')
   }
 
   // Ensure interval cleared on plugin deactivate

@@ -24,7 +24,7 @@ module.exports = async function (bot, ctx) {
   // await actions.digAt({ x: 1841, y: 91, z: 2638 })
 
   // 3) Loot all items from a chest at coordinates
-  // await actions.lootAllFromContainerAt({ x: 1841, y: 91, z: 2638 })
+  // await actions.lootAllFromContainerAt({ x: -1712, y: 70, z: 949 })
 
   // 4) Say something in chat
   // bot.chat('一次性操作：你好呀！')

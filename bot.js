@@ -35,6 +35,13 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 rl.on('line', (line) => {
   const trimmed = line.trim()
   if (!trimmed) return
+  // CLI commands: lines starting with '.' or ':' are handled internally
+  if (trimmed.startsWith('.') || trimmed.startsWith(':')) {
+    const raw = trimmed.replace(/^[:.]/, '')
+    const [cmd, ...args] = raw.split(/\s+/)
+    try { bot.emit('cli', { cmd, args, raw }) } catch (e) { console.error('CLI dispatch error:', e) }
+    return
+  }
   try { bot.chat(trimmed) } catch (e) { console.error('Chat error:', e) }
 })
 
