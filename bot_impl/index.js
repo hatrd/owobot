@@ -250,6 +250,13 @@ function summarizePlayer (player) {
 
 function activate (botInstance, options = {}) {
   bot = botInstance
+  // Raise listener limits to avoid MaxListeners warnings under heavy dig/reload cycles
+  try {
+    const EE = require('events')
+    if (EE && typeof EE.defaultMaxListeners === 'number' && EE.defaultMaxListeners < 50) EE.defaultMaxListeners = 50
+  } catch {}
+  try { if (typeof bot.setMaxListeners === 'function') bot.setMaxListeners(50) } catch {}
+  try { if (bot._client && typeof bot._client.setMaxListeners === 'function') bot._client.setMaxListeners(50) } catch {}
   DEBUG = (() => {
     const v = String(process.env.MC_DEBUG ?? '1').toLowerCase()
     return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
@@ -288,6 +295,12 @@ function activate (botInstance, options = {}) {
 
   // Feature: runtime log control via chat
   try { require('./log-control').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('log') }) } catch (e) { coreLog.warn('log-control install error:', e?.message || e) }
+
+  // Feature: auto-counterattack with cute chat on getting hurt
+  try { require('./auto-counter').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('pvp') }) } catch (e) { coreLog.warn('auto-counter install error:', e?.message || e) }
+
+  // Feature: auto-equip best armor/weapon/shield from inventory
+  try { require('./auto-gear').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('gear') }) } catch (e) { coreLog.warn('auto-gear install error:', e?.message || e) }
 
   // Feature: AI chat (owk prefix routed to DeepSeek-compatible API)
   try { require('./ai-chat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('ai') }) } catch (e) { coreLog.warn('ai-chat install error:', e?.message || e) }

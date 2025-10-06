@@ -102,6 +102,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('entityEquipmentChange', (entity) => { try { if (entity?.type === 'player') tick() } catch {} })
 
   on('end', () => { try { if (interval) clearInterval(interval) } catch {}; interval = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {}; setAutoLookSuspended(false) })
+  on('agent:stop_all', () => { try { if (interval) clearInterval(interval) } catch {}; interval = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {}; setAutoLookSuspended(false) })
   registerCleanup && registerCleanup(() => { try { if (interval) clearInterval(interval) } catch {}; interval = null; setAutoLookSuspended(false) })
 }
 
@@ -194,6 +195,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('entityEquipmentChange', (entity) => { try { if (entity?.type === 'player') tick() } catch {} })
 
   on('end', () => { try { if (interval) clearInterval(interval) } catch {}; interval = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} })
+  on('agent:stop_all', () => { try { if (interval) clearInterval(interval) } catch {}; interval = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} })
   registerCleanup && registerCleanup(() => { try { if (interval) clearInterval(interval) } catch {}; interval = null })
 }
 
