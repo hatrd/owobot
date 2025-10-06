@@ -1,6 +1,7 @@
 // Hot-reloadable bot implementation. The loader (bot.js) will call activate/deactivate
 
 let bot = null
+const { Vec3 } = require('vec3')
 let DEBUG = true
 
 function dlog (...args) {
@@ -51,6 +52,77 @@ function initAfterSpawn() {
   }, 50)
 }
 
+async function digAt (pos) {
+  const { x, y, z } = pos
+  const target = bot.blockAt(new Vec3(x, y, z))
+  if (!target) throw new Error(`No block at ${x},${y},${z}`)
+  await bot.lookAt(target.position.offset(0.5, 0.5, 0.5), true)
+  await bot.dig(target)
+}
+
+async function digUnderfoot () {
+  const feet = bot.entity.position.offset(0, -1, 0)
+  const target = bot.blockAt(feet)
+  if (!target) throw new Error('No block underfoot')
+  await bot.lookAt(feet.offset(0.5, 0.5, 0.5), true)
+  await bot.dig(target)
+}
+
+async function openContainerAt (pos) {
+  const { x, y, z } = pos
+  const block = bot.blockAt(new Vec3(x, y, z))
+  if (!block) throw new Error(`No block at ${x},${y},${z}`)
+  await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
+  const container = await bot.openContainer(block)
+  return container
+}
+
+async function lootAllFromContainerAt (pos) {
+  const container = await openContainerAt(pos)
+  try {
+    for (let slot = 0; slot < container.inventoryStart; slot++) {
+      const item = container.slots[slot]
+      if (!item) continue
+      const count = item.count
+      await container.withdraw(item.type, item.metadata, count, item.nbt)
+    }
+  } finally {
+    try { container.close() } catch {}
+  }
+}
+
+function runOneShotIfPresent () {
+  let mod
+  try {
+    // Attempt to load optional oneshot file each reload
+    mod = require('./oneshot')
+  } catch (e) {
+    if (e && (e.code === 'MODULE_NOT_FOUND' || String(e).includes('Cannot find module'))) {
+      dlog('oneshot: no file present')
+      return
+    }
+    console.log('oneshot: load error:', e?.message || e)
+    return
+  }
+
+  const fn = typeof mod === 'function' ? mod : (typeof mod?.run === 'function' ? mod.run : null)
+  if (typeof fn !== 'function') {
+    dlog('oneshot: module present but no function export')
+    return
+  }
+
+  // Defer to next tick to ensure listeners ready
+  setTimeout(async () => {
+    try {
+      dlog('oneshot: executing...')
+      await fn(bot, { state, dlog, actions: { digAt, digUnderfoot, openContainerAt, lootAllFromContainerAt } })
+      dlog('oneshot: done')
+    } catch (err) {
+      console.log('oneshot: error:', err?.message || err)
+    }
+  }, 0)
+}
+
 function on(event, handler) {
   bot.on(event, handler)
   listeners.push({ event, handler })
@@ -69,7 +141,7 @@ function clearAllPendingGreets() {
   state.pendingGreets.clear()
 }
 
-const GREET_INITIAL_DELAY_MS = 3000
+const GREET_INITIAL_DELAY_MS = 5000
 
 function buildGreeting (username) {
   const now = new Date()
@@ -197,12 +269,14 @@ function activate (botInstance, options = {}) {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')
     initAfterSpawn()
+    runOneShotIfPresent()
   })
 
   // If plugin reloads after spawn, re-initialize immediately
   if (state.hasSpawned) {
     dlog('Plugin loaded post-spawn; initializing features now')
     initAfterSpawn()
+    runOneShotIfPresent()
   }
 
   on('playerJoined', (player) => {
