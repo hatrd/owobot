@@ -169,7 +169,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '优先使用“游戏上下文”和“聊天上下文”的信息作答，直接引用其中的数值与列表。',
       '风格：中文、极简、单句；',
       '如果用户请求执行游戏内操作，请只输出一行: TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具示例: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...]}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,collect?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, observe_detail{what?=entities|players|hostiles|blocks|inventory,radius?,max?}, skill_start{skill,args,expected?}, skill_status{taskId}, skill_cancel{taskId}.',
+      '可用工具示例: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, collect{what?="drops",radius?,names?,match?,max?,timeoutMs?,until?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, observe_detail{what?=entities|players|hostiles|blocks|inventory,radius?,max?}, skill_start{skill,args,expected?}, skill_status{taskId}, skill_cancel{taskId}.',
       '提到：',
       ' - 位置/维度/时间：引用 游戏上下文 的 位置/维度/昼夜。',
       ' - 附近玩家/掉落物：引用相应列表或说“没有”。',

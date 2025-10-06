@@ -322,6 +322,11 @@ function activate (botInstance, options = {}) {
     try { runner.registerSkill('go', require('./skills/go')); runner.registerSkill('gather', require('./skills/gather')); runner.registerSkill('craft', require('./skills/craft')) } catch {}
   } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 
+  // Debug: drops scanner CLI
+  try { require('./drops-debug').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('drops') }) } catch (e) { coreLog.warn('drops-debug install error:', e?.message || e) }
+  // CLI: collect dropped items
+  try { require('./collect-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('collect') }) } catch (e) { coreLog.warn('collect-cli install error:', e?.message || e) }
+
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')

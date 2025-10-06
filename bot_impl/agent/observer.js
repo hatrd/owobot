@@ -24,14 +24,25 @@ function collectNearbyPlayers (bot, range = 16, max = 5) {
   } catch { return [] }
 }
 
+function isItemEntity (e) {
+  try {
+    if (!e || !e.position) return false
+    const kind = String(e?.kind || '').toLowerCase()
+    if (kind === 'drops') return true
+    const nm = String(e.name || e.displayName || '').toLowerCase()
+    if (nm === 'item' || nm === 'item_entity' || nm === 'dropped_item') return true
+  if (e.item) return true
+  return false
+  } catch { return false }
+}
+
 function collectDrops (bot, range = 8, max = 6) {
   try {
     const me = bot.entity?.position
     if (!me) return []
     const arr = []
     for (const e of Object.values(bot.entities || {})) {
-      const isItem = (e?.type === 'object' && e?.name === 'item') || String(e?.kind || '').toLowerCase() === 'drops'
-      if (!isItem || !e.position) continue
+      if (!isItemEntity(e)) continue
       const d = e.position.distanceTo(me)
       if (d <= range) arr.push({ d })
     }

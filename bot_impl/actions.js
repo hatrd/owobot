@@ -136,7 +136,30 @@ function install (bot, { log, on, registerCleanup }) {
       ['水桶', 'water_bucket'],
       ['钻石剑', 'diamond_sword'],
       ['钻石斧', 'diamond_axe'],
-      ['镐', 'pickaxe']
+      ['钻石镐', 'diamond_pickaxe'],
+      ['圆石', 'cobblestone'],
+      ['石头', 'stone'],
+      ['木棍', 'stick'],
+      ['沙子', 'sand'],
+      // woods (CN -> EN)
+      ['橡木原木', 'oak_log'],
+      ['云杉原木', 'spruce_log'],
+      ['白桦原木', 'birch_log'],
+      ['丛林原木', 'jungle_log'],
+      ['金合欢原木', 'acacia_log'],
+      ['相思木原木', 'acacia_log'],
+      ['深色橡木原木', 'dark_oak_log'],
+      ['红树原木', 'mangrove_log'],
+      ['樱花原木', 'cherry_log'],
+      // saplings
+      ['橡树苗', 'oak_sapling'],
+      ['云杉树苗', 'spruce_sapling'],
+      ['白桦树苗', 'birch_sapling'],
+      ['丛林树苗', 'jungle_sapling'],
+      ['金合欢树苗', 'acacia_sapling'],
+      ['相思木树苗', 'acacia_sapling'],
+      ['深色橡树苗', 'dark_oak_sapling'],
+      ['樱花树苗', 'cherry_sapling']
     ])
     return aliases.get(n) || n
   }
@@ -155,6 +178,14 @@ function install (bot, { log, on, registerCleanup }) {
     const partial = all.filter(it => String(it.name || '').toLowerCase().includes(needle))
     partial.sort((a, b) => (b.count || 0) - (a.count || 0))
     return partial[0] || null
+  }
+
+  function countItemByName (name) {
+    try {
+      const needle = normalizeName(name)
+      const inv = bot.inventory?.items() || []
+      return inv.filter(it => String(it.name || '').toLowerCase() === needle).reduce((a, b) => a + (b.count || 0), 0)
+    } catch { return 0 }
   }
 
   function findAllByName (name) {
@@ -222,6 +253,13 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`已装备 ${item.name} -> ${destination}`)
   }
 
+  async function ensureItemEquipped (name) {
+    const item = resolveItemByName(name)
+    if (!item) throw new Error('背包没有该物品')
+    await bot.equip(item, 'hand')
+    return true
+  }
+
   async function toss (args = {}) {
     // Unified interface: support single or multiple via items[]; each item spec may be by name or slot, with optional count
     // Accepted forms:
@@ -235,6 +273,20 @@ function install (bot, { log, on, registerCleanup }) {
       if (args.slot) return [{ slot: args.slot, count: args.count }]
       return null
     })()
+    // Special: drop all inventory items when all=true (consistent interface, still one tool)
+    if ((!arr || !arr.length) && (args.all === true || String(args.all).toLowerCase() === 'true')) {
+      const inv = bot.inventory?.items() || []
+      const uniq = new Map()
+      for (const it of inv) { if (it && it.name) uniq.set(it.name, true) }
+      const exclude = new Set((Array.isArray(args.exclude) ? args.exclude : []).map(n => String(n).toLowerCase()))
+      const items = Array.from(uniq.keys()).filter(n => !exclude.has(String(n).toLowerCase()))
+      if (items.length === 0) return ok('背包为空')
+      for (const nm of items) {
+        const stacks = findAllByName(nm)
+        for (const it of stacks) { const c = it.count || 0; if (c > 0) await bot.toss(it.type, null, c) }
+      }
+      return ok('已丢出全部物品')
+    }
     if (!arr || !arr.length) return fail('缺少物品参数')
 
     function itemFromSlot (slot) {
@@ -342,7 +394,9 @@ function install (bot, { log, on, registerCleanup }) {
     const match = Array.isArray(args.names) && args.names.length ? null : (args.match ? String(args.match).toLowerCase() : null)
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
     const area = args.area || { shape: 'sphere', radius: 8 }
+    const until = String(args.until || '').toLowerCase() // 'exhaust'|'all' -> ignore max until无目标
     const max = Math.max(1, parseInt(args.max || '12', 10))
+    const limit = (until === 'exhaust' || until === 'all') ? Number.MAX_SAFE_INTEGER : max
     const collect = (String(args.collect ?? 'true').toLowerCase() !== 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
@@ -410,7 +464,7 @@ function install (bot, { log, on, registerCleanup }) {
 
     if ((area.shape || 'sphere') === 'down') {
       const steps = Math.max(1, parseInt(area.steps || '8', 10))
-      while (!miningAbort && broken < Math.min(max, steps)) {
+      while (!miningAbort && broken < Math.min(limit, steps)) {
         if (!bot.entity || !bot.entity.position) break
         if (isDangerBelow()) return ok(`停止: 下方疑似岩浆, 已挖 ${broken}`)
         const feet = bot.entity.position.offset(0, -1, 0)
@@ -453,6 +507,30 @@ function install (bot, { log, on, registerCleanup }) {
         if (await approachAndDig(p)) { broken++; did = true; break }
       }
       if (!did) break
+    }
+    // final pickup sweep (short)
+    if (collect) {
+      try {
+        const me = bot.entity?.position
+        const items = Object.values(bot.entities || {}).filter(e => {
+          try {
+            if (!me || !e || !e.position) return false
+            const kind = String(e?.kind || '').toLowerCase()
+            if (kind === 'drops') return me.distanceTo(e.position) <= Math.max(3, (area.radius || 6))
+            const nm = String(e.name || e.displayName || '').toLowerCase()
+            if (nm === 'item' || nm === 'item_entity' || nm === 'dropped_item') return me.distanceTo(e.position) <= Math.max(3, (area.radius || 6))
+            if (e.item) return me.distanceTo(e.position) <= Math.max(3, (area.radius || 6))
+            return false
+          } catch { return false }
+        })
+        const { goals } = pathfinderPkg
+        const untilPick = Date.now() + 1500
+        for (const it of items) {
+          if (Date.now() > untilPick) break
+          bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(it.position.x), Math.floor(it.position.y), Math.floor(it.position.z), 0), true)
+          await wait(120)
+        }
+      } catch {}
     }
     return ok(`挖掘完成 ${broken}`)
   }
@@ -717,7 +795,194 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`开始护卫 ${guardTarget} (半径${radius}格)`)
   }
 
-  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, equip, toss, break_blocks, mount_near, dismount, flee_trap, observe_detail, skill_start, skill_status, skill_cancel }
+  // --- Collect dropped items (pickups) ---
+  async function collect (args = {}) {
+    const what = String(args.what || 'drops').toLowerCase()
+    if (what !== 'drops' && what !== 'items') return fail('未知collect类型')
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = true; m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+    const radius = Math.max(1, parseInt(args.radius || '20', 10))
+    const max = Math.max(1, parseInt(args.max || '80', 10))
+    const timeoutMs = Math.max(1500, parseInt(args.timeoutMs || '12000', 10))
+    const until = String(args.until || 'exhaust').toLowerCase()
+    const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
+    const match = args.match ? String(args.match).toLowerCase() : null
+
+    const t0 = Date.now()
+    let picked = 0
+    const invSum = () => { try { return (bot.inventory?.items()||[]).reduce((a,b)=>a+(b.count||0),0) } catch { return 0 } }
+    function isItemEntity (e) {
+      try {
+        if (!e || !e.position) return false
+        const kind = String(e?.kind || '').toLowerCase()
+        if (kind === 'drops') return true
+        const nm = String(e.name || e.displayName || '').toLowerCase()
+        if (nm === 'item' || nm === 'item_entity' || nm === 'dropped_item') return true
+        if (e.item) return true
+        return false
+      } catch { return false }
+    }
+    function itemName (e) { try { return String(e?.item?.name || e?.displayName || e?.name || '').toLowerCase() } catch { return '' } }
+    function want (e) {
+      const n = itemName(e)
+      if (names && n) return names.includes(n)
+      if (match && n) return n.includes(match)
+      return true
+    }
+    function nearbyItems () {
+      try {
+        const me = bot.entity?.position; if (!me) return []
+        return Object.values(bot.entities || {}).filter(e => isItemEntity(e) && me.distanceTo(e.position) <= radius && want(e))
+      } catch { return [] }
+    }
+
+    while (true) {
+      if (picked >= max) break
+      if (Date.now() - t0 > timeoutMs) break
+      let items = nearbyItems()
+      if (!items.length) {
+        if (until === 'exhaust') break
+        await wait(200)
+        continue
+      }
+      items.sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
+      const target = items[0]
+      try {
+        const before = invSum()
+        let success = false
+        // Prefer following the entity tightly to ensure collision
+        try { bot.pathfinder.setGoal(new goals.GoalFollow(target, 0.35), true) } catch {}
+        const untilArrive = Date.now() + 6000
+        while (Date.now() < untilArrive) {
+          await wait(80)
+          const cur = bot.entities?.[target.id]
+          if (!cur) { success = true; break } // picked or despawned
+          const d = cur.position.distanceTo(bot.entity.position)
+          if (d <= 0.5) {
+            // micro-nudge forward to guarantee collision
+            try { bot.lookAt(cur.position.offset(0, 0.1, 0), true) } catch {}
+            try { bot.setControlState('forward', true) } catch {}
+            await wait(180)
+            try { bot.setControlState('forward', false) } catch {}
+          }
+          if ((invSum() > before)) { success = true; break }
+        }
+        try { bot.pathfinder.setGoal(null) } catch {}
+        // short settle to let pickups apply
+        await wait(150)
+        if (!success && (invSum() > before)) success = true
+        if (success) picked++
+      } catch {}
+    }
+    return ok(`已拾取附近掉落 (尝试${picked})`)
+  }
+
+  // --- Placing blocks/items ---
+  async function place_blocks (args = {}) {
+    const item = String(args.item || '').toLowerCase()
+    if (!item) return fail('缺少item')
+    const on = args.on || { top_of: [] }
+    const tops = Array.isArray(on.top_of) ? on.top_of.map(n => String(n).toLowerCase()) : []
+    const max = Math.max(1, parseInt(args.max || '8', 10))
+    const spacing = Math.max(1, parseInt(args.spacing || '3', 10))
+    const collect = (String(args.collect ?? 'false').toLowerCase() === 'true')
+    const area = args.area || { shape: 'sphere', radius: 8 }
+    const origin = area.origin ? new (require('vec3').Vec3)(area.origin.x, area.origin.y, area.origin.z) : (bot.entity?.position || null)
+    if (!origin) return fail('未就绪')
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = true; m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+
+    // default valid bases for saplings
+    let baseNames = tops
+    if (baseNames.length === 0 && /_sapling$/.test(item)) {
+      baseNames = ['dirt','grass_block','podzol','coarse_dirt','rooted_dirt','mud','muddy_mangrove_roots']
+    }
+    if (baseNames.length === 0) return fail('缺少on.top_of')
+
+    const me = bot.entity.position
+    const radius = Math.max(1, parseInt(area.radius || '8', 10))
+    const candidates = bot.findBlocks({
+      maxDistance: Math.max(2, radius),
+      count: 128,
+      matching: (b) => {
+        if (!b) return false
+        const n = String(b.name || '').toLowerCase()
+        if (!baseNames.includes(n)) return false
+        // top must be air/replaceable
+        const top = bot.blockAt(b.position.offset(0, 1, 0))
+        const tn = String(top?.name || 'air').toLowerCase()
+        if (tn === 'air') return true
+        if (['tall_grass','fern','large_fern','snow','seagrass'].includes(tn)) return true
+        return false
+      }
+    }) || []
+    if (!candidates.length) return fail('附近没有可放置位置')
+    // sort by distance
+    candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+
+    const placed = []
+    let remaining = Math.min(max, countItemByName(item))
+    if (remaining <= 0) return fail('背包没有该物品')
+
+    async function approach (p) {
+      if (!p) return
+      const V = require('vec3').Vec3
+      const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
+      bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 1), true)
+      const until = Date.now() + 8000
+      while (Date.now() < until) {
+        await wait(100)
+        const d = bot.entity.position.distanceTo(pv.offset(0,1,0))
+        if (d <= 2.3) break
+      }
+      try { bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      await wait(50)
+    }
+
+    function farEnough (p) { return placed.every(pp => p.distanceTo(pp) >= spacing) }
+
+    for (const p of candidates) {
+      if (remaining <= 0) break
+      if (!farEnough(p)) continue
+      if (!p) continue
+      const V = require('vec3').Vec3
+      const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
+      const base = bot.blockAt(pv)
+      if (!base) continue
+      const top = bot.blockAt(pv.offset(0,1,0))
+      // clear small plants if any
+      const tn = String(top?.name || 'air').toLowerCase()
+      if (['tall_grass','fern','large_fern','snow','seagrass'].includes(tn)) {
+        try { await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
+      }
+      await approach(pv)
+      try { await ensureItemEquipped(item) } catch (e) { return fail(String(e?.message || e)) }
+      try {
+        await bot.lookAt(pv.offset(0.5, 1.2, 0.5), true)
+        await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0))
+        placed.push(pv)
+        remaining--
+        if (collect) { try { bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y + 1, p.z, 0), true) } catch {}; await wait(200) }
+      } catch (e) {
+        // try once more after a tiny nudge
+        try { await bot.lookAt(pv.offset(0.5, 1.0, 0.5), true) } catch {}
+        try { await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0)); placed.push(pv); remaining-- } catch {}
+      }
+    }
+    if (placed.length === 0) return fail('未能放置任何方块')
+    return ok(`已放置 ${item} x${placed.length}`)
+  }
+
+  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, equip, toss, break_blocks, place_blocks, collect, mount_near, dismount, flee_trap, observe_detail, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]
