@@ -47,7 +47,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const placed = (!isSolid(oldB) && isSolid(newB))
       const removed = (isSolid(oldB) && !isSolid(newB))
       const kind = placed ? 'placed' : removed ? 'removed' : 'changed'
-      pushLimited(recentBlocks, { t: now(), name: newN || oldN, pos: b.position.clone(), kind })
+      // Ignore natural growth events (logs/leaves/saplings etc.) unless a player was observed near the event time
+      const NAT = ['log','leaves','sapling','bamboo','cactus','sugar_cane','kelp','vine','moss','azalea','flower','mushroom','grass','mangrove_roots']
+      const isNat = (n) => { const s = String(n||''); return NAT.some(k => s.includes(k)) }
+      const nPick = newN || oldN
+      if (placed && isNat(nPick) && !hasRecentPlayerNear(b.position, now(), 5, 2500)) return
+      pushLimited(recentBlocks, { t: now(), name: nPick, pos: b.position.clone(), kind })
     } catch {}
   }
 
@@ -77,33 +82,30 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       if (!bot.entity || !bot.entity.position) return 0
       const p = bot.entity.position.floored()
-      const checks = [
-        p.offset( 1, 0, 0), p.offset(-1, 0, 0), p.offset(0, 0,  1), p.offset(0, 0, -1),
-        p.offset( 1, 1, 0), p.offset(-1, 1, 0), p.offset(0, 1,  1), p.offset(0, 1, -1)
-      ]
-      let solidNear = 0
-      for (const cp of checks) { const b = bot.blockAt(cp); if (isTrapSolid(b)) solidNear++ }
-      // Headspace check: if head is free, reduce score strongly (less likely trapped)
+      const feetNei = [p.offset(1,0,0), p.offset(-1,0,0), p.offset(0,0,1), p.offset(0,0,-1)]
+      const headNei = [p.offset(1,1,0), p.offset(-1,1,0), p.offset(0,1,1), p.offset(0,1,-1)]
+      const blockedFeet = feetNei.reduce((a, cp) => a + (isTrapSolid(bot.blockAt(cp)) ? 1 : 0), 0)
+      const blockedHead = headNei.reduce((a, cp) => a + (isTrapSolid(bot.blockAt(cp)) ? 1 : 0), 0)
       const head = bot.blockAt(p.offset(0, 1, 0))
       const headBlocked = isTrapSolid(head)
-      // Recent placements around us also increase suspicion
-      const cutoff = now() - 3000
-      // Only count non-natural trap solids in recent placements
-      const recentNear = recentBlocks.filter(r => {
-        if (r.t < cutoff) return false
+
+      // Recent trap-like placements very near us by a player
+      const cutoff = now() - 2500
+      const recentTrap = recentBlocks.some(r => {
+        if ((r.t || 0) < cutoff) return false
         if (r.kind !== 'placed') return false
-        if (!within(r.pos, 3)) return false
-        // Exclude logs/leaves etc.
+        if (!within(r.pos, 2)) return false
         const nm = String(r.name || '').toLowerCase()
         const NAT = ['log','leaves','sapling','bamboo','cactus','sugar_cane','kelp','vine','moss','azalea','flower','mushroom','grass']
-        for (const k of NAT) { if (nm.includes(k)) return false }
-        // Require a nearby player action to tie to intent
-        if (!hasRecentPlayerNear(r.pos, r.t, 5, 2000)) return false
-        return true
-      }).length
-      // Weight: head blocked contributes more; recentNear adds more weight than raw solids
-      const score = (headBlocked ? 3 : 0) + solidNear + (recentNear * 2)
-      return score
+        if (NAT.some(k => nm.includes(k))) return false
+        return hasRecentPlayerNear(r.pos, r.t, 5, 2000)
+      })
+
+      // Strict enclosure requirement: at least 3 sides around head or feet blocked by trap solids
+      const enclosed = (blockedHead >= 3) || (blockedFeet >= 3)
+      if (enclosed && headBlocked && recentTrap) return 10
+      if (enclosed && recentTrap) return 8
+      return 0
     } catch { return 0 }
   }
 
