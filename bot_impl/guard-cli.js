@@ -29,11 +29,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (!payload || payload.cmd !== 'guard') return
       const parsed = parseArgs(payload.args || [])
       const first = String(parsed._first || '').toLowerCase()
-      if (first === 'stop' || first === 'end' || first === 'off') {
+      if (first === 'stop' || first === 'reset' || first === 'end' || first === 'off') {
         const actions = require('./actions').install(bot, { log })
-        try { bot.emit('external:begin', { source: 'cli', tool: 'stop' }) } catch {}
-        const r = await actions.run('stop', { mode: 'hard' })
-        try { bot.emit('external:end', { source: 'cli', tool: 'stop' }) } catch {}
+        try { bot.emit('external:begin', { source: 'cli', tool: 'reset' }) } catch {}
+        const r = await actions.run('reset', {})
+        try { bot.emit('external:end', { source: 'cli', tool: 'reset' }) } catch {}
         console.log('[GUARD]', r.ok ? 'stopped' : ('fail: ' + r.msg))
         return
       }

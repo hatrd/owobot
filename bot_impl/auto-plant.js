@@ -24,17 +24,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function busy () {
     try { if (!bot.entity || !bot.entity.position) return true } catch { return true }
-    try { if (bot.pathfinder && bot.pathfinder.goal) return true } catch {}
     try { if (bot.isSleeping) return true } catch {}
     try { if (state.externalBusy) return true } catch {}
+    try { if (bot.pathfinder && bot.pathfinder.goal) return true } catch {}
     return false
   }
 
   async function tick () {
     if (!cfg.enabled || running) return
-    if (busy()) return
+    if (busy()) { if (cfg.debug) L.debug('skip: busy') ; return }
     const saplings = listSaplings()
-    if (!saplings.length) return
+    if (!saplings.length) { if (cfg.debug) L.debug('skip: no saplings') ; return }
     running = true
     try {
       try { if (state) state.currentTask = { name: 'auto_plant', source: 'auto', startedAt: Date.now() } } catch {}
@@ -47,8 +47,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (planted >= burstMax) break
         try {
           const remain = Math.max(1, burstMax - planted)
-          const r = await actions.run('place_blocks', { item: s.name, area: { radius: cfg.radius }, max: Math.min(remain, 3), spacing: cfg.spacing })
-          if (r && r.ok) planted += 1
+          // adaptive radius attempts: cfg.radius -> +6 -> +10
+          const attempts = [cfg.radius, cfg.radius + 6, cfg.radius + 10]
+          let ok = false
+          for (const rad of attempts) {
+            const r = await actions.run('place_blocks', { item: s.name, area: { radius: Math.max(2, rad) }, max: Math.min(remain, 3), spacing: cfg.spacing })
+            if (r && r.ok) { ok = true; break }
+          }
+          if (ok) planted += 1
         } catch {}
       }
       if (planted > 0) L.info('auto planted', planted)
@@ -67,6 +73,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   start()
   on('end', stop)
   on('agent:stop_all', () => { /* keep enabled, just pause this cycle */ })
+  // Try planting shortly after external actions end to avoid starvation
+  on('external:end', () => { setTimeout(() => { tick().catch(()=>{}) }, 250) })
 
   // CLI: .autoplant on|off|status|interval ms|radius N|max N|spacing N
   on('cli', ({ cmd, args }) => {

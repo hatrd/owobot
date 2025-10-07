@@ -51,29 +51,28 @@ function install (bot, { log, on, registerCleanup }) {
   }
 
   async function stop (args = {}) {
-    const mode = String(args.mode || 'soft').toLowerCase()
-    // soft stop: pause ongoing movement/loops
+    // Global emergency stop: always perform a full reset and broadcast stop_all.
     try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
     try { bot.clearControlStates() } catch {}
     try { pvp.stopMoveOverrides(bot) } catch {}
     miningAbort = true
     if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null; huntTarget = null }
     if (guardInterval) { try { clearInterval(guardInterval) } catch {}; guardInterval = null; guardTarget = null }
-    if (mode === 'hard' || mode === 'reset' || mode === 'all') {
-      try { bot.emit('agent:stop_all') } catch {}
-      try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
-      try { if (bot.isSleeping) await bot.wake() } catch {}
-      try { if (bot.vehicle) await bot.dismount() } catch {}
-      try { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } catch {}
-      try { if (bot.entity && bot.entity.position) bot.lookAt(bot.entity.position, true) } catch {}
-      try { if (bot.state) bot.state.autoLookSuspended = false } catch {}
-      return ok('已重置 (hard stop)')
-    }
-    return ok('已暂停 (soft stop)')
+    try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
+    try { if (bot.isSleeping) await bot.wake() } catch {}
+    try { if (bot.vehicle) await bot.dismount() } catch {}
+    try { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } catch {}
+    try { if (bot.entity && bot.entity.position) bot.lookAt(bot.entity.position, true) } catch {}
+    try { if (bot.state) bot.state.autoLookSuspended = false } catch {}
+    try { bot.emit('agent:stop_all') } catch {}
+    return ok('已复位')
   }
 
   // Back-compat alias; not advertised to AI
-  async function stop_all () { return stop({ mode: 'hard' }) }
+  async function stop_all () { return stop({}) }
+
+  // Preferred name for global reset
+  async function reset (args = {}) { return stop(args || {}) }
 
   async function say (args = {}) {
     const { text } = args
@@ -341,7 +340,7 @@ function install (bot, { log, on, registerCleanup }) {
     if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null }
     const ctx = {}
     const startedAt = Date.now()
-    huntInterval = setInterval(() => {
+    const iv = setInterval(() => {
       try {
         if (durationMs != null && (Date.now() - startedAt) > Number(durationMs)) { try { clearInterval(huntInterval) } catch {}; huntInterval = null; return }
         const ent = bot.players[huntTarget]?.entity
@@ -350,6 +349,11 @@ function install (bot, { log, on, registerCleanup }) {
         try { pvp.pvpTick(bot, ent, ctx) } catch {}
       } catch {}
     }, Math.max(150, tickMs))
+    huntInterval = iv
+    // Ensure hard reset truly stops hunting: clear this specific timer on stop/end
+    const stopHunt = () => { try { clearInterval(iv) } catch {}; if (huntInterval === iv) huntInterval = null; huntTarget = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} }
+    try { bot.once('agent:stop_all', stopHunt) } catch {}
+    try { bot.once('end', stopHunt) } catch {}
     return ok(`开始追击 ${huntTarget}` + (durationMs != null ? ` (持续${Math.round(Number(durationMs)/1000)}s)` : ''))
   }
 
@@ -531,6 +535,16 @@ function install (bot, { log, on, registerCleanup }) {
       } catch {}
     }
 
+    // Prefer XY-near targets for logs to avoid zig-zagging across the area
+    const isLogsMode = (() => {
+      try {
+        if (names && names.some(n => n && (n === 'log' || n.endsWith('_log')))) return true
+        if (match && String(match).includes('log')) return true
+      } catch {}
+      return false
+    })()
+    let currentColumn = null // { x, z } of last chopped block; finish trunk before moving
+
     while (!miningAbort && broken < limit) {
       const posList = bot.findBlocks({
         point: origin,
@@ -546,10 +560,26 @@ function install (bot, { log, on, registerCleanup }) {
         }
       }) || []
       if (!posList.length) break
-      posList.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+      // Selection: if logs and we have a current trunk, finish same (x,z) first; else sort by 2D distance then |dy|
+      let candidate = null
+      if (isLogsMode && currentColumn) {
+        candidate = posList.find(p => (p.x === currentColumn.x && p.z === currentColumn.z)) || null
+      }
+      if (!candidate) {
+        const here = bot.entity?.position || me
+        posList.sort((a, b) => {
+          const adx = Math.abs(a.x - here.x), adz = Math.abs(a.z - here.z)
+          const bdx = Math.abs(b.x - here.x), bdz = Math.abs(b.z - here.z)
+          const a2d = Math.hypot(adx, adz), b2d = Math.hypot(bdx, bdz)
+          if (a2d !== b2d) return a2d - b2d
+          const ady = Math.abs(a.y - here.y), bdy = Math.abs(b.y - here.y)
+          return ady - bdy
+        })
+        candidate = posList[0]
+      }
       let did = false
-      for (const p of posList) {
-        if (await approachAndDig(p)) { broken++; did = true; break }
+      if (candidate) {
+        if (await approachAndDig(candidate)) { broken++; did = true; if (isLogsMode) currentColumn = { x: candidate.x, z: candidate.z } }
       }
       if (!did) break
       // Mid-loop flush: if many drops nearby, do a quick pickup pass
@@ -581,6 +611,43 @@ function install (bot, { log, on, registerCleanup }) {
         }
       } catch {}
     }
+
+    // Optional: return to the original origin after mining (useful when standing on leaves after chopping)
+    try {
+      const wantReturn = (() => {
+        if (args.returnToOrigin === true) return true
+        if (args.returnToOrigin === false) return false
+        // Auto-enable when target is logs
+        if (names && names.some(n => n && (n === 'log' || n.endsWith('_log')))) return true
+        if (match && String(match).includes('log')) return true
+        return false
+      })()
+      if (wantReturn && origin && bot.entity && bot.entity.position) {
+        const here = bot.entity.position
+        const dist = here.distanceTo(origin)
+        if (dist > 1.8) {
+          const { Movements, goals } = pathfinderPkg
+          const mcData2 = bot.mcData || require('minecraft-data')(bot.version)
+          const m2 = new Movements(bot, mcData2)
+          m2.canDig = true
+          m2.allowSprinting = true
+          m2.allowParkour = true
+          // allow dropping a bit to get off leaves safely
+          try { m2.maxDropDown = Math.max(4, m2.maxDropDown || 0, 8) } catch {}
+          bot.pathfinder.setMovements(m2)
+          bot.pathfinder.setGoal(new goals.GoalNear(origin.x, origin.y, origin.z, 1), true)
+          const untilBack = Date.now() + 6000
+          while (Date.now() < untilBack) {
+            await wait(120)
+            const cur = bot.entity?.position
+            if (!cur) break
+            const d = cur.distanceTo(origin)
+            if (d <= 1.6) break
+          }
+          try { bot.pathfinder.setGoal(null) } catch {}
+        }
+      }
+    } catch {}
     return ok(`挖掘完成 ${broken}`)
   }
 
@@ -1339,7 +1406,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   // --- Deposit items into nearest chest/barrel ---
   async function deposit (args = {}) {
-    const radius = Math.max(2, parseInt(args.radius || '16', 10))
+    const radius = Math.max(2, parseInt(args.radius || '18', 10))
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
@@ -1404,12 +1471,28 @@ function install (bot, { log, on, registerCleanup }) {
     let total = 0
     try {
       if ((!arr || !arr.length) && (args.all === true || String(args.all).toLowerCase() === 'true')) {
-        // Deposit all inventory stacks
+        // Modes: by default keep equipped armor and current hands; override via keepEquipped/keepHeld/keepOffhand=false
+        const keepEquipped = (args.keepEquipped === undefined) ? true : !(args.keepEquipped === false)
+        const keepHeld = (args.keepHeld === undefined) ? true : !(args.keepHeld === false)
+        const keepOffhand = (args.keepOffhand === undefined) ? true : !(args.keepOffhand === false)
+        // Deposit all inventory stacks (items() excludes armor/offhand/held)
         const items = (bot.inventory?.items() || []).slice()
         for (const it of items) {
           const cnt = it?.count || 0
           if (cnt <= 0) continue
           try { await container.deposit(it.type, it.metadata, cnt, it.nbt); kinds++; total += cnt } catch {}
+        }
+        if (!keepOffhand) { try { const off = bot.inventory?.slots?.[45]; if (off && off.count > 0) { await container.deposit(off.type, off.metadata, off.count, off.nbt); kinds++; total += (off.count||0) } } catch {} }
+        if (!keepHeld) { try { const h = bot.heldItem; if (h && h.count > 0) { await container.deposit(h.type, h.metadata, h.count, h.nbt); kinds++; total += (h.count||0) } } catch {} }
+        if (!keepEquipped) {
+          try {
+            const slots = bot.inventory?.slots || []
+            for (const idx of [5,6,7,8]) {
+              const it = slots[idx]
+              const c = it?.count || 0
+              if (it && c > 0) { try { await container.deposit(it.type, it.metadata, c, it.nbt); kinds++; total += c } catch {} }
+            }
+          } catch {}
         }
       } else if (arr && arr.length) {
         for (const spec of arr) {
@@ -1446,7 +1529,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   function guard_debug (args = {}) { guardDebug = !(String(args.enabled ?? args.on ?? 'on').toLowerCase() === 'off'); return ok('guard debug=' + guardDebug) }
 
-  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
+  const registry = { goto, follow_player, reset, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

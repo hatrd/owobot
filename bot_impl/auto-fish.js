@@ -38,6 +38,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return false }
   }
 
+  function isWaterName (n) { const s = String(n || '').toLowerCase(); return s.includes('water') || s.includes('bubble_column') }
+  function feetInWater () {
+    try {
+      const p = bot.entity?.position?.floored?.()
+      if (!p) return false
+      const feet = bot.blockAt(p)
+      const head = bot.blockAt(p.offset(0, 1, 0))
+      const feetW = feet && isWaterName(feet.name)
+      let wlF = false
+      try { const pr = feet?.getProperties && feet.getProperties(); if (pr && pr.waterlogged) wlF = true } catch {}
+      const headW = head && isWaterName(head.name)
+      let wlH = false
+      try { const pr = head?.getProperties && head.getProperties(); if (pr && pr.waterlogged) wlH = true } catch {}
+      return feetW || wlF || headW || wlH
+    } catch { return false }
+  }
+
   function ensurePathfinder () {
     try {
       const pf = require('mineflayer-pathfinder')
@@ -175,6 +192,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const spot = findFishingSpot(cfg.radius)
         if (!spot) { if (cfg.debug) L.info('skip: no shoreline spot'); return }
         await goto(spot, 0)
+        // Ensure we stand on dry block (not in water). If feet in water, nudge to nearest standable
+        if (feetInWater()) {
+          const { Vec3 } = require('vec3')
+          const base = spot.clone ? spot.clone() : spot
+          const cand = [new Vec3(1,0,0), new Vec3(-1,0,0), new Vec3(0,0,1), new Vec3(0,0,-1)]
+          let moved = false
+          for (const d of cand) {
+            const p = base.offset(d.x, 0, d.z)
+            if (!canStandOn(p)) continue
+            await goto(p, 0)
+            if (!feetInWater()) { moved = true; break }
+          }
+          if (!moved) {
+            const alt = findFishingSpot(Math.max(6, cfg.radius + 4))
+            if (alt) await goto(alt, 0)
+          }
+        }
         // Equip rod and fish loop until preconditions break
         const ok = await ensureRodEquipped(); if (!ok) { if (cfg.debug) L.info('equip failed'); return }
         while (cfg.enabled && S.gen === GEN) {

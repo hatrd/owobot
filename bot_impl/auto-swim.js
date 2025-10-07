@@ -4,7 +4,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[SWIM]', ...a), debug: (...a) => dlog && dlog(...a) }
 
   const S = state.autoSwim = state.autoSwim || {}
-  const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 120, debug: false, forceSurfaceMs: 900, scanUp: 8, holdMs: 1200 }, S.cfg || {})
+  const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 120, debug: false, forceSurfaceMs: 600, scanUp: 12, holdMs: 1200 }, S.cfg || {})
 
   let timer = null
   let jumping = false
@@ -52,12 +52,42 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   let submergedSince = 0
   let surfaceGoalUntil = 0
+  let lateralGoalUntil = 0
 
   function ensurePathfinder () {
     try {
       const pf = require('mineflayer-pathfinder')
       if (!bot.pathfinder) bot.loadPlugin(pf.pathfinder)
       return pf
+    } catch { return null }
+  }
+
+  function isAir (b) { try { return !b || String(b.name || '').toLowerCase() === 'air' } catch { return false } }
+  function isBreathableAt (p) {
+    try {
+      const feet = bot.blockAt(p)
+      const head = bot.blockAt(p.offset(0, 1, 0))
+      return isAir(head)
+    } catch { return false }
+  }
+  function findNearestAir (range = 8) {
+    try {
+      if (!bot.entity || !bot.entity.position) return null
+      const V = require('vec3').Vec3
+      const base = bot.entity.position.floored()
+      const r = Math.max(2, range)
+      let best = null; let bestD = Infinity
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -1; dy <= 3; dy++) {
+          for (let dz = -r; dz <= r; dz++) {
+            const q = new V(base.x + dx, base.y + dy, base.z + dz)
+            if (!isBreathableAt(q)) continue
+            const d = q.distanceTo(base)
+            if (d < bestD) { best = q; bestD = d }
+          }
+        }
+      }
+      return best
     } catch { return null }
   }
 
@@ -88,6 +118,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     // ensure not sneaking while trying to float
     try { if (inWater) bot.setControlState('sneak', false) } catch {}
     const now = Date.now()
+    // emergency burst: if in water and vertical speed non-positive for a while, look up and nudge forward briefly
+    try {
+      const vy = Number(bot.entity?.velocity?.y || 0)
+      if (inWater && vy <= 0 && now >= surfaceGoalUntil) {
+        // Avoid interfering with precise positioning during auto-fishing
+        if (!state?.isFishing) {
+          try { await bot.lookAt(bot.entity.position.offset(0, 1.0, 0), true) } catch {}
+          try { bot.setControlState('forward', true); setTimeout(() => { try { bot.setControlState('forward', false) } catch {} }, 350) } catch {}
+        }
+      }
+    } catch {}
     if (headInWater) {
       if (!submergedSince) submergedSince = now
       // If submerged for a while, try to push a short surface goal straight up
@@ -105,16 +146,30 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           try {
             const { goals } = pf
             bot.pathfinder.setGoal(new goals.GoalNear(base.x, targetY, base.z, 0), true)
-            surfaceGoalUntil = now + 1200
+            surfaceGoalUntil = now + 1500
             if (cfg.debug) console.log('[SWIM] surfaceGoal ->', base.x, targetY, base.z, 'scanUp=', cfg.scanUp)
           } catch {}
         } else if (cfg.debug) {
           console.log('[SWIM] surfaceGoal none, topBlocked, scanUp=', cfg.scanUp)
         }
       }
+      // If still submerged and upward path blocked, try lateral nearest air pocket
+      if ((now - submergedSince) >= (cfg.forceSurfaceMs + 300) && now >= lateralGoalUntil) {
+        const pf = ensurePathfinder()
+        const spot = findNearestAir(8)
+        if (pf && spot) {
+          try {
+            const { goals } = pf
+            bot.pathfinder.setGoal(new goals.GoalNear(spot.x, spot.y, spot.z, 0), true)
+            lateralGoalUntil = now + 1600
+            if (cfg.debug) console.log('[SWIM] lateralGoal ->', spot.x, spot.y, spot.z)
+          } catch {}
+        }
+      }
     } else {
       submergedSince = 0
       surfaceGoalUntil = 0
+      lateralGoalUntil = 0
     }
     if (cfg.debug) {
       try { console.log('[SWIM] goal=', !!(bot.pathfinder && bot.pathfinder.goal), 'until=', Math.max(0, surfaceGoalUntil - Date.now())) } catch {}

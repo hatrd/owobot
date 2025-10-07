@@ -73,7 +73,7 @@ async function hardReset (reason) {
     try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
     // Use actions.stop(hard) to broadcast agent:stop_all and cancel digging/movement/windows, etc.
     const actions = require('./actions').install(bot, { log: logging.getLogger('core') })
-    await actions.run('stop', { mode: 'hard' })
+    await actions.run('reset', {})
   } catch (e) {
     try { console.log('hardReset error:', e?.message || e) } catch {}
   }
@@ -366,6 +366,8 @@ function activate (botInstance, options = {}) {
 
   // Feature: auto-plant saplings when available in inventory
   try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
+  // Feature: auto-stash when inventory nearly full
+  try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
 
   // Feature removed: random walk (was unstable)
 
