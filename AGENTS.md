@@ -1,9 +1,13 @@
 # Repository Guidelines
 
+## Development Principles
+- 内部实现不用考虑兼容，这是一个短平快的项目，一切都以最快迭代效率为准。
+- 对外接口（技能/工具）无需保持长期稳定；优先保证简洁优雅、语义清晰，并让 AI 易于调用。可以在迭代中随时调整接口，但需确保当前运行内的一致性，并保持注册表与提示文档严格同步（见“Registration gate”）。
+
 ## Project Structure & Module Organization
 - Entry point: `bot.js` (creates Mineflayer bot, sets up hot reload).
 - Hot‑reloadable logic: `bot_impl/` with `index.js` exporting `activate`/`deactivate`.
-- Runtime deps: `node_modules/`; config via environment variables (`MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD`, `MC_DEBUG`).
+- Runtime deps: `node_modules/`; config via environment variables (`MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD`, `MC_DEBUG`, `MC_GREET`).
 - Prefer adding new features under `bot_impl/` to benefit from hot reload. Only touch `bot.js` for loader/core wiring.
 
 ## Build, Test, and Development Commands
@@ -11,6 +15,14 @@
 - `npm start` — run the bot once (no process restarts). Supports hot reload by editing files in `bot_impl/`.
 - `npm run dev` — run with nodemon (process restarts on file changes). Use only if changing `bot.js`.
 - Example: `MC_HOST=localhost MC_PORT=25565 MC_USERNAME=bot npm start`.
+
+### Runtime Configuration (Env or CLI)
+- Env vars: `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH` (`offline|microsoft`), `MC_PASSWORD`, `MC_DEBUG` (`0|1`), `MC_GREET` (`0|1`).
+- CLI overrides (take precedence over env): `--host`, `--port`, `--username|--user`, `--auth`, `--password`, `--greet on|off`.
+- Examples:
+  - Disable greeting: `MC_GREET=0 npm start` or `npm start -- --greet off`.
+  - Change bot name: `MC_USERNAME=MyBot npm start` or `npm start -- --username MyBot`.
+  - Reduce logs: `MC_DEBUG=0 npm start`.
 
 ## Hot Reload Workflow
 - Save atomically: prepare changes fully, then write them. Avoid partial/fragmented saves under `bot_impl/` (the watcher reloads on file events, debounce ≈120ms).

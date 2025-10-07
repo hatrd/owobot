@@ -2,9 +2,7 @@
 
 let bot = null
 const { Vec3 } = require('vec3')
-let DEBUG = true
 const logging = require('./logging')
-logging.init({}) // ensure module initialized; will be rebound to state in activate
 const coreLog = logging.getLogger('core')
 
 function dlog (...args) { coreLog.debug(...args) }
@@ -279,10 +277,6 @@ function activate (botInstance, options = {}) {
   } catch {}
   try { if (typeof bot.setMaxListeners === 'function') bot.setMaxListeners(50) } catch {}
   try { if (bot._client && typeof bot._client.setMaxListeners === 'function') bot._client.setMaxListeners(50) } catch {}
-  DEBUG = (() => {
-    const v = String(process.env.MC_DEBUG ?? '1').toLowerCase()
-    return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
-  })()
   const GREET = (() => {
     const v = String(process.env.MC_GREET ?? '1').toLowerCase()
     return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
@@ -390,7 +384,9 @@ function activate (botInstance, options = {}) {
   try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
 
   on('spawn', () => {
-    console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
+    const host = (bot._client && (bot._client.socketServerHost || bot._client.host)) || 'server'
+    const port = (bot._client && bot._client.port) || ''
+    console.log(`Connected to ${host}:${port} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')
     initAfterSpawn()
     runOneShotIfPresent()

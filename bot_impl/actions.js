@@ -4,6 +4,7 @@ let huntInterval = null
 let huntTarget = null
 let guardInterval = null
 let guardTarget = null
+let cullInterval = null
 let miningAbort = false
 
 function install (bot, { log, on, registerCleanup }) {
@@ -58,6 +59,7 @@ function install (bot, { log, on, registerCleanup }) {
     miningAbort = true
     if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null; huntTarget = null }
     if (guardInterval) { try { clearInterval(guardInterval) } catch {}; guardInterval = null; guardTarget = null }
+    if (cullInterval) { try { clearInterval(cullInterval) } catch {}; cullInterval = null }
     try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
     try { if (bot.isSleeping) await bot.wake() } catch {}
     try { if (bot.vehicle) await bot.dismount() } catch {}
@@ -918,6 +920,14 @@ function install (bot, { log, on, registerCleanup }) {
     ]).has(nm)
   }
 
+  // --- Simple hostile culling within a radius ---
+  async function cull_hostiles (args = {}) {
+    // Unify with guard: start a guard cycle anchored at current position to attack hostiles within radius
+    const radius = Math.max(3, parseInt(args.radius || '10', 10))
+    const tickMs = Math.max(120, parseInt(args.tickMs || '250', 10))
+    return guard({ name: '', radius, tickMs })
+  }
+
   async function guard (args = {}) {
     const { name = '', radius = 8, followRange = 3, tickMs = 250 } = args
     if (!ensurePathfinder()) return fail('无寻路')
@@ -1529,7 +1539,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   function guard_debug (args = {}) { guardDebug = !(String(args.enabled ?? args.on ?? 'on').toLowerCase() === 'off'); return ok('guard debug=' + guardDebug) }
 
-  const registry = { goto, follow_player, reset, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
+  const registry = { goto, follow_player, reset, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

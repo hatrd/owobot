@@ -21,6 +21,11 @@ function parseArgv () {
 
 const argv = parseArgv()
 
+function parseBool (v, defTrue = true) {
+  const s = String(v ?? (defTrue ? '1' : '0')).toLowerCase()
+  return !(s === '0' || s === 'false' || s === 'no' || s === 'off')
+}
+
 // Config (single bot), allow CLI overrides
 const options = {
   host: argv.args.host || process.env.MC_HOST,
@@ -30,15 +35,9 @@ const options = {
 }
 if (argv.args.password || process.env.MC_PASSWORD) options.password = argv.args.password || process.env.MC_PASSWORD
 // Greeting toggle via CLI: --greet on|off
-if (argv.args.greet) {
-  const v = String(argv.args.greet).toLowerCase()
-  process.env.MC_GREET = (v === '0' || v === 'false' || v === 'off' || v === 'no') ? '0' : '1'
-}
+if (argv.args.greet) { process.env.MC_GREET = parseBool(argv.args.greet) ? '1' : '0' }
 
-const DEBUG = (() => {
-  const v = String(process.env.MC_DEBUG ?? '1').toLowerCase()
-  return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
-})()
+const DEBUG = parseBool(process.env.MC_DEBUG, true)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
 
 console.log('Starting bot with config:', {
@@ -48,7 +47,7 @@ console.log('Starting bot with config:', {
   auth: options.auth,
   hasPassword: Boolean(options.password),
   debug: DEBUG,
-  greet: !(String(process.env.MC_GREET ?? '1').toLowerCase() === '0' || String(process.env.MC_GREET ?? '1').toLowerCase() === 'false' || String(process.env.MC_GREET ?? '1').toLowerCase() === 'off')
+  greet: parseBool(process.env.MC_GREET, true)
 })
 
 // Create a single bot instance that stays connected
