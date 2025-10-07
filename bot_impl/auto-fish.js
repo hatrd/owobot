@@ -114,6 +114,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function ensureRodEquipped () {
     try {
+      // already in hand
+      if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === 'fishing_rod') return true
+      // offhand
+      const off = bot.inventory?.slots?.[45]
+      if (off && String(off.name || '').toLowerCase() === 'fishing_rod') {
+        try { await bot.equip(off, 'hand'); if (cfg.debug) L.info('equip <- offhand') ; return true } catch {}
+      }
+      // inventory (any slot)
       const it = (bot.inventory?.items() || []).find(x => String(x?.name || '').toLowerCase() === 'fishing_rod')
       if (!it) return false
       await bot.equip(it, 'hand')
@@ -220,6 +228,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   start()
   on('end', stop)
   on('agent:stop_all', () => { try { S.gen++; if (cfg.debug) L.info('invalidate gen ->', S.gen); try { bot.activateItem() } catch {} } catch {} })
+  // Resume fishing after external actions that might have interrupted it
+  on('external:end', () => { if (cfg.enabled && !running && !session) setTimeout(() => { runSession().catch(()=>{}) }, 300) })
   on('autofish:now', () => { runSession().catch(() => {}) })
   registerCleanup && registerCleanup(() => { try { S.gen++ } catch {}; stop() })
 

@@ -488,7 +488,50 @@ function install (bot, { log, on, registerCleanup }) {
     const radius = Math.max(1, parseInt(area.radius || '8', 10))
     const height = area.height != null ? Math.max(0, parseInt(area.height, 10)) : null
 
-    while (!miningAbort && broken < max) {
+    // Flush config: if drops pile up, run a short pickup sweep (no digging)
+    const flushThreshold = (() => { const v = args.flushThreshold; return v == null ? (collect ? 10 : 0) : Math.max(1, parseInt(v, 10)) })()
+    const flushTimeoutMs = Math.max(500, parseInt(args.flushTimeoutMs || '2500', 10))
+    const flushRadius = Math.max(2, parseInt(args.flushRadius || String(radius), 10))
+    function isItemEntity (e) {
+      try {
+        if (!e || !e.position) return false
+        const kind = String(e?.kind || '').toLowerCase()
+        if (kind === 'drops') return true
+        const nm = String(e.name || e.displayName || '').toLowerCase()
+        if (nm === 'item' || nm === 'item_entity' || nm === 'dropped_item') return true
+        if (e.item) return true
+        return false
+      } catch { return false }
+    }
+    function countNearbyDrops () {
+      try {
+        const mep = bot.entity?.position; if (!mep) return 0
+        let c = 0
+        for (const e of Object.values(bot.entities || {})) {
+          if (!isItemEntity(e)) continue
+          try { if (mep.distanceTo(e.position) <= flushRadius) c++ } catch {}
+        }
+        return c
+      } catch { return 0 }
+    }
+    async function doShortPickup () {
+      try {
+        const { goals } = pathfinderPkg
+        const untilPick = Date.now() + flushTimeoutMs
+        while (Date.now() < untilPick) {
+          const mep = bot.entity?.position; if (!mep) break
+          const items = Object.values(bot.entities || {}).filter(e => isItemEntity(e) && mep.distanceTo(e.position) <= flushRadius)
+          if (!items.length) break
+          // go to nearest one
+          items.sort((a, b) => a.position.distanceTo(mep) - b.position.distanceTo(mep))
+          const it = items[0]
+          bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(it.position.x), Math.floor(it.position.y), Math.floor(it.position.z), 0), true)
+          await wait(120)
+        }
+      } catch {}
+    }
+
+    while (!miningAbort && broken < limit) {
       const posList = bot.findBlocks({
         maxDistance: Math.max(2, radius),
         count: 64,
@@ -508,6 +551,10 @@ function install (bot, { log, on, registerCleanup }) {
         if (await approachAndDig(p)) { broken++; did = true; break }
       }
       if (!did) break
+      // Mid-loop flush: if many drops nearby, do a quick pickup pass
+      if (collect && flushThreshold > 0) {
+        try { if (countNearbyDrops() >= flushThreshold) await doShortPickup() } catch {}
+      }
     }
     // final pickup sweep (short)
     if (collect) {
@@ -543,7 +590,7 @@ function install (bot, { log, on, registerCleanup }) {
     let names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
     let match = args.match ? String(args.match).toLowerCase() : null
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
-    const depositRadius = Math.max(2, parseInt(args.depositRadius || String(radius), 10))
+    const depositRadius = Math.max(2, parseInt(args.depositRadius || String(Math.max(16, radius)), 10))
 
     // Resource presets for simpler AI usage
     const resource = String(args.resource || '').toLowerCase()
@@ -1289,7 +1336,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   // --- Deposit items into nearest chest/barrel ---
   async function deposit (args = {}) {
-    const radius = Math.max(2, parseInt(args.radius || '8', 10))
+    const radius = Math.max(2, parseInt(args.radius || '16', 10))
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
