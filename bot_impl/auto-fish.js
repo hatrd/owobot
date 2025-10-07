@@ -220,6 +220,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   start()
   on('end', stop)
   on('agent:stop_all', () => { try { S.gen++; if (cfg.debug) L.info('invalidate gen ->', S.gen); try { bot.activateItem() } catch {} } catch {} })
+  on('autofish:now', () => { runSession().catch(() => {}) })
   registerCleanup && registerCleanup(() => { try { S.gen++ } catch {}; stop() })
 
   // CLI: .autofish on|off|status|interval ms|radius N|debug on|off

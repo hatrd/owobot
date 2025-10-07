@@ -395,7 +395,7 @@ function install (bot, { log, on, registerCleanup }) {
     const match = Array.isArray(args.names) && args.names.length ? null : (args.match ? String(args.match).toLowerCase() : null)
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
     const area = args.area || { shape: 'sphere', radius: 8 }
-    const until = String(args.until || '').toLowerCase() // 'exhaust'|'all' -> ignore max until无目标
+    const until = String(args.until || 'exhaust').toLowerCase() // default exhaust to avoid premature stop
     const max = Math.max(1, parseInt(args.max || '12', 10))
     const limit = (until === 'exhaust' || until === 'all') ? Number.MAX_SAFE_INTEGER : max
     const collect = (String(args.collect ?? 'true').toLowerCase() !== 'false')
@@ -534,6 +534,55 @@ function install (bot, { log, on, registerCleanup }) {
       } catch {}
     }
     return ok(`挖掘完成 ${broken}`)
+  }
+
+  // --- Harvest: break -> collect -> deposit selected items into nearest container ---
+  async function harvest (args = {}) {
+    const area = args.area || { radius: Math.max(3, parseInt(args.radius || '10', 10)) }
+    const radius = Math.max(3, parseInt(area.radius || '10', 10))
+    let names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
+    let match = args.match ? String(args.match).toLowerCase() : null
+    const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
+    const depositRadius = Math.max(2, parseInt(args.depositRadius || String(radius), 10))
+
+    // Resource presets for simpler AI usage
+    const resource = String(args.resource || '').toLowerCase()
+    function applyResource (r) {
+      if (!r) return
+      if (r === 'logs' || r === 'log' || r === '原木' || r === '树木' || r === '树') { match = 'log'; return }
+      if (r === 'sand' || r === '沙' || r === '沙子') { names = ['sand']; return }
+      if (r === 'stone' || r === '原石' || r === '石头') { match = 'stone'; return }
+      if (r === 'gravel' || r === '沙砾' || r === '砾石') { names = ['gravel']; return }
+      if (r === 'dirt' || r === '泥土') { names = ['dirt']; return }
+    }
+    if (!names && !match) applyResource(resource)
+    if (!names && !match) return fail('缺少目标')
+
+    // 1) break blocks until exhausted in area
+    const br = await break_blocks({ names, match, area: { shape: 'sphere', radius: radius, height: area.height }, max: Number.MAX_SAFE_INTEGER, until: 'exhaust', collect: true })
+    // 2) collect nearby drops (filtered by names/match)
+    const collectArgs = { what: 'drops', radius: Math.max(radius, 12), timeoutMs: 6000, until: 'exhaust' }
+    if (names && names.length) collectArgs.names = names
+    if (!names && match) collectArgs.match = match
+    try { await collect(collectArgs) } catch {}
+
+    // 3) deposit target items into nearest chest/barrel
+    // Build items list based on current inventory
+    const inv = bot.inventory?.items() || []
+    let items = []
+    if (names && names.length) {
+      const set = new Set(names)
+      const uniq = new Map()
+      for (const it of inv) { const n = String(it?.name || '').toLowerCase(); if (set.has(n)) uniq.set(n, true) }
+      items = Array.from(uniq.keys()).map(n => ({ name: n }))
+    } else if (match) {
+      const uniq = new Map()
+      for (const it of inv) { const n = String(it?.name || '').toLowerCase(); if (n.includes(match)) uniq.set(n, true) }
+      items = Array.from(uniq.keys()).map(n => ({ name: n }))
+    }
+    if (!items.length) return ok((br && br.msg) ? (br.msg + '（无可存放）') : '完成（无可存放）')
+    const dep = await deposit({ items, radius: depositRadius, includeBarrel })
+    return ok(`${(br && br.msg) ? br.msg : '处理完成'}，${dep && dep.msg ? dep.msg : '已存放'}`)
   }
 
   // --- Riding ---
@@ -971,6 +1020,45 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`已拾取附近掉落 (尝试${picked})`)
   }
 
+  // --- Gather resources (high-level wrapper for break_blocks) ---
+  async function gather (args = {}) {
+    const radius = Math.max(2, parseInt(args.radius || '10', 10))
+    const height = (args.height != null) ? Math.max(0, parseInt(args.height, 10)) : null
+    const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
+    const match = args.match ? String(args.match).toLowerCase() : null
+    const stacks = args.stacks != null ? Math.max(0, parseInt(args.stacks, 10)) : null
+    const count = args.count != null ? Math.max(0, parseInt(args.count, 10)) : null
+    const collectDrops = (String(args.collect ?? 'true').toLowerCase() !== 'false')
+    if (!names && !match) return fail('缺少目标')
+
+    function invSumTargets () {
+      try {
+        const inv = bot.inventory?.items() || []
+        if (names && names.length) {
+          const set = new Set(names)
+          return inv.filter(it => set.has(String(it.name||'').toLowerCase())).reduce((a,b)=>a+(b.count||0),0)
+        }
+        if (match) {
+          return inv.filter(it => String(it.name||'').toLowerCase().includes(match)).reduce((a,b)=>a+(b.count||0),0)
+        }
+        return 0
+      } catch { return 0 }
+    }
+
+    const targetCount = stacks != null ? (stacks * 64) : (count != null ? count : null)
+    const before = invSumTargets()
+    const area = { shape: 'sphere', radius }
+    if (height != null) area.height = height
+    const until = (targetCount != null) ? 'all' : (String(args.until || 'exhaust').toLowerCase())
+    const br = await break_blocks({ names, match, area, max: Number.MAX_SAFE_INTEGER, until, collect: collectDrops })
+    const after = invSumTargets()
+    const gained = Math.max(0, after - before)
+    if (targetCount != null && gained < targetCount) {
+      return ok(`已收集 ${gained}, 低于目标 ${targetCount}`)
+    }
+    return ok(`已收集 ${gained}`)
+  }
+
   // Alias for AI clarity: pickup == collect
   async function pickup (args = {}) { return collect(args || {}) }
 
@@ -1137,6 +1225,68 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`已放置 ${item} x${placed.length}`)
   }
 
+  // --- Start or move to auto fishing ---
+  async function autofish (args = {}) {
+    const radius = Math.max(3, parseInt(args.radius || '10', 10))
+    const debug = String(args.debug || '').toLowerCase() === 'true'
+    const S = bot.state?.autoFish || (bot.state ? (bot.state.autoFish = {}) : {})
+    S.cfg = Object.assign({ enabled: true, tickMs: 8000, radius }, S.cfg || {})
+    S.cfg.radius = radius
+    if (debug) S.cfg.debug = true
+
+    function isNearbyWaterPos (p) {
+      try {
+        const n = String(bot.blockAt(p)?.name || '').toLowerCase()
+        if (n.includes('water')) return true
+        const props = bot.blockAt(p)?.getProperties?.()
+        return props && props.waterlogged === true
+      } catch { return false }
+    }
+    function canStandOn (p) {
+      try {
+        const ground = bot.blockAt(p)
+        if (!ground) return false
+        const gname = String(ground.name || '').toLowerCase()
+        if (!gname || gname === 'air' || gname.includes('water') || gname.includes('lava')) return false
+        const feet = bot.blockAt(p.offset(0, 1, 0))
+        const head = bot.blockAt(p.offset(0, 2, 0))
+        const feetEmpty = (!feet || String(feet.name || '') === 'air')
+        const headEmpty = (!head || String(head.name || '') === 'air')
+        return feetEmpty && headEmpty
+      } catch { return false }
+    }
+    function findFishingSpot (r) {
+      try {
+        const me = bot.entity?.position; if (!me) return null
+        const waterBlocks = bot.findBlocks({ matching: (b) => b && (String(b.name||'').toLowerCase().includes('water') || (b.getProperties && b.getProperties()?.waterlogged === true)), maxDistance: Math.max(3, r), count: 100 }) || []
+        if (!waterBlocks.length) return null
+        const { Vec3 } = require('vec3')
+        let best = null; let bestD = Infinity
+        for (const wb of waterBlocks) {
+          const adj = [new Vec3(1,0,0), new Vec3(-1,0,0), new Vec3(0,0,1), new Vec3(0,0,-1)].map(d => wb.offset(d.x, 0, d.z))
+          for (const p of adj) {
+            if (!canStandOn(p)) continue
+            const d = p.offset(0,1,0).distanceTo(me)
+            if (d < bestD) { best = p; bestD = d }
+          }
+        }
+        return best
+      } catch { return null }
+    }
+
+    const spot = findFishingSpot(radius)
+    if (!spot) return fail('附近没有可垂钓的水域')
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { goals } = pathfinderPkg
+    bot.pathfinder.setGoal(new goals.GoalNear(spot.x, spot.y + 1, spot.z, 0), true)
+    const until = Date.now() + 8000
+    while (Date.now() < until) { await wait(80); const me = bot.entity?.position; if (!me) break; if (me.distanceTo(spot.offset(0,1,0)) <= 1.5) break }
+    try { bot.pathfinder.setGoal(null) } catch {}
+
+    try { bot.emit('autofish:now') } catch {}
+    return ok('开始自动钓鱼')
+  }
+
   // --- Deposit items into nearest chest/barrel ---
   async function deposit (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '8', 10))
@@ -1246,7 +1396,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   function guard_debug (args = {}) { guardDebug = !(String(args.enabled ?? args.on ?? 'on').toLowerCase() === 'off'); return ok('guard debug=' + guardDebug) }
 
-  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, skill_start, skill_status, skill_cancel }
+  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

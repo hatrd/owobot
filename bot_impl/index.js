@@ -279,6 +279,10 @@ function activate (botInstance, options = {}) {
     const v = String(process.env.MC_DEBUG ?? '1').toLowerCase()
     return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
   })()
+  const GREET = (() => {
+    const v = String(process.env.MC_GREET ?? '1').toLowerCase()
+    return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
+  })()
 
   state = options.sharedState || {
     pendingGreets: new Map(),
@@ -287,10 +291,13 @@ function activate (botInstance, options = {}) {
     extinguishing: false,
     hasSpawned: false,
     autoLookSuspended: false,
-    cleanups: []
+    cleanups: [],
+    greetingEnabled: GREET
   }
 
   if (!Array.isArray(state.cleanups)) state.cleanups = []
+  // Ensure greetingEnabled is initialized even when reusing shared state from loader
+  if (typeof state.greetingEnabled === 'undefined') state.greetingEnabled = GREET
   // Bind logging to shared state so .log changes persist across reloads
   try { logging.init(state) } catch {}
   // expose shared state on bot for modules that only receive bot
@@ -413,6 +420,7 @@ function activate (botInstance, options = {}) {
   }
 
   on('playerJoined', (player) => {
+    if (state && state.greetingEnabled === false) return
     dlog('playerJoined event:', summarizePlayer(player))
     const username = resolvePlayerUsername(player)
     if (!username) {
@@ -440,6 +448,7 @@ function activate (botInstance, options = {}) {
   })
 
   on('playerLeft', (player) => {
+    if (state && state.greetingEnabled === false) return
     const username = resolvePlayerUsername(player)
     dlog('playerLeft event:', summarizePlayer(player), 'resolved =', username)
     if (!username) return

@@ -168,7 +168,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
       '在需要执行工具时输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
+      '可用工具: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
+      '数量词映射："全部/所有/直到没有" -> until="all"；"一组/两组/N组" -> 目标数量≈64*N（原木/通用物品）。如用户指定“收集两组原木”，应使用 gather 或 break_blocks+collect，设置 max≈128 或 stacks=2。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
   }
@@ -281,16 +282,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','guard','follow_player','goto','stop','say','equip','toss','break_blocks','place_blocks','pickup','deposit','mount_near','dismount','flee_trap'])
+          const allow = new Set(['hunt_player','guard','follow_player','goto','stop','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','autofish','mount_near','dismount','flee_trap'])
           if (!allow.has(String(payload.tool))) {
-            // Silently ignore or return a gentle message
             return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
           }
           // Mark external-busy and current task for context; emit begin/end for tracker
           try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
-          const res = await tools.run(payload.tool, payload.args || {})
+          let res
+          try {
+            res = await tools.run(payload.tool, payload.args || {})
+          } finally {
+            try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
+          }
           if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
-          try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
           // Acknowledge in chat succinctly
           return H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), maxReplyLen || 120)
         }

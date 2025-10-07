@@ -3,14 +3,37 @@ const readline = require('readline')
 const fs = require('fs')
 const path = require('path')
 
-// Config
-const options = {
-  host: process.env.MC_HOST,
-  port: Number(process.env.MC_PORT),
-  username: process.env.MC_USERNAME,
-  auth: process.env.MC_AUTH || 'offline'
+// Simple argv parser
+function parseArgv () {
+  const out = { args: {}, rest: [] }
+  const a = process.argv.slice(2)
+  for (let i = 0; i < a.length; i++) {
+    const t = a[i]
+    if (!t.startsWith('--')) { out.rest.push(t); continue }
+    const [kRaw, vRaw] = t.replace(/^--/, '').split('=', 2)
+    const k = kRaw.toLowerCase()
+    const v = vRaw != null ? vRaw : a[i + 1]
+    if (vRaw == null && a[i + 1] && !a[i + 1].startsWith('--')) i++
+    out.args[k] = v === undefined ? true : v
+  }
+  return out
 }
-if (process.env.MC_PASSWORD) options.password = process.env.MC_PASSWORD
+
+const argv = parseArgv()
+
+// Config (single bot), allow CLI overrides
+const options = {
+  host: argv.args.host || process.env.MC_HOST,
+  port: Number(argv.args.port || process.env.MC_PORT),
+  username: argv.args.username || argv.args.user || process.env.MC_USERNAME,
+  auth: argv.args.auth || process.env.MC_AUTH || 'offline'
+}
+if (argv.args.password || process.env.MC_PASSWORD) options.password = argv.args.password || process.env.MC_PASSWORD
+// Greeting toggle via CLI: --greet on|off
+if (argv.args.greet) {
+  const v = String(argv.args.greet).toLowerCase()
+  process.env.MC_GREET = (v === '0' || v === 'false' || v === 'off' || v === 'no') ? '0' : '1'
+}
 
 const DEBUG = (() => {
   const v = String(process.env.MC_DEBUG ?? '1').toLowerCase()
@@ -24,7 +47,8 @@ console.log('Starting bot with config:', {
   username: options.username,
   auth: options.auth,
   hasPassword: Boolean(options.password),
-  debug: DEBUG
+  debug: DEBUG,
+  greet: !(String(process.env.MC_GREET ?? '1').toLowerCase() === '0' || String(process.env.MC_GREET ?? '1').toLowerCase() === 'false' || String(process.env.MC_GREET ?? '1').toLowerCase() === 'off')
 })
 
 // Create a single bot instance that stays connected
