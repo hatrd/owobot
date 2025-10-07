@@ -5,7 +5,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[PLANT]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[PLANT]', ...a) }
 
   const S = state.autoPlant = state.autoPlant || {}
-  const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 8000, radius: 6, maxPerTick: 2, spacing: 4 }, S.cfg || {})
+  const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 3000, radius: 6, maxPerTick: 4, spacing: 3 }, S.cfg || {})
   let running = false
   let timer = null
 
@@ -40,11 +40,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try { if (state) state.currentTask = { name: 'auto_plant', source: 'auto', startedAt: Date.now() } } catch {}
       const actions = require('./actions').install(bot, { log })
       let planted = 0
+      const total = saplings.reduce((a, s) => a + (s.count || 0), 0)
+      const burstMax = total >= 16 ? Math.max(cfg.maxPerTick, 6) : cfg.maxPerTick
       for (const s of saplings) {
         if (state.externalBusy) break
-        if (planted >= cfg.maxPerTick) break
+        if (planted >= burstMax) break
         try {
-          const r = await actions.run('place_blocks', { item: s.name, area: { radius: cfg.radius }, max: Math.min(cfg.maxPerTick - planted, 2), spacing: cfg.spacing })
+          const remain = Math.max(1, burstMax - planted)
+          const r = await actions.run('place_blocks', { item: s.name, area: { radius: cfg.radius }, max: Math.min(remain, 3), spacing: cfg.spacing })
           if (r && r.ok) planted += 1
         } catch {}
       }

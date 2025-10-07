@@ -67,6 +67,10 @@ async function hardReset (reason) {
     }
   } catch {}
   try {
+    // immediate local stop (even if actions fail)
+    try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
+    try { bot.clearControlStates() } catch {}
+    try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
     // Use actions.stop(hard) to broadcast agent:stop_all and cancel digging/movement/windows, etc.
     const actions = require('./actions').install(bot, { log: logging.getLogger('core') })
     await actions.run('stop', { mode: 'hard' })

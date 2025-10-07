@@ -533,6 +533,7 @@ function install (bot, { log, on, registerCleanup }) {
 
     while (!miningAbort && broken < limit) {
       const posList = bot.findBlocks({
+        point: origin,
         maxDistance: Math.max(2, radius),
         count: 64,
         matching: (b) => {
@@ -1166,16 +1167,18 @@ function install (bot, { log, on, registerCleanup }) {
         const extra = []
         for (let dx = -r; dx <= r; dx++) {
           for (let dz = -r; dz <= r; dz++) {
-            const p = new V(center.x + dx, center.y - 1, center.z + dz)
-            const b = bot.blockAt(p)
-            if (!b) continue
-            const n = String(b.name || '').toLowerCase()
-            if (!baseNames.includes(n)) continue
-            const top = bot.blockAt(p.offset(0, 1, 0))
-            const tn = String(top?.name || 'air').toLowerCase()
-            const replaceable = (tn === 'air') || ['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)
-            if (!replaceable) continue
-            extra.push(p)
+            for (let dy = -1; dy <= 2; dy++) { // scan slight vertical range to handle raised ground
+              const p = new V(center.x + dx, center.y + dy, center.z + dz)
+              const b = bot.blockAt(p)
+              if (!b) continue
+              const n = String(b.name || '').toLowerCase()
+              if (!baseNames.includes(n)) continue
+              const top = bot.blockAt(p.offset(0, 1, 0))
+              const tn = String(top?.name || 'air').toLowerCase()
+              const replaceable = (tn === 'air') || ['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)
+              if (!replaceable) continue
+              extra.push(p)
+            }
           }
         }
         if (extra.length) {
