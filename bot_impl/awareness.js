@@ -97,53 +97,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch (e) { return `报告构建失败:${e?.message || e}` }
   }
 
-  function canCallAI () {
-    try {
-      const ai = state.ai || {}
-      if (!ai.enabled) return false
-      if (!ai.key) return false
-      return true
-    } catch { return false }
-  }
-
-  function toolLineFrom (text) {
-    const m = /TOOL\s+(\{[\s\S]*\})/i.exec(String(text || ''))
-    if (!m) return null
-    try { return JSON.parse(m[1]) } catch { return null }
-  }
-
-  async function askAiAndAct (report) {
-    if (!canCallAI()) return
-    const ai = state.ai
-    const base = (ai.baseUrl || (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com')).replace(/\/$/, '')
-    const path = (ai.path || '/chat/completions')
-    const url = base + path
-    const sys = [
-      '你是Minecraft的隐形副手, 接收“环境感知报告”, 用中文简短决定应对。',
-      '如果需要执行操作, 只输出一行: TOOL {"tool":"<名字>","args":{...}}。否则输出简短建议。',
-      '工具: stop{mode?="soft"|"hard"}, goto{x,y,z,range?}, follow_player{name,range?}, guard{name,radius?}, hunt_player{name,range?,durationMs?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,collect?}, collect{what?="drops",radius?,max?,timeoutMs?}, mount_near{radius?,prefer?}, dismount{}, say{text}'
-    ].join('\n')
-    const msg = [{ role: 'system', content: sys }, { role: 'user', content: `环境感知报告: ${report}` }]
-    const body = { model: ai.model || 'deepseek-chat', messages: msg, temperature: 0.2, max_tokens: 60, stream: false }
-    let out = null
-    try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.key}` }, body: JSON.stringify(body) })
-      const json = await res.json()
-      out = json?.choices?.[0]?.message?.content || ''
-    } catch (e) {
-      L.warn('ai call failed:', e?.message || e)
-      return
-    }
-    const tool = toolLineFrom(out)
-    if (!tool) return
-    try {
-      try { (state || (state = {})).externalBusy = true; bot.emit('external:begin', { source: 'sense', tool: tool.tool }) } catch {}
-      const actions = require('./actions').install(bot, { log })
-      const r = await actions.run(tool.tool, tool.args || {})
-      L.info('AI tool ->', tool.tool, tool.args, 'result=', r && (r.ok ? 'ok' : 'fail'))
-    } catch (e) { L.warn('tool exec failed:', e?.message || e) }
-    finally { try { (state || (state = {})).externalBusy = false; bot.emit('external:end', { source: 'sense', tool: tool.tool }) } catch {} }
-  }
+  // no AI usage here; this module only provides heuristics
 
   function maybeAutoEscape () {
     try {
@@ -187,14 +141,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     // quick heuristic escape if strong suspicion
     const escaped = maybeAutoEscape()
     if (escaped) { pauseUntil = now() + 5000; return }
-    // otherwise, occasionally ask AI if interesting
-    const cutoff = now() - 4000
-    const b = recentBlocks.filter(r => r.t >= cutoff).length
-    const a = recentActs.filter(r => r.t >= cutoff).length
-    if (b + a < 2) return
-    const report = buildReportText()
-    askAiAndAct(report).catch(() => {})
-    pauseUntil = now() + 6000
+    // could extend with non-AI reactions here in future
   }
 
   on('blockUpdate', onBlockUpdate)

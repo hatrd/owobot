@@ -1,5 +1,5 @@
 // AI chat dispatcher for in-game dialogue.
-// Rule: if a player message starts with "owk", route it to the DeepSeek-compatible chat API
+// Rule: if a player message starts with the dynamic trigger (first 3 alnum chars of bot name; fallback 'bot'), route it to the DeepSeek-compatible chat API
 // and reply concisely. Per‑player short memory is kept across hot reloads via shared state.
 
 const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
@@ -54,7 +54,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   // global recent chat logs
   state.aiRecent = state.aiRecent || [] // [{t, user, text}]
-  state.aiOwk = state.aiOwk || []       // subset with owk
+  state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
   state.aiLong = state.aiLong || []     // long-term summaries [{t, summary}]
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
   state.aiSpend = state.aiSpend || { day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }, month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }, total: { inTok: 0, outTok: 0, cost: 0 } }
@@ -166,14 +166,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function systemPrompt () {
     return [
       '你是Minecraft服务器中的简洁助手。',
-      '优先使用“游戏上下文”和“聊天上下文”的信息作答，直接引用其中的数值与列表。',
-      '风格：中文、极简、单句；',
-      '如果用户请求执行游戏内操作，请只输出一行: TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具示例: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
-      '提到：',
-      ' - 位置/维度/时间：引用 游戏上下文 的 位置/维度/昼夜。',
-      ' - 附近玩家/掉落物：引用相应列表或说“没有”。',
-      ' - 背包：引用“背包:”中的物品。'
+      '风格：中文、可爱、极简、单句。',
+      '在需要执行工具时输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
+      '可用工具: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
+      '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
   }
 
@@ -184,9 +180,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return t.slice(0, Math.max(0, maxLen - 1)) + '…'
   }
 
+  function triggerWord () {
+    try {
+      const raw = String(bot.username || '').match(/[a-z0-9]/gi)?.join('') || ''
+      const pfx = raw.slice(0, 3).toLowerCase()
+      return pfx || 'bot'
+    } catch { return 'bot' }
+  }
+
   function buildContextPrompt (username) {
     const ctx = state.ai.context || { include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5 }
-    return H.buildContextPrompt(username, state.aiRecent, state.aiOwk, ctx)
+    return H.buildContextPrompt(username, state.aiRecent, state.aiOwk, { ...ctx, trigger: triggerWord() })
   }
 
   // --- Game context via observer ---
@@ -310,8 +314,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function handleChat (username, message) {
     const raw = String(message || '')
     const m = raw.trim()
-    if (!/^owk\b/i.test(m)) return
-    let content = m.replace(/^owk\b\s*/i, '')
+    const trig = triggerWord()
+    const re = new RegExp('^' + trig + '\\b', 'i')
+    if (!re.test(m)) return
+    let content = m.replace(re, '')
     content = content.replace(/^[:：,，。.!！\s]+/, '')
     if (!state.ai.enabled) return
     if (!content) return
@@ -348,7 +354,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const onChat = (username, message) => { handleChat(username, message).catch(() => {}) }
   on('chat', onChat)
-  // capture recent chats for context (store even if不以owk开头)
+  // capture recent chats for context (store even if not starting with trigger)
   const onChatCapture = (username, message) => {
     try {
       const text = String(message || '').trim()
@@ -391,7 +397,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
         })()
       }
-      if (/\bowk\b/i.test(text)) {
+      const trig = triggerWord()
+      const trigRe = new RegExp('\\b' + trig + '\\b', 'i')
+      if (trigRe.test(text)) {
         state.aiOwk.push(entry)
         const owkMax = Math.max(10, cs.owkStoreMax || 100)
         if (state.aiOwk.length > owkMax) state.aiOwk.splice(0, state.aiOwk.length - owkMax)

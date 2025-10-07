@@ -13,33 +13,35 @@ function trimReply (text, maxLen) {
   return t.slice(0, Math.max(0, maxLen - 1)) + '…'
 }
 
-function buildContextPrompt (username, recent, recentOwk, options = {}) {
-  const ctx = Object.assign({ include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5 }, options)
+function buildContextPrompt (username, recent, recentTrig, options = {}) {
+  const ctx = Object.assign({ include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5, trigger: 'owk' }, options)
   if (!ctx.include) return ''
   const now = Date.now()
   const cutoff = now - (Math.max(10, (ctx.recentWindowSec || 300)) * 1000)
   const lines = (Array.isArray(recent) ? recent : [])
-  const isOwk = (txt) => /\bowk\b/i.test(String(txt || ''))
+  const trig = String(ctx.trigger || 'owk')
+  const trigRe = new RegExp('\\b' + trig.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\b', 'i')
+  const isTrig = (txt) => trigRe.test(String(txt || ''))
   const recentKept = lines
     .filter(r => (r?.t ?? cutoff) >= cutoff)
     .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
     .slice(-(ctx.recentCount || 0))
-  let owkKept = []
+  let trigKept = []
   if (ctx.includeOwk) {
-    const source = Array.isArray(recentOwk) ? recentOwk : (Array.isArray(recent) ? recent : [])
+    const source = Array.isArray(recentTrig) ? recentTrig : (Array.isArray(recent) ? recent : [])
     const owkCut = now - (Math.max(10, (ctx.owkWindowSec || 900)) * 1000)
-    owkKept = source
-      .filter(r => (r?.t ?? owkCut) >= owkCut && isOwk(r.text))
+    trigKept = source
+      .filter(r => (r?.t ?? owkCut) >= owkCut && isTrig(r.text))
       .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
-    if (ctx.owkMax != null) owkKept = owkKept.slice(-ctx.owkMax)
+    if (ctx.owkMax != null) trigKept = trigKept.slice(-ctx.owkMax)
   }
   const chatLines = recentKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
-  const owkLines = owkKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
+  const trigLines = trigKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
   const parts = [
     `环境: 我们在Minecraft服务器中, 玩家会随意聊天或询问与MC相关的问题; 你的回答要极其简短.`,
     `当前对话玩家: ${username}.`,
     `最近聊天: ${chatLines || '无'}.`,
-    ctx.includeOwk ? `含 owk 的历史: ${owkLines || '无'}.` : ''
+    ctx.includeOwk ? `含 ${trig} 的历史: ${trigLines || '无'}.` : ''
   ].filter(Boolean)
   return parts.join(' ')
 }

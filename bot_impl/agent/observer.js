@@ -78,6 +78,13 @@ function collectInventorySummary (bot, top = 6) {
   try {
     const inv = bot.inventory?.items() || []
     const held = bot.heldItem ? (bot.heldItem.name || String(bot.heldItem.type)) : null
+    const offhand = (() => { try { return bot.inventory?.slots?.[45]?.name || null } catch { return null } })()
+    const armor = {
+      head: (() => { try { return bot.inventory?.slots?.[5]?.name || null } catch { return null } })(),
+      chest: (() => { try { return bot.inventory?.slots?.[6]?.name || null } catch { return null } })(),
+      legs: (() => { try { return bot.inventory?.slots?.[7]?.name || null } catch { return null } })(),
+      feet: (() => { try { return bot.inventory?.slots?.[8]?.name || null } catch { return null } })()
+    }
     const mcData = ensureMcData(bot)
     const foodsByName = mcData?.foodsByName || {}
     let foodCount = 0
@@ -90,8 +97,9 @@ function collectInventorySummary (bot, top = 6) {
     const tiers = ['netherite','diamond','iron','stone','golden','wooden']
     let bestPick = null
     for (const t of tiers) { const key = `${t}_pickaxe`; if (byName.get(key)) { bestPick = key; break } }
-    const rows = Array.from(byName.entries()).sort((a, b) => b[1] - a[1]).slice(0, Math.max(1, top))
-    return { held, top: rows.map(([n, c]) => ({ name: n, count: c })), foodCount, bestPick }
+    const allSorted = Array.from(byName.entries()).sort((a, b) => b[1] - a[1]).map(([n, c]) => ({ name: n, count: c }))
+    const rows = allSorted.slice(0, Math.max(1, top))
+    return { held, offhand, armor, top: rows, all: allSorted, foodCount, bestPick }
   } catch { return { held: null, top: [], foodCount: 0, bestPick: null } }
 }
 
@@ -184,13 +192,14 @@ function toPrompt (snap) {
     // drops
     const dr = snap.nearby?.drops || []
     parts.push(dr.length ? (`附近掉落物: ${dr.length}个, 最近=${fmtNum(dr[0].d)}m`) : '附近掉落物: 0个')
-    // inventory summary
+    // inventory: full aggregated items + hands + armor
     const inv = snap.inv || {}
-    const invLine = (inv.top && inv.top.length) ? ('背包: ' + inv.top.map(it => `${it.name}x${it.count}`).join(', ')) : '背包: 无'
-    const heldLine = '手持: ' + (inv.held || '无')
-    const hb = Array.isArray(snap.hotbar) ? snap.hotbar : []
-    const hbLine = hb.length ? ('快捷栏: ' + hb.map(it => `${it.name}x${it.count}`).join(', ')) : ''
-    parts.push([invLine, heldLine, hbLine].filter(Boolean).join(' | '))
+    const invAll = Array.isArray(inv.all) ? inv.all : (Array.isArray(inv.top) ? inv.top : [])
+    const invLine = invAll.length ? ('背包: ' + invAll.map(it => `${it.name}x${it.count}`).join(', ')) : '背包: 无'
+    const handsLine = `主手: ${inv.held || '无'} | 副手: ${inv.offhand || '无'}`
+    const ar = inv.armor || {}
+    const armorLine = `装备: 头=${ar.head || '无'}, 胸=${ar.chest || '无'}, 腿=${ar.legs || '无'}, 脚=${ar.feet || '无'}`
+    parts.push([invLine, handsLine, armorLine].filter(Boolean).join(' | '))
     // blocks
     const bl = snap.blocks || {}
     const a = bl.under ? `脚下:${bl.under}` : ''

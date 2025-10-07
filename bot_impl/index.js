@@ -373,6 +373,8 @@ function activate (botInstance, options = {}) {
   try { require('./place-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('place') }) } catch (e) { coreLog.warn('place-cli install error:', e?.message || e) }
   // CLI: guard helper
   try { require('./guard-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('guard') }) } catch (e) { coreLog.warn('guard-cli install error:', e?.message || e) }
+  // CLI: status snapshot
+  try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
 
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
