@@ -18,7 +18,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     baseUrl: DEFAULT_BASE,
     path: DEFAULT_PATH,
     model: DEFAULT_MODEL,
-    maxReplyLen: 120,
+    maxReplyLen: 240,
     limits: null,
     // Cost control
     currency: (process.env.AI_CURRENCY || 'USD'),
@@ -167,11 +167,116 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return [
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
-      '在需要执行工具时输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
+      '回答优先使用已提供的“游戏上下文”；若是统计/查询类问题（如“多少/有无/哪些/在哪里/距离多远”等），直接回答，禁止调用会改变世界状态的工具。必要时仅可用 observe_detail 之类信息查询工具。',
+      '在确需执行动作时，才输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
       '可用工具: hunt_player{name,range?,durationMs?}, guard{name?,radius?,tickMs?}, follow_player{name,range?}, goto{x,y,z,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?, keepEquipped?, keepHeld?, keepOffhand?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
       '数量词映射："全部/所有/直到没有" -> until="all"；"一组/两组/N组" -> 目标数量≈64*N（原木/通用物品）。如用户指定“收集两组原木”，应使用 gather 或 break_blocks+collect，设置 max≈128 或 stacks=2。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
+  }
+
+  // --- Intent classification & quick answers to avoid wrong tool calls ---
+  function classifyIntent (text) {
+    try {
+      const t = String(text || '').toLowerCase()
+      const tCN = String(text || '')
+      const isInfo = /多少|几个|有无|有没有|哪些|什么|在哪|哪里|距离|多远/.test(tCN) || /(how many|how much|list|where|distance)/i.test(t)
+      if (isInfo) {
+        if (/敌对|怪|怪物|hostile|敌人/i.test(tCN)) return { kind: 'info', topic: 'hostiles' }
+        if (/实体|entities?|entity/i.test(t)) return { kind: 'info', topic: 'entities' }
+        if (/玩家|people|player/i.test(tCN)) return { kind: 'info', topic: 'players' }
+        if (/掉落|物品|drops|items/i.test(tCN)) return { kind: 'info', topic: 'drops' }
+        return { kind: 'info', topic: 'generic' }
+      }
+      return { kind: 'action' }
+    } catch { return { kind: 'unknown' } }
+  }
+
+  function quickAnswer (intent) {
+    try {
+      if (!intent || intent.kind !== 'info') return ''
+      const snap = observer.snapshot(bot, {})
+      if (intent.topic === 'hostiles') {
+        const hs = snap.nearby?.hostiles || { count: 0, nearest: null }
+        // 如果没有观测到但附近有玩家/夜间，尝试提示“可能正在加载”而不是直接否定
+        if (!hs.count) {
+          // trace: dump nearby entities to help diagnose
+          if (state.ai.trace && log?.info) {
+            try {
+              const me = bot.entity?.position
+              const rows = []
+              for (const e of Object.values(bot.entities || {})) {
+                try {
+                  if (!e || !e.position) continue
+                  const d = me ? e.position.distanceTo(me) : null
+                  if (!Number.isFinite(d) || d > 24) continue
+                  const nm = String(e.name || (e.displayName && e.displayName.toString && e.displayName.toString()) || e.kind || e.type || '').replace(/\u00a7./g, '')
+                  rows.push({ id: e.id, type: e.type, kind: e.kind || null, name: nm, d: Number(d.toFixed(2)) })
+                } catch {}
+              }
+              rows.sort((a, b) => a.d - b.d)
+              log.info('entities(nearest 24m) =', rows.slice(0, 40))
+            } catch {}
+          }
+          return '附近暂未发现敌对~'
+        }
+        return `附近有${hs.count}个敌对，最近${hs.nearest.name}@${Number(hs.nearest.d).toFixed(1)}m`
+      }
+      if (intent.topic === 'entities') {
+        try {
+          const me = bot.entity?.position
+          if (!me) return ''
+          const radius = 16
+          const list = []
+          for (const e of Object.values(bot.entities || {})) {
+            try {
+              if (!e || !e.position || e === bot.entity) continue
+              const d = e.position.distanceTo(me)
+              if (!Number.isFinite(d) || d > radius) continue
+              const nm = String(e.name || (e.displayName && e.displayName.toString && e.displayName.toString()) || e.kind || e.type || '').toLowerCase()
+              list.push({ name: nm || 'entity', d })
+            } catch {}
+          }
+          list.sort((a, b) => a.d - b.d)
+          if (state.ai.trace && log?.info) {
+            try {
+              const me2 = bot.entity?.position
+              const rows = []
+              for (const e of Object.values(bot.entities || {})) {
+                try {
+                  if (!e || !e.position) continue
+                  const d = me2 ? e.position.distanceTo(me2) : null
+                  if (!Number.isFinite(d) || d > radius) continue
+                  const nm = String(e.name || (e.displayName && e.displayName.toString && e.displayName.toString()) || e.kind || e.type || '').replace(/\u00a7./g, '')
+                  rows.push({ id: e.id, type: e.type, kind: e.kind || null, name: nm, d: Number(d.toFixed(2)) })
+                } catch {}
+              }
+              rows.sort((a, b) => a.d - b.d)
+              log.info('entities(nearest 16m) =', rows.slice(0, 40))
+            } catch {}
+          }
+          if (!list.length) return '附近没有实体~'
+          const nearest = list[0]
+          return `附近实体${list.length}个，最近${nearest.name}@${nearest.d.toFixed(1)}m`
+        } catch { return '' }
+      }
+      if (intent.topic === 'players') {
+        const npl = snap.nearby?.players || []
+        return npl.length ? `附近玩家${npl.length}个：` + npl.map(x => `${x.name}@${Number(x.d).toFixed(1)}m`).join(', ') : '附近没有玩家~'
+      }
+      if (intent.topic === 'drops') {
+        const dr = snap.nearby?.drops || []
+        return dr.length ? `附近掉落物${dr.length}个，最近${Number(dr[0].d).toFixed(1)}m` : '附近没有掉落物~'
+      }
+      // generic info -> summarize vitals briefly
+      const v = snap.vitals || {}
+      const hp = v.hp != null ? Math.round(v.hp) : null
+      const food = v.food != null ? v.food : null
+      const parts = []
+      if (hp != null) parts.push(`生命${hp}/20`)
+      if (food != null) parts.push(`饥饿${food}/20`)
+      return parts.length ? parts.join(' | ') : ''
+    } catch { return '' }
   }
 
   function trimReply (text, maxLen) {
@@ -214,7 +319,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return H.selectMemory(getMemory(username), budgetTok)
   }
 
-  async function callAI (username, content) {
+  async function callAI (username, content, intent) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
     const url = (baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (path || DEFAULT_PATH)
@@ -251,7 +356,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       model: model || DEFAULT_MODEL,
       messages,
       temperature: 0.2,
-      max_tokens: 80,
+      max_tokens: Math.max(120, Math.min(512, state.ai.maxTokensPerCall || 256)),
       stream: false
     }
 
@@ -282,7 +387,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','guard','follow_player','goto','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','autofish','mount_near','dismount','flee_trap'])
+          const allow = new Set(['hunt_player','guard','follow_player','goto','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','autofish','mount_near','dismount','flee_trap','observe_detail'])
+          // If the intent is informational, disallow action tools (only allow observe_detail/say)
+          if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
+            const ans = quickAnswer(intent)
+            if (ans) return H.trimReply(ans, maxReplyLen || 120)
+            return H.trimReply('我这就看看…', maxReplyLen || 120)
+          }
           if (!allow.has(String(payload.tool))) {
             return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
           }
@@ -334,10 +445,28 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       return
     }
 
+    // Quick answers for info questions to avoid unnecessary tools
+    const intent = classifyIntent(content)
+    if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
+    const quick = quickAnswer(intent)
+    if (quick) {
+      if (state.ai.trace && log?.info) {
+        try {
+          const snap = observer.snapshot(bot, {})
+          log.info('quickAnswer ->', quick)
+          log.info('snapshot.nearby.hostiles =', snap.nearby?.hostiles)
+          log.info('snapshot.nearby.players =', snap.nearby?.players)
+          log.info('snapshot.nearby.drops =', snap.nearby?.drops)
+        } catch {}
+      }
+      try { bot.chat(quick) } catch {}
+      return
+    }
+
     ctrl.busy = true
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', content)
-      const reply = await callAI(username, content)
+      const reply = await callAI(username, content, intent)
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
@@ -506,6 +635,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             case 'resettotal': state.aiSpend.total = { inTok: 0, outTok: 0, cost: 0 }; print('total spend reset'); break
             default:
               print('budget usage: .ai budget show|currency USD|pricein 0.002|priceout 0.002|day 1.5|month 10|maxtokens 512|notify on|resetday|resetmonth')
+          }
+          break
+        }
+        case 'reply': {
+          const k = (rest[0] || '').toLowerCase(); const v = rest[1]
+          switch (k) {
+            case 'maxlen':
+            case 'len':
+              state.ai.maxReplyLen = Math.max(60, parseInt(v || '240', 10))
+              print('maxReplyLen =', state.ai.maxReplyLen)
+              break
+            case 'show':
+            default:
+              print('reply =', { maxReplyLen: state.ai.maxReplyLen })
           }
           break
         }

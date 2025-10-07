@@ -18,6 +18,10 @@ An opinionated Mineflayer bot with hot‑reloaded behaviors and optional DeepSee
 - Auth modes: `MC_AUTH=offline` (default) or `microsoft` (use `MC_PASSWORD` where applicable)
 - Reduce logs: `MC_DEBUG=0 npm start`
 
+### AI Reply Length / Tokens
+- Increase reply tokens (model output): use CLI `.ai budget maxtokens 512` (default used for request `max_tokens`).
+- Increase chat reply text length (post-trim): `.ai reply maxlen 240` (default 240).
+
 ## Highlights
 - Hot reload without reconnect: change files under `bot_impl/` and the bot reloads logic in‑process; shared state persists when possible.
 - DeepSeek API integration: chat messages starting with `owk` are routed to DeepSeek for concise replies; the AI can call safe tools via a simple TOOL line.

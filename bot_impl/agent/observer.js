@@ -13,6 +13,8 @@ function collectNearbyPlayers (bot, range = 16, max = 5) {
     const me = bot.entity?.position
     if (!me) return []
     const list = []
+    const tokensEN = ['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute']
+    const tokensCN = ['苦力怕','僵尸','骷髅','蜘蛛','洞穴蜘蛛','末影人','女巫','史莱姆','溺尸','尸壳','掠夺者','恼鬼','掠夺兽','幻翼','烈焰人','恶魂','岩浆怪','守卫者','远古守卫者','潜影贝','凋灵骷髅','疣猪兽','僵尸疣猪兽','流浪者','蠹虫','唤魔者','卫道士','监守者','猪灵','猪灵蛮兵']
     for (const [name, rec] of Object.entries(bot.players || {})) {
       const e = rec?.entity
       if (!e || e === bot.entity) continue
@@ -52,7 +54,7 @@ function collectDrops (bot, range = 8, max = 6) {
 }
 
 function hostileSet () {
-  return new Set(['creeper','zombie','skeleton','spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma_cube','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden'])
+  return new Set(['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma_cube','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute'])
 }
 
 function collectHostiles (bot, range = 24) {
@@ -62,11 +64,20 @@ function collectHostiles (bot, range = 24) {
     if (!me) return { count: 0, nearest: null }
     const list = []
     for (const e of Object.values(bot.entities || {})) {
-      if (e?.type !== 'mob' || !e.position) continue
-      const nm = (e.name || e.displayName || '').toLowerCase()
-      if (!hs.has(nm)) continue
-      const d = e.position.distanceTo(me)
-      if (d <= range) list.push({ name: nm, d })
+      try {
+        if (!e || !e.position) continue
+        // Skip players explicitly
+        if (String(e.type || '').toLowerCase() === 'player') continue
+        // Robust name extraction (displayName may be a ChatMessage object)
+        let raw = e.name
+        if (!raw && e.displayName) raw = (typeof e.displayName.toString === 'function') ? e.displayName.toString() : String(e.displayName)
+        const nm = String(raw || '').toLowerCase().replace(/\u00a7./g, '')
+        // Accept exact id or fuzzy token match to handle servers with custom name suffixes
+        const isLike = hs.has(nm) || tokensEN.some(t => nm.includes(t)) || tokensCN.some(t => nm.includes(t))
+        if (!isLike) continue
+        const d = e.position.distanceTo(me)
+        if (Number.isFinite(d) && d <= range) list.push({ name: nm, d })
+      } catch {}
     }
     if (!list.length) return { count: 0, nearest: null }
     list.sort((a, b) => a.d - b.d)
@@ -171,7 +182,7 @@ function toPrompt (snap) {
       const src = snap.task.source === 'player' ? '玩家命令' : '自动(背包)'
       parts.push(`当前任务:${snap.task.name} | 触发:${src}`)
     }
-    const pos = snap.pos ? `位置:${snap.pos.x},${snap.pos.y},${snap.pos.z}` : '位置:未知'
+    const pos = snap.pos ? `你的位置:${snap.pos.x},${snap.pos.y},${snap.pos.z}` : '你的位置:未知'
     parts.push(pos)
     parts.push(`维度:${snap.dim}`)
     if (snap.time) parts.push(`时间:${snap.time}`)

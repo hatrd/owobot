@@ -23,6 +23,7 @@
   - Disable greeting: `MC_GREET=0 npm start` or `npm start -- --greet off`.
   - Change bot name: `MC_USERNAME=MyBot npm start` or `npm start -- --username MyBot`.
   - Reduce logs: `MC_DEBUG=0 npm start`.
+  - Increase AI reply size: `.ai budget maxtokens 512` and/or `.ai reply maxlen 240`.
 
 ## Hot Reload Workflow
 - Save atomically: prepare changes fully, then write them. Avoid partial/fragmented saves under `bot_impl/` (the watcher reloads on file events, debounce ≈120ms).
