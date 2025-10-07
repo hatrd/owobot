@@ -4,7 +4,7 @@
 //  .log list                  -> show known namespaces
 //  .log fish on               -> enable fishing logs (alias: fishing)
 //  .log off fish plant        -> turn off multiple namespaces
-//  .log debug ai guard        -> set level=debug for ai and guard
+//  .log debug ai defense      -> set level=debug for ai and defense
 //  .log all warn              -> set default level
 //  .log verbose               -> preset (all:info)
 //  .log quiet                 -> preset (all:warn)
@@ -26,7 +26,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       ['plant', 'plant'], ['autoplant', 'plant'],
       ['collect', 'collect'], ['pickup', 'collect'],
       ['place', 'place'], ['build', 'place'],
-      ['guard', 'guard'], ['pvp', 'pvp'],
+      ['defense', 'defense'], ['pvp', 'pvp'],
       ['eat', 'eat'], ['auto-eat', 'eat'],
       ['gear', 'gear'], ['auto-gear', 'gear'],
       ['sleep', 'sleep'], ['bed', 'sleep'],

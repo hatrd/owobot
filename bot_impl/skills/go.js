@@ -13,7 +13,7 @@ function ensurePathfinder (bot, log) {
 }
 
 module.exports = function goFactory ({ bot, args, log }) {
-  const radius = Math.max(1, parseFloat(args.radius || '1.5'))
+  const radius = Math.max(1, parseFloat(args.radius || '50'))
   let target = null
   let followEnt = null
   let lastD = null

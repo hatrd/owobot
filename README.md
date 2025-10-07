@@ -48,6 +48,11 @@ An opinionated Mineflayer bot with hot‑reloaded behaviors and optional DeepSee
 
 Note: Night sleep is automatic when near a bed; `goto_block{match:"bed"}` pairs well with it.
 
+## Combat/Defense Tools
+- Defend area (mob farm/guard spot): `defend_area{radius?,tickMs?,dig?}` — stand near current anchor, attack hostiles within radius; does not break blocks by default.
+- Defend player (follow and protect): `defend_player{name, radius?, followRange?, tickMs?, dig?}`.
+- Cull hostiles in radius: `cull_hostiles{radius?,tickMs?}`.
+
 ## CLI (terminal) Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`)
@@ -57,6 +62,11 @@ Note: Night sleep is automatic when near a bed; `goto_block{match:"bed"}` pairs 
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...` — configure AI key/model/base/path, list tools
+
+### Stopping Current Actions
+- Force stop via tools:
+  - `reset{}` (preferred), `stop{}` or `stop_all{}`.
+- Natural language like “停止/停下/停止追击/不要攻击/停止清怪/stop/cancel” is recognized and mapped to `reset{}` directly.
 
 ## Hot Reload Details
 - `bot.js` watches `bot_impl/` recursively, unloads old modules, calls `deactivate()`, and loads the new `index.js`.
