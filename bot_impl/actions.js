@@ -29,10 +29,95 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     bot.pathfinder.setGoal(new goals.GoalNear(x, y, z, range))
     return ok(`前往 ${x},${y},${z}`)
+  }
+
+  // Go to the nearest block matching names/match within radius
+  async function goto_block (args = {}) {
+    const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : (args.name ? [String(args.name).toLowerCase()] : null)
+    const match = args.match ? String(args.match).toLowerCase() : null
+    const radius = Math.max(2, parseInt(args.radius || '32', 10))
+    const range = Math.max(1, parseFloat(args.range || '1.5'))
+    if (!names && !match) return fail('缺少目标名（name|names|match）')
+    if (!bot.entity || !bot.entity.position) return fail('未就绪')
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = (args.dig === true); m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+
+    const me = bot.entity.position
+    // First try mineflayer.findBlocks
+    let candidates = bot.findBlocks({
+      point: me,
+      maxDistance: Math.max(2, radius),
+      count: 128,
+      matching: (b) => {
+        try {
+          if (!b) return false
+          const n = String(b.name || '').toLowerCase()
+          if (!n || n === 'air') return false
+          if (names && names.length) { if (names.includes(n)) return true }
+          if (match && n.includes(match)) return true
+          // Special shorthands
+          if (!names && match === 'bed') return n.endsWith('_bed')
+          return false
+        } catch { return false }
+      }
+    }) || []
+
+    // Fallback small scan if none
+    if (!candidates.length) {
+      try {
+        const V = require('vec3').Vec3
+        const c = me.floored ? me.floored() : new V(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z))
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dz = -radius; dz <= radius; dz++) {
+              const p = new V(c.x + dx, c.y + dy, c.z + dz)
+              const b = bot.blockAt(p)
+              if (!b) continue
+              const n = String(b.name || '').toLowerCase()
+              if (!n || n === 'air') continue
+              if (names && names.length && !names.includes(n)) continue
+              if (match && !n.includes(match)) continue
+              candidates.push(p)
+              if (candidates.length >= 128) break
+            }
+            if (candidates.length >= 128) break
+          }
+          if (candidates.length >= 128) break
+        }
+      } catch {}
+    }
+
+    if (!candidates.length) return fail('附近没有匹配方块')
+    // Evaluate reachability using pathfinder.getPathTo and choose the lowest-cost reachable target
+    candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+    const consider = candidates.slice(0, Math.min(80, candidates.length))
+    let best = null
+    let bestCost = Infinity
+    for (const c of consider) {
+      try {
+        const gx = Math.floor(c.x), gy = Math.floor(c.y), gz = Math.floor(c.z)
+        const g = new goals.GoalNear(gx, gy, gz, range)
+        const res = bot.pathfinder.getPathTo(m, g)
+        if (res && res.status === 'success') {
+          const cost = Number.isFinite(res.cost) ? res.cost : (res.path ? res.path.length : 999999)
+          if (cost < bestCost) { best = { pos: c, g }; bestCost = cost }
+        }
+      } catch {}
+    }
+    if (!best) return fail('附近没有可到达的匹配方块')
+    const bp = best.pos
+    const px = Math.floor(bp.x), py = Math.floor(bp.y), pz = Math.floor(bp.z)
+    bot.pathfinder.setGoal(best.g, true)
+    const targetName = (() => { try { return (bot.blockAt(bp)?.name) || (match || (names && names[0]) || 'block') } catch { return match || (names && names[0]) || 'block' } })()
+    return ok(`前往(可达) ${targetName} @ ${px},${py},${pz}`)
   }
 
   async function follow_player (args = {}) {
@@ -1539,7 +1624,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   function guard_debug (args = {}) { guardDebug = !(String(args.enabled ?? args.on ?? 'on').toLowerCase() === 'off'); return ok('guard debug=' + guardDebug) }
 
-  const registry = { goto, follow_player, reset, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

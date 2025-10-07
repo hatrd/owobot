@@ -7,7 +7,7 @@ function ensurePathfinder (bot, log) {
     const { Movements } = pkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = false; m.allowSprinting = true
     return { ok: true, pkg, m }
   } catch (e) { log && log.warn && log.warn('pathfinder missing'); return { ok: false } }
 }
@@ -78,4 +78,3 @@ module.exports = function goFactory ({ bot, args, log }) {
 
   return { start, tick, cancel }
 }
-

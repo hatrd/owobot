@@ -37,6 +37,17 @@ An opinionated Mineflayer bot with hot‑reloaded behaviors and optional DeepSee
 - Fire watch: detect/put out nearby fire.
 - World sense: lightweight sensing + simple anti‑trap.
 
+## New: Pathfind to Nearest Block
+- Tool: `goto_block{names?|name?|match?, radius?, range?}`
+  - Optional: `dig?: true` to allow breaking obstacles (default false to avoid destroying scaffolding/ladders).
+- Examples:
+  - Go to nearest bed: `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
+  - Go to nearest bed (force dig if blocked): `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48,"dig":true}}`
+  - Go to nearest crafting table: `TOOL {"tool":"goto_block","args":{"name":"crafting_table"}}`
+  - Go to nearest logs: `TOOL {"tool":"goto_block","args":{"match":"_log","radius":32}}`
+
+Note: Night sleep is automatic when near a bed; `goto_block{match:"bed"}` pairs well with it.
+
 ## CLI (terminal) Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`)
