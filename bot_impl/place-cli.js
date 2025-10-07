@@ -43,7 +43,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const args = parseArgs(payload.args || [])
       if (!args.item) { console.log('[PLACE] usage: .place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]'); return }
       const actions = require('./actions').install(bot, { log })
+      try { bot.emit('external:begin', { source: 'cli', tool: 'place_blocks' }) } catch {}
       const r = await actions.run('place_blocks', args)
+      try { bot.emit('external:end', { source: 'cli', tool: 'place_blocks' }) } catch {}
       console.log('[PLACE]', r.ok ? 'ok' : 'fail', r.msg)
     } catch (e) {
       console.log('[PLACE] error:', e?.message || e)
@@ -55,4 +57,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-

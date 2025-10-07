@@ -121,10 +121,10 @@ function collectEnv (bot) {
   try {
     const pos = bot.entity?.position
     const here = pos ? bot.blockAt(pos) : null
-    const biome = here?.biome?.name || here?.biome?.id || '未知'
     const weather = (bot.isRaining ? '下雨' : '晴')
-    return { biome, weather }
-  } catch { return { biome: '未知', weather: '' } }
+    // Note: biome intentionally omitted from prompt context per policy
+    return { weather }
+  } catch { return { weather: '' } }
 }
 
 function collectVitals (bot) {
@@ -149,21 +149,26 @@ function snapshot (bot, opts = {}) {
   const drops = collectDrops(bot, Math.max(1, opts.dropsRange || 8), Math.max(0, opts.dropsMax || 6))
   const hostiles = collectHostiles(bot, Math.max(1, opts.hostileRange || 24))
   const blocks = collectBlocks(bot)
-  return { t: now, pos, dim, time: tod, env, vitals, inv, hotbar, nearby: { players, drops, hostiles }, blocks }
+  // Current task from shared state (if any)
+  const task = (bot.state && bot.state.currentTask) ? { name: bot.state.currentTask.name, source: bot.state.currentTask.source, startedAt: bot.state.currentTask.startedAt } : null
+  return { t: now, pos, dim, time: tod, env, vitals, inv, hotbar, nearby: { players, drops, hostiles }, blocks, task }
 }
 
 function toPrompt (snap) {
   try {
     if (!snap) return ''
     const parts = []
+    // Current task line (if any)
+    if (snap.task && snap.task.name) {
+      const src = snap.task.source === 'player' ? '玩家命令' : '自动(背包)'
+      parts.push(`当前任务:${snap.task.name} | 触发:${src}`)
+    }
     const pos = snap.pos ? `位置:${snap.pos.x},${snap.pos.y},${snap.pos.z}` : '位置:未知'
     parts.push(pos)
     parts.push(`维度:${snap.dim}`)
     if (snap.time) parts.push(`时间:${snap.time}`)
-    // Biome: only print when a readable string
-    const biomeVal = snap.env?.biome
-    const biomeStr = (typeof biomeVal === 'string' && biomeVal) ? biomeVal : null
-    if (biomeStr || snap.env?.weather) parts.push(`群系:${biomeStr || '未知'} | 天气:${snap.env?.weather || ''}`)
+    // Weather only (biome removed from context)
+    if (snap.env?.weather) parts.push(`天气:${snap.env.weather}`)
     const v = snap.vitals || {}
     const vParts = []
     if (v.hp != null) vParts.push(`生命:${Math.round(v.hp)}/20`)

@@ -56,6 +56,25 @@ function initAfterSpawn() {
   }, 50)
 }
 
+async function hardReset (reason) {
+  try {
+    // Clear shared flags that could block behaviors
+    if (state) {
+      state.externalBusy = false
+      state.holdItemLock = null
+      state.autoLookSuspended = false
+      state.currentTask = null
+    }
+  } catch {}
+  try {
+    // Use actions.stop(hard) to broadcast agent:stop_all and cancel digging/movement/windows, etc.
+    const actions = require('./actions').install(bot, { log: logging.getLogger('core') })
+    await actions.run('stop', { mode: 'hard' })
+  } catch (e) {
+    try { console.log('hardReset error:', e?.message || e) } catch {}
+  }
+}
+
 async function digAt (pos) {
   const { x, y, z } = pos
   const target = bot.blockAt(new Vec3(x, y, z))
@@ -272,6 +291,22 @@ function activate (botInstance, options = {}) {
   }
 
   if (!Array.isArray(state.cleanups)) state.cleanups = []
+  // Bind logging to shared state so .log changes persist across reloads
+  try { logging.init(state) } catch {}
+  // expose shared state on bot for modules that only receive bot
+  try { bot.state = state } catch {}
+
+  // Track current external task for AI context (source: chat/cli/sense -> player/auto)
+  on('external:begin', (info) => {
+    try {
+      const src = String(info?.source || '').toLowerCase()
+      const source = (src === 'chat' || src === 'cli') ? 'player' : 'auto'
+      state.currentTask = { name: String(info?.tool || info?.name || 'unknown'), source, startedAt: Date.now() }
+    } catch {}
+  })
+  on('external:end', () => {
+    try { state.currentTask = null } catch {}
+  })
 
   function registerCleanup (fn) {
     try { if (typeof fn === 'function') state.cleanups.push(fn) } catch {}
@@ -336,12 +371,36 @@ function activate (botInstance, options = {}) {
   try { require('./collect-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('collect') }) } catch (e) { coreLog.warn('collect-cli install error:', e?.message || e) }
   // CLI: place blocks/saplings
   try { require('./place-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('place') }) } catch (e) { coreLog.warn('place-cli install error:', e?.message || e) }
+  // CLI: guard helper
+  try { require('./guard-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('guard') }) } catch (e) { coreLog.warn('guard-cli install error:', e?.message || e) }
 
   on('spawn', () => {
     console.log(`Connected to ${bot._client.socketServerHost || bot._client.socketServerHost || 'server'}:${bot._client.port || ''} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')
     initAfterSpawn()
     runOneShotIfPresent()
+  })
+
+  // Hard reset on death to avoid stale tasks carrying over after respawn
+  on('death', () => {
+    try { state.lastDeathAt = Date.now(); state.lastDeathReason = 'death' } catch {}
+    // Snapshot task at moment of death so we can report on respawn
+    try { state.lastTaskAtDeath = state.currentTask ? { ...state.currentTask } : null } catch {}
+    hardReset('death').catch(() => {})
+  })
+
+  // After respawn, notify that previous tasks were canceled due to death
+  on('respawn', () => {
+    const recentDeath = state?.lastDeathReason === 'death' && (Date.now() - (state.lastDeathAt || 0) < 15000)
+    if (recentDeath) {
+      try {
+        let msg = '死了啦，都你害的啦。'
+        const t = state.lastTaskAtDeath
+        if (t && t.source === 'player' && t.name) msg += `（任务${t.name}取消）`
+        bot.chat(msg)
+      } catch {}
+      try { state.lastDeathReason = null; state.lastTaskAtDeath = null } catch {}
+    }
   })
 
   // If plugin reloads after spawn, re-initialize immediately

@@ -6,6 +6,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const S = state.autoFish = state.autoFish || {}
   const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 8000, radius: 10, debug: false }, S.cfg || {})
+  // Generation token to invalidate old sessions across hot-reload or resets
+  S.gen = (S.gen || 0) + 1
+  const GEN = S.gen
 
   let timer = null
   let running = false
@@ -147,11 +150,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function runSession () {
     if (session) return
+    // prevent cross-reload overlap: shared flag
+    if (S.running) return
+    S.running = true
     session = (async () => {
       try {
+        try { if (state) state.currentTask = { name: 'auto_fish', source: 'auto', startedAt: Date.now() } } catch {}
         // suspend auto-look and hand-equip clobber during fishing
         try { if (state) { state.autoLookSuspended = true; state.holdItemLock = 'fishing_rod'; state.isFishing = true } } catch {}
         // preconditions
+        if (S.gen !== GEN) return
         if (!hasFishingRod()) { if (cfg.debug) L.info('skip: no rod'); return }
         const me = bot.entity?.position; if (!me) { if (cfg.debug) L.info('skip: not ready'); return }
         if (!isNearbyWater(me, cfg.radius)) { if (cfg.debug) L.info('skip: no water nearby'); return }
@@ -161,7 +169,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         await goto(spot, 0)
         // Equip rod and fish loop until preconditions break
         const ok = await ensureRodEquipped(); if (!ok) { if (cfg.debug) L.info('equip failed'); return }
-        while (cfg.enabled) {
+        while (cfg.enabled && S.gen === GEN) {
           if (state.externalBusy) break
           if (!hasFishingRod()) break
           const here = bot.entity?.position; if (!here) break
@@ -179,13 +187,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
               try { await bot.lookAt(aim.offset(0.5, 0.4, 0.5), true) } catch {}
             }
           } catch {}
+          if (S.gen !== GEN) break
           const okFish = await fishOnce()
           // if fish cancelled immediately, add small backoff to avoid rapid retry storm
           await new Promise(r => setTimeout(r, okFish ? 300 : 700))
         }
       } finally {
+        try { if (state && state.currentTask && state.currentTask.name === 'auto_fish') state.currentTask = null } catch {}
         try { if (state) { state.holdItemLock = null; state.autoLookSuspended = false; state.isFishing = false } } catch {}
         session = null
+        S.running = false
       }
     })()
     await session
@@ -208,8 +219,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // Start immediately on install to be hot-reload safe
   start()
   on('end', stop)
-  on('agent:stop_all', () => { /* no-op; session loop checks externalBusy */ })
-  registerCleanup && registerCleanup(() => { stop() })
+  on('agent:stop_all', () => { try { S.gen++; if (cfg.debug) L.info('invalidate gen ->', S.gen); try { bot.activateItem() } catch {} } catch {} })
+  registerCleanup && registerCleanup(() => { try { S.gen++ } catch {}; stop() })
 
   // CLI: .autofish on|off|status|interval ms|radius N|debug on|off
   on('cli', ({ cmd, args }) => {

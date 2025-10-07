@@ -169,7 +169,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '优先使用“游戏上下文”和“聊天上下文”的信息作答，直接引用其中的数值与列表。',
       '风格：中文、极简、单句；',
       '如果用户请求执行游戏内操作，请只输出一行: TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具示例: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, collect{what?="drops",radius?,names?,match?,max?,timeoutMs?,until?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, observe_detail{what?=entities|players|hostiles|blocks|inventory,radius?,max?}, skill_start{skill,args,expected?}, skill_status{taskId}, skill_cancel{taskId}.',
+      '可用工具示例: hunt_player{name,range?,durationMs?}, guard{name,radius?}, follow_player{name,range?}, goto{x,y,z,range?}, stop{mode?="soft"|"hard"}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
       '提到：',
       ' - 位置/维度/时间：引用 游戏上下文 的 位置/维度/昼夜。',
       ' - 附近玩家/掉落物：引用相应列表或说“没有”。',
@@ -276,7 +276,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         try { payload = JSON.parse(toolMatch[1]) } catch {}
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
-          // Mark external-busy for priority: chat-triggered actions > background
+          // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
+          const allow = new Set(['hunt_player','guard','follow_player','goto','stop','say','equip','toss','break_blocks','place_blocks','pickup','deposit','mount_near','dismount','flee_trap'])
+          if (!allow.has(String(payload.tool))) {
+            // Silently ignore or return a gentle message
+            return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
+          }
+          // Mark external-busy and current task for context; emit begin/end for tracker
           try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
           const res = await tools.run(payload.tool, payload.args || {})
           if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)

@@ -24,7 +24,7 @@ function defaultLevelFromEnv () {
 }
 
 // Active config lives in shared state when available, so runtime changes persist across reloads.
-let active = { map: new Map(), defaultLevel: defaultLevelFromEnv(), spec: '' }
+let active = { map: new Map(), defaultLevel: defaultLevelFromEnv(), spec: '', known: new Set() }
 
 function loadInitialSpec () {
   let spec = process.env.LOG
@@ -51,7 +51,8 @@ function init (state) {
     state.logConfig = {
       spec: loadInitialSpec(),
       map: new Map(),
-      defaultLevel: defaultLevelFromEnv()
+      defaultLevel: defaultLevelFromEnv(),
+      known: new Set()
     }
   }
   active = state.logConfig
@@ -91,6 +92,7 @@ function levelForNs (ns) {
 
 function getLogger (ns) {
   const key = String(ns || 'core').toLowerCase()
+  try { if (active && active.known) active.known.add(key) } catch {}
   function should (want) { return LEVELS[want] <= levelForNs(key) }
   function fmt (lvl, args) { return [`[${lvl.toUpperCase()}][${key}]`, ...args] }
   return {
@@ -101,4 +103,8 @@ function getLogger (ns) {
   }
 }
 
-module.exports = { getLogger, LEVELS, init, setSpec, setLevel, getSpec, parseSpec }
+function knownNamespaces () {
+  try { return Array.from(active.known || new Set()).sort() } catch { return [] }
+}
+
+module.exports = { getLogger, LEVELS, init, setSpec, setLevel, getSpec, parseSpec, knownNamespaces }

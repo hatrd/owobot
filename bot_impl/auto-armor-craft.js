@@ -117,6 +117,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     ]
     let remaining = invCount('iron_ingot')
     let crafted = 0
+    try { if (state) state.currentTask = { name: 'auto_armor_craft', source: 'auto', startedAt: Date.now() } } catch {}
     for (const p of PIECES) {
       if (remaining < p.cost) continue
       // Only craft if that slot is in lacking list
@@ -131,6 +132,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       } else if (cfg.debug) { L.debug('craft failed:', p.name) }
     }
     if (crafted > 0) L.info('crafted iron armor pieces:', crafted)
+    try { if (state && state.currentTask && state.currentTask.name === 'auto_armor_craft') state.currentTask = null } catch {}
   }
 
   async function tick () {

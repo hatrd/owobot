@@ -11,6 +11,7 @@ function install (bot, { log, on, registerCleanup }) {
   const observer = require('./agent/observer')
   const skillRunnerMod = require('./agent/runner')
   let pathfinderPkg = null
+  let guardDebug = false
   function ensurePathfinder () {
     try { if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder'); if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder); return true } catch (e) { log && log.warn && log.warn('pathfinder missing'); return false }
   }
@@ -747,52 +748,141 @@ function install (bot, { log, on, registerCleanup }) {
 
   function isHostile (name) {
     const nm = String(name || '').toLowerCase()
-    return new Set(['creeper','zombie','skeleton','spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma_cube','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden']).has(nm)
+    // Exclude creeper by default (avoid detonations)
+    return new Set([
+      'zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma_cube','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin_brute'
+    ]).has(nm)
   }
 
   async function guard (args = {}) {
-    const { name, radius = 8, followRange = 3, tickMs = 250 } = args
-    if (!name) return fail('缺少玩家名')
+    const { name = '', radius = 8, followRange = 3, tickMs = 250 } = args
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
     m.allowSprinting = true; m.canDig = true
     bot.pathfinder.setMovements(m)
-    guardTarget = String(name)
+    guardTarget = String(name || '')
     if (guardInterval) { try { clearInterval(guardInterval) } catch {}; guardInterval = null }
     let mode = 'follow'
     let currentMobId = null
-    guardInterval = setInterval(() => {
+    // optional ranged plugin support
+    let hawkLoaded = false
+    try { if (!bot.hawkEye) { bot.loadPlugin(require('minecrafthawkeye')) }; hawkLoaded = !!bot.hawkEye } catch {}
+    let rangedActive = false
+
+    function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
+    function invGet (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === n) || null } catch { return null } }
+    function pickRangedWeapon () {
+      // Require arrows present; prefer crossbow > bow
+      if (!invHas('arrow')) return null
+      if (invHas('crossbow')) return 'crossbow'
+      if (invHas('bow')) return 'bow'
+      return null
+    }
+    function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false }
+    async function ensureWeaponEquipped (weapon) {
       try {
-        const targetEnt = bot.players[guardTarget]?.entity
-        if (!targetEnt) return
-        // nearest hostile around target player
+        const it = invGet(weapon)
+        if (!it) return false
+        if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === weapon) return true
+        await bot.equip(it, 'hand')
+        return true
+      } catch { return false }
+    }
+    // Anchor point when guarding a position (no name provided)
+    const anchor = (!guardTarget ? (bot.entity?.position?.clone?.() || null) : null)
+
+    function resolveGuardEntity () {
+      if (!guardTarget) return null
+      try {
+        const wanted = String(guardTarget).trim().toLowerCase()
+        // primary: bot.players map
+        for (const [uname, rec] of Object.entries(bot.players || {})) {
+          if (String(uname || '').toLowerCase() === wanted) return rec?.entity || null
+        }
+        // fallback: scan entities of type player with username
+        for (const e of Object.values(bot.entities || {})) {
+          try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === wanted) return e } catch {}
+        }
+        return null
+      } catch { return null }
+    }
+
+    function mobName (e) {
+      try {
+        const raw = e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || ''
+        return String(raw).replace(/\u00a7./g, '').toLowerCase()
+      } catch { return '' }
+    }
+
+    guardInterval = setInterval(async () => {
+      try {
+        const targetEnt = resolveGuardEntity()
+        const centerPos = targetEnt ? targetEnt.position : (anchor || bot.entity?.position)
+        if (!centerPos) return
+        // nearest hostile around center
         let nearest = null; let bestD = Infinity
         for (const e of Object.values(bot.entities || {})) {
-          if (e?.type !== 'mob' || !e.position || !isHostile(e.name || e.displayName)) continue
-          const d = e.position.distanceTo(targetEnt.position)
+          if (e?.type !== 'mob' || !e.position) continue
+          const nm = mobName(e)
+          if (!isHostile(nm)) continue
+          const d = e.position.distanceTo(centerPos)
           if (d <= radius && d < bestD) { bestD = d; nearest = e }
         }
+        if (guardDebug && log?.info) {
+          try {
+            log.info('[guard] center=', { x: Math.floor(centerPos.x), y: Math.floor(centerPos.y), z: Math.floor(centerPos.z) }, 'nearest=', nearest ? mobName(nearest) : 'none', 'd=', nearest ? bestD.toFixed(1) : '-')
+          } catch {}
+        }
         if (nearest) {
-          if (mode !== 'chase' || currentMobId !== nearest.id) {
-            bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 1.8), true)
-            mode = 'chase'; currentMobId = nearest.id
-          }
           const meD = nearest.position.distanceTo(bot.entity.position)
-          if (meD <= 2.3) {
-            try { bot.lookAt(nearest.position.offset(0, 1.2, 0), true) } catch {}
-            try { bot.attack(nearest) } catch {}
+          const weapon = pickRangedWeapon()
+          if (hawkLoaded && weapon && meD > 4) {
+            try {
+              if (!rangedActive || currentMobId !== nearest.id) {
+                stopRanged()
+                // try to equip weapon explicitly to avoid other modules holding tools
+                try { await ensureWeaponEquipped(weapon) } catch {}
+                bot.hawkEye.autoAttack(nearest, weapon)
+                rangedActive = true
+                currentMobId = nearest.id
+                mode = 'ranged'
+                if (guardDebug && log?.info) log.info('[guard] ranged ->', weapon, 'mob=', mobName(nearest))
+              }
+              // keep some distance while ranging
+              bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 6), true)
+            } catch {}
+          } else {
+            if (mode !== 'chase' || currentMobId !== nearest.id) {
+              stopRanged()
+              bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 1.8), true)
+              mode = 'chase'; currentMobId = nearest.id
+              if (guardDebug && log?.info) log.info('[guard] chase ->', mobName(nearest))
+            }
+            if (meD <= 2.8) {
+              try { require('./pvp').ensureBestWeapon(bot) } catch {}
+              try { bot.lookAt(nearest.position.offset(0, 1.2, 0), true) } catch {}
+              try { bot.attack(nearest) } catch {}
+            }
           }
         } else {
-          if (mode !== 'follow') {
+          stopRanged()
+          if (targetEnt) {
+            // always refresh follow goal to ensure we keep up
             bot.pathfinder.setGoal(new goals.GoalFollow(targetEnt, followRange), true)
             mode = 'follow'; currentMobId = null
+            if (guardDebug && log?.info) log.info('[guard] follow ->', String(guardTarget))
+          } else if (anchor) {
+            bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(anchor.x), Math.floor(anchor.y), Math.floor(anchor.z), Math.max(1, followRange)), true)
+            mode = 'hold'; currentMobId = null
+            if (guardDebug && log?.info) log.info('[guard] hold at anchor')
           }
         }
       } catch {}
     }, Math.max(150, tickMs))
-    return ok(`开始护卫 ${guardTarget} (半径${radius}格)`)
+    try { bot.once('agent:stop_all', stopRanged) } catch {}
+    return ok(guardTarget ? `开始护卫玩家 ${guardTarget} (半径${radius}格)` : `开始驻守当前位置 (半径${radius}格)`)
   }
 
   // --- Collect dropped items (pickups) ---
@@ -880,6 +970,9 @@ function install (bot, { log, on, registerCleanup }) {
     }
     return ok(`已拾取附近掉落 (尝试${picked})`)
   }
+
+  // Alias for AI clarity: pickup == collect
+  async function pickup (args = {}) { return collect(args || {}) }
 
   // --- Placing blocks/items ---
   async function place_blocks (args = {}) {
@@ -1044,7 +1137,116 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`已放置 ${item} x${placed.length}`)
   }
 
-  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, equip, toss, break_blocks, place_blocks, collect, mount_near, dismount, flee_trap, observe_detail, skill_start, skill_status, skill_cancel }
+  // --- Deposit items into nearest chest/barrel ---
+  async function deposit (args = {}) {
+    const radius = Math.max(2, parseInt(args.radius || '8', 10))
+    const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = false; m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+
+    function isContainerName (n) {
+      const s = String(n || '').toLowerCase()
+      if (s === 'chest' || s === 'trapped_chest') return true
+      if (includeBarrel && s === 'barrel') return true
+      return false
+    }
+
+    const me = bot.entity?.position
+    if (!me) return fail('未就绪')
+    const blocks = bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 32 }) || []
+    if (!blocks.length) return fail('附近没有箱子')
+    blocks.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+    const target = blocks[0]
+
+    // Approach
+    bot.pathfinder.setGoal(new goals.GoalNear(target.x, target.y, target.z, 1), true)
+    const until = Date.now() + 6000
+    while (Date.now() < until) {
+      await wait(100)
+      const d = bot.entity.position.distanceTo(target)
+      if (d <= 2.2) break
+    }
+    try { bot.pathfinder.setGoal(null) } catch {}
+    try { bot.clearControlStates() } catch {}
+    await wait(60)
+
+    // Open container
+    const { Vec3 } = require('vec3')
+    const blk = bot.blockAt(new Vec3(target.x, target.y, target.z))
+    if (!blk) return fail('箱子不可见')
+    try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
+    let container = null
+    try { container = await bot.openContainer(blk) } catch (e) { return fail('无法打开箱子: ' + (e?.message || e)) }
+
+    function itemFromSlot (slot) {
+      const key = String(slot).toLowerCase()
+      if (key === 'hand' || key === 'main' || key === 'mainhand') return bot.heldItem || null
+      if (key === 'offhand' || key === 'off-hand' || key === 'off_hand') return bot.inventory?.slots?.[45] || null
+      const idx = parseInt(String(slot), 10)
+      if (Number.isFinite(idx) && bot.inventory?.slots) return bot.inventory.slots[idx] || null
+      return null
+    }
+
+    // Build items list similar to toss interface
+    const arr = (() => {
+      if (Array.isArray(args.items) && args.items.length) return args.items
+      if (Array.isArray(args.names) && args.names.length) return args.names.map(n => ({ name: n }))
+      if (args.name) return [{ name: args.name, count: args.count }]
+      if (args.slot) return [{ slot: args.slot, count: args.count }]
+      return null
+    })()
+
+    let kinds = 0
+    let total = 0
+    try {
+      if ((!arr || !arr.length) && (args.all === true || String(args.all).toLowerCase() === 'true')) {
+        // Deposit all inventory stacks
+        const items = (bot.inventory?.items() || []).slice()
+        for (const it of items) {
+          const cnt = it?.count || 0
+          if (cnt <= 0) continue
+          try { await container.deposit(it.type, it.metadata, cnt, it.nbt); kinds++; total += cnt } catch {}
+        }
+      } else if (arr && arr.length) {
+        for (const spec of arr) {
+          const cnt = (spec && spec.count != null) ? Math.max(0, Number(spec.count)) : null
+          if (spec.slot) {
+            const it = itemFromSlot(spec.slot)
+            if (!it) continue
+            const n = cnt != null ? Math.min(cnt, it.count || 0) : (it.count || 0)
+            if (n > 0) { try { await container.deposit(it.type, it.metadata, n, it.nbt); kinds++; total += n } catch {} }
+            continue
+          }
+          const nm = spec?.name
+          if (!nm) continue
+          const list = (bot.inventory?.items() || []).filter(x => String(x?.name || '').toLowerCase() === String(nm).toLowerCase())
+          if (!list.length) continue
+          if (cnt != null) {
+            const it = list[0]
+            const n = Math.min(cnt, it.count || 0)
+            if (n > 0) { try { await container.deposit(it.type, it.metadata, n, it.nbt); kinds++; total += n } catch {} }
+          } else {
+            for (const it of list) { const c = it.count || 0; if (c > 0) { try { await container.deposit(it.type, it.metadata, c, it.nbt); kinds++; total += c } catch {} } }
+          }
+        }
+      } else {
+        return fail('缺少物品参数（或指定 all=true）')
+      }
+    } finally { try { container.close() } catch {} }
+    if (kinds <= 0) return fail('没有可存放的物品')
+    return ok(`已经把东西塞进箱子啦~ 共${kinds}种${total}个`)
+  }
+
+  // Back-compat alias for previous API
+  async function deposit_all (args = {}) { return deposit({ ...args, all: true }) }
+
+  function guard_debug (args = {}) { guardDebug = !(String(args.enabled ?? args.on ?? 'on').toLowerCase() === 'off'); return ok('guard debug=' + guardDebug) }
+
+  const registry = { goto, follow_player, stop, stop_all, say, hunt_player, guard, guard_debug, equip, toss, break_blocks, place_blocks, collect, pickup, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

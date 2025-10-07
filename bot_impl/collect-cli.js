@@ -38,7 +38,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (!payload || payload.cmd !== 'collect') return
       const args = parseArgs(payload.args || [])
       const actions = require('./actions').install(bot, { log })
+      try { bot.emit('external:begin', { source: 'cli', tool: 'collect' }) } catch {}
       const r = await actions.run('collect', args)
+      try { bot.emit('external:end', { source: 'cli', tool: 'collect' }) } catch {}
       console.log('[COLLECT]', r.ok ? 'ok' : 'fail', r.msg)
     } catch (e) {
       console.log('[COLLECT] error:', e?.message || e)
@@ -50,4 +52,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-

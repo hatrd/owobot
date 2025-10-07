@@ -37,6 +37,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!saplings.length) return
     running = true
     try {
+      try { if (state) state.currentTask = { name: 'auto_plant', source: 'auto', startedAt: Date.now() } } catch {}
       const actions = require('./actions').install(bot, { log })
       let planted = 0
       for (const s of saplings) {
@@ -49,6 +50,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       if (planted > 0) L.info('auto planted', planted)
     } finally {
+      try { if (state && state.currentTask && state.currentTask.name === 'auto_plant') state.currentTask = null } catch {}
       running = false
     }
   }

@@ -9,6 +9,7 @@
     "test": "node --test"
   },
   "dependencies": {
+    "minecrafthawkeye": "^1.3.9",
     "mineflayer": "^4.11.0",
     "mineflayer-pathfinder": "^2.4.5"
   },
