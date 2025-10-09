@@ -6,6 +6,7 @@ const logging = require('./logging')
 const coreLog = logging.getLogger('core')
 
 function dlog (...args) { coreLog.debug(...args) }
+function ts () { return new Date().toISOString() }
 
 // Shared state comes from loader to preserve across reloads
 let state = null
@@ -384,7 +385,7 @@ function activate (botInstance, options = {}) {
   on('spawn', () => {
     const host = (bot._client && (bot._client.socketServerHost || bot._client.host)) || 'server'
     const port = (bot._client && bot._client.port) || ''
-    console.log(`Connected to ${host}:${port} as ${bot.username}`)
+    console.log(`[${ts()}] Connected to ${host}:${port} as ${bot.username}`)
     console.log('Type chat messages or commands here (e.g. /login <password>)')
     initAfterSpawn()
     runOneShotIfPresent()
@@ -462,7 +463,7 @@ function activate (botInstance, options = {}) {
   })
 
   on('end', () => {
-    console.log('Bot connection closed')
+    dlog('Bot connection closed (impl cleanup)')
     if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
     if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
     clearAllPendingGreets()
@@ -470,13 +471,9 @@ function activate (botInstance, options = {}) {
     state.readyForGreeting = false
   })
 
-  on('kicked', (reason) => {
-    console.log('Kicked:', reason)
-  })
+  on('kicked', (reason) => { dlog('Kicked:', reason) })
 
-  on('error', (err) => {
-    console.error('Error:', err)
-  })
+  on('error', (err) => { dlog('Error:', err) })
 
   return { sharedState: state }
 }

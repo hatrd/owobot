@@ -39,6 +39,7 @@ if (argv.args.greet) { process.env.MC_GREET = parseBool(argv.args.greet) ? '1' :
 
 const DEBUG = parseBool(process.env.MC_DEBUG, true)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
+function ts () { return new Date().toISOString() }
 
 console.log('Starting bot with config:', {
   host: options.host,
@@ -50,8 +51,56 @@ console.log('Starting bot with config:', {
   greet: parseBool(process.env.MC_GREET, true)
 })
 
-// Create a single bot instance that stays connected
-const bot = mineflayer.createBot(options)
+// Current bot instance (may be recreated on reconnect)
+let bot = null
+
+// Reconnect backoff state
+let reconnectTimer = null
+let reconnectAttempts = 0
+const RECONNECT_MAX_DELAY_MS = 30000
+const RECONNECT_BASE_DELAY_MS = 1000
+
+function scheduleReconnect(reason) {
+  if (shuttingDown) return
+  if (reconnectTimer) return
+  reconnectAttempts++
+  const delay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts))
+  console.log(`[${ts()}] Reconnecting in ${delay}ms (${reason})`)
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    startBot()
+  }, delay)
+}
+
+function attachCoreBotListeners() {
+  bot.on('kicked', (reason) => {
+    try { console.log(`[${ts()}] Kicked by server:`, typeof reason === 'string' ? reason : JSON.stringify(reason)) } catch {}
+    try { if (plugin && typeof plugin.deactivate === 'function') plugin.deactivate() } catch {}
+    scheduleReconnect('kicked')
+  })
+  bot.on('end', (reason) => {
+    try { console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '') } catch {}
+    try { if (plugin && typeof plugin.deactivate === 'function') plugin.deactivate() } catch {}
+    scheduleReconnect('end')
+  })
+  bot.on('error', (err) => {
+    console.error('Bot error:', err?.message || err)
+  })
+}
+
+function startBot() {
+  try {
+    // Create new bot instance
+    bot = mineflayer.createBot(options)
+    try { console.log(`[${ts()}] Starting (re)connection...`) } catch {}
+    reconnectAttempts = 0 // reset backoff on successful create
+    attachCoreBotListeners()
+    loadPlugin()
+  } catch (e) {
+    console.error('Failed to start bot:', e)
+    scheduleReconnect('start-failed')
+  }
+}
 
 // Persistent console input
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -62,10 +111,10 @@ rl.on('line', (line) => {
   if (trimmed.startsWith('.') || trimmed.startsWith(':')) {
     const raw = trimmed.replace(/^[:.]/, '')
     const [cmd, ...args] = raw.split(/\s+/)
-    try { bot.emit('cli', { cmd, args, raw }) } catch (e) { console.error('CLI dispatch error:', e) }
+    try { bot && bot.emit('cli', { cmd, args, raw }) } catch (e) { console.error('CLI dispatch error:', e) }
     return
   }
-  try { bot.chat(trimmed) } catch (e) { console.error('Chat error:', e) }
+  try { bot && bot.chat(trimmed) } catch (e) { console.error('Chat error:', e) }
 })
 
 // Hot-reloadable implementation loader (directory-based)
@@ -101,7 +150,7 @@ function loadPlugin() {
   }
 }
 
-loadPlugin()
+startBot()
 
 // Watch the entire plugin directory recursively and reload on change
 let reloadTimer = null
@@ -156,10 +205,10 @@ process.on('SIGINT', () => {
   try { closeAllWatchers() } catch {}
   try { rl.close() } catch {}
   try {
-    bot.once('end', () => {
+    bot && bot.once('end', () => {
       setTimeout(() => process.exit(0), 0)
     })
-    bot.end('Interrupt received')
+    bot && bot.end('Interrupt received')
   } catch {}
   // Safety timeout in case 'end' never fires
   setTimeout(() => process.exit(0), 2000)
