@@ -142,7 +142,7 @@ function loadPlugin() {
   } catch {}
   try {
     plugin = require(pluginRoot) // resolves to bot_impl/index.js
-    const res = plugin.activate(bot, { sharedState })
+    const res = plugin.activate(bot, { sharedState, config: { password: options.password } })
     if (res && res.sharedState) sharedState = res.sharedState
     console.log('Loaded bot implementation from', path.basename(pluginRoot))
   } catch (e) {

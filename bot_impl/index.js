@@ -291,12 +291,18 @@ function activate (botInstance, options = {}) {
     hasSpawned: false,
     autoLookSuspended: false,
     cleanups: [],
-    greetingEnabled: GREET
+    greetingEnabled: GREET,
+    loginPassword: undefined
   }
 
   if (!Array.isArray(state.cleanups)) state.cleanups = []
   // Ensure greetingEnabled is initialized even when reusing shared state from loader
   if (typeof state.greetingEnabled === 'undefined') state.greetingEnabled = GREET
+  // Propagate login password from loader config or env into shared state
+  try {
+    const cfgPwd = options?.config?.password || process.env.MC_PASSWORD
+    if (cfgPwd) state.loginPassword = cfgPwd
+  } catch {}
   // Bind logging to shared state so .log changes persist across reloads
   try { logging.init(state) } catch {}
   // expose shared state on bot for modules that only receive bot
@@ -363,6 +369,9 @@ function activate (botInstance, options = {}) {
   try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
   // Feature: auto-stash when inventory nearly full
   try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
+
+  // Feature: auto-login when server prompts
+  try { require('./auto-login').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('login') }) } catch (e) { coreLog.warn('auto-login install error:', e?.message || e) }
 
   // Feature removed: random walk (was unstable)
 
