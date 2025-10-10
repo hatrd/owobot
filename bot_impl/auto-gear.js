@@ -3,6 +3,7 @@
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   let iv = null
   let running = false
+  let pausedUntil = 0
 
   const ARMOR_MATERIAL_ORDER = ['netherite','diamond','iron','chainmail','turtle','golden','leather']
   const ARMOR_SLOTS = [
@@ -95,6 +96,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (running) return
     running = true
     try {
+      if (Date.now() < pausedUntil) return
+      try { if (state && state.externalBusy) return } catch {}
       if (bot.currentWindow) return // skip while interacting with a container
       await ensureBestArmorOnce()
       await ensureBestHandsOnce()
@@ -104,7 +107,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // Run soon after spawn, and periodically
   on('spawn', () => { setTimeout(() => tick().catch(() => {}), 300) })
   iv = setInterval(() => { tick().catch(() => {}) }, 2500)
-  on('agent:stop_all', () => { if (iv) { try { clearInterval(iv) } catch {} ; iv = null } })
+  on('agent:stop_all', () => { pausedUntil = Date.now() + 5000 })
 
   registerCleanup && registerCleanup(() => { if (iv) { try { clearInterval(iv) } catch {} ; iv = null } })
 }

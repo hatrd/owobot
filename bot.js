@@ -129,6 +129,17 @@ function clearPluginCache() {
 }
 
 function loadPlugin() {
+  // Transactional-ish reload: only deactivate old after new module loads
+  let next = null
+  try { clearPluginCache() } catch {}
+  try {
+    next = require(pluginRoot) // resolves to bot_impl/index.js
+  } catch (e) {
+    console.error('Hot reload: require failed; keeping previous implementation active:', e?.message || e)
+    return
+  }
+
+  // Swap: deactivate previous, then activate next
   try {
     if (plugin && typeof plugin.deactivate === 'function') {
       dlog('Deactivating previous implementation...')
@@ -137,16 +148,14 @@ function loadPlugin() {
   } catch (e) {
     console.error('Error during previous deactivate:', e)
   }
+
   try {
-    clearPluginCache()
-  } catch {}
-  try {
-    plugin = require(pluginRoot) // resolves to bot_impl/index.js
+    plugin = next
     const res = plugin.activate(bot, { sharedState, config: { password: options.password } })
     if (res && res.sharedState) sharedState = res.sharedState
     console.log('Loaded bot implementation from', path.basename(pluginRoot))
   } catch (e) {
-    console.error('Failed to load bot implementation:', e)
+    console.error('Hot reload: activation failed:', e?.message || e)
   }
 }
 
