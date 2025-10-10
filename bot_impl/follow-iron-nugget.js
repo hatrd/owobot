@@ -203,6 +203,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function setAutoLookSuspended (val) { try { if (state) state.autoLookSuspended = !!val } catch {} }
 
   function tick () {
+    try { if (state?.externalBusy || state?.holdItemLock) {
+      if (currentTarget) { try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} ; currentTarget = null }
+      setAutoLookSuspended(false)
+      return
+    } } catch {}
     if (!bot.entity || !bot.entity.position) return
     const target = nearestHolder()
     if (!target) {

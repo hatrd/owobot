@@ -93,6 +93,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function tick () {
     if (!cfg.enabled) { setJump(false); return }
+    // Respect external actions/hand locks to avoid interrupting precise tasks (e.g., mining)
+    try { if (state?.externalBusy || state?.holdItemLock) { setJump(false); return } } catch {}
     if (!bot.entity || !bot.entity.position) return
     // If mounted or sleeping, ignore
     if (bot.isSleeping || bot.vehicle) { setJump(false); return }

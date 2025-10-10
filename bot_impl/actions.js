@@ -168,6 +168,21 @@ function install (bot, { log, on, registerCleanup }) {
     return ok('已发送')
   }
 
+  // --- Ore mining convenience tool (bridges to skill runner)
+  async function mine_ore (args = {}) {
+    const runner = ensureRunner()
+    if (!runner) return fail('技能运行器不可用')
+    const radius = Math.max(4, parseInt(args.radius || '32', 10))
+    const only = (() => {
+      if (!args.only) return null
+      if (Array.isArray(args.only)) return args.only.map(x => String(x).toLowerCase())
+      return String(args.only).toLowerCase()
+    })()
+    const expected = args.expected ? String(args.expected) : null
+    const res = runner.startSkill('mine_ore', { radius, only }, expected)
+    return res.ok ? ok('矿脉挖掘已启动', { taskId: res.taskId }) : fail(res.msg || '启动失败')
+  }
+
   async function observe_detail (args = {}) {
     try {
       const r = observer.detail(bot, args || {})
@@ -1043,6 +1058,8 @@ function install (bot, { log, on, registerCleanup }) {
     function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false }
     async function ensureWeaponEquipped (weapon) {
       try {
+        // Respect main-hand lock to avoid stealing hands from tasks (e.g., mining)
+        try { if (bot.state && bot.state.holdItemLock) return false } catch {}
         const it = invGet(weapon)
         if (!it) return false
         if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === weapon) return true
@@ -1753,7 +1770,7 @@ function install (bot, { log, on, registerCleanup }) {
   // Back-compat alias for previous API
   async function deposit_all (args = {}) { return deposit({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, mine_ore, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

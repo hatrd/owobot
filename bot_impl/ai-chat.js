@@ -171,8 +171,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔应使用 defend_area{}（守点清怪）或 cull_hostiles{}；跟随保护玩家使用 defend_player{name}；不要默认使用 hunt_player。',
       '需要强制停止当前行为时，使用 reset{}（别名: stop{} / stop_all{}），不要输出解释文字，只输出 TOOL 行。',
       '在确需执行动作时，才输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: defend_area{radius?,tickMs?,dig?}, defend_player{name, radius?, followRange?, tickMs?, dig?}, follow_player{name,range?}, cull_hostiles{radius?,tickMs?}, hunt_player{name,range?,durationMs?}, goto{x,y,z,range?}, goto_block{names?|name?|match?, radius?, range?, dig?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?, keepEquipped?, keepHeld?, keepOffhand?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}.',
+      '可用工具: defend_area{radius?,tickMs?,dig?}, defend_player{name, radius?, followRange?, tickMs?, dig?}, follow_player{name,range?}, cull_hostiles{radius?,tickMs?}, hunt_player{name,range?,durationMs?}, goto{x,y,z,range?}, goto_block{names?|name?|match?, radius?, range?, dig?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?, keepEquipped?, keepHeld?, keepOffhand?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, mine_ore{radius?, only?}.',
       '数量词映射："全部/所有/直到没有" -> until="all"；"一组/两组/N组" -> 目标数量≈64*N（原木/通用物品）。如用户指定“收集两组原木”，应使用 gather 或 break_blocks+collect，设置 max≈128 或 stacks=2。',
+      '矿物采集：当用户说“挖矿/挖钻石/挖一组钻石/自动挖钻石”等，请使用 mine_ore，并根据目标矿种设置 only（如 only:"diamond"），并合理设置 radius（默认32）。若用户给出目标数量（如一组钻石），请同时设置 expected:"inventory.diamond >= 64" 用于自动结束。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
   }
@@ -183,7 +184,30 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const t = String(text || '').toLowerCase()
       const tCN = String(text || '')
       const isInfo = /多少|几个|有无|有没有|哪些|什么|在哪|哪里|距离|多远/.test(tCN) || /(how many|how much|list|where|distance)/i.test(t)
+      // Simple item alias map (CN -> EN id)
+      const NAME_ALIASES = new Map([
+        ['钻石', 'diamond'],
+        ['铁锭', 'iron_ingot'],
+        ['金锭', 'gold_ingot'],
+        ['铜锭', 'copper_ingot'],
+        ['红石', 'redstone'],
+        ['煤', 'coal'],
+        ['青金石', 'lapis_lazuli'],
+        ['绿宝石', 'emerald'],
+        ['火把', 'torch'],
+        ['木棍', 'stick']
+      ])
+      function extractItem (raw) {
+        for (const [cn, en] of NAME_ALIASES) { if (raw.includes(cn)) return en }
+        // fallback: simple english tokens
+        const toks = ['diamond','iron_ingot','gold_ingot','copper_ingot','coal','redstone','lapis_lazuli','emerald','torch','stick']
+        const low = raw.toLowerCase()
+        for (const k of toks) { if (low.includes(k)) return k }
+        return null
+      }
+      const item = extractItem(tCN)
       if (isInfo) {
+        if (/背包|包里|inventory/.test(tCN) || (/(多少|几个)/.test(tCN) && item)) return { kind: 'info', topic: 'inventory', item }
         if (/敌对|怪|怪物|hostile|敌人/i.test(tCN)) return { kind: 'info', topic: 'hostiles' }
         if (/实体|entities?|entity/i.test(t)) return { kind: 'info', topic: 'entities' }
         if (/玩家|people|player/i.test(tCN)) return { kind: 'info', topic: 'players' }
@@ -198,6 +222,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       if (!intent || intent.kind !== 'info') return ''
       const snap = observer.snapshot(bot, {})
+      // Inventory count quick answer
+      if (intent.topic === 'inventory' && intent.item) {
+        const name = String(intent.item).toLowerCase()
+        let cnt = 0
+        try { for (const it of (bot.inventory?.items() || [])) { if (String(it?.name || '').toLowerCase() === name) cnt += (it.count || 0) } } catch {}
+        return `${intent.item.replace(/_/g,' ')}x${cnt}`.replace('diamond','钻石').replace('iron ingot','铁锭').replace('gold ingot','金锭').replace('copper ingot','铜锭').replace('redstone','红石').replace('coal','煤').replace('lapis lazuli','青金石').replace('emerald','绿宝石').replace('torch','火把').replace('stick','木棍')
+      }
       if (intent.topic === 'hostiles') {
         const hs = snap.nearby?.hostiles || { count: 0, nearest: null }
         // 如果没有观测到但附近有玩家/夜间，尝试提示“可能正在加载”而不是直接否定
@@ -389,7 +420,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','autofish','mount_near','dismount','flee_trap','observe_detail'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','autofish','mount_near','dismount','flee_trap','observe_detail','mine_ore'])
           // If the intent is informational, disallow action tools (only allow observe_detail/say)
           if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)

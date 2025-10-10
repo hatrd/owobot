@@ -63,13 +63,18 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   function triggerCounter () {
+    // Yield completely during external actions or when main-hand is locked (e.g., mining)
+    try { if (state?.externalBusy || state?.holdItemLock) return } catch {}
     const pvp = require('./pvp')
     const first = findLikelyAttacker()
     if (!first) return
-    maybeCuteChat()
+    // Only send cute chat when fully idle; chatting can poke some servers/plugins
+    try { if (!(state?.externalBusy || state?.holdItemLock)) maybeCuteChat() } catch {}
 
     // If attacker is a player, do a single quick counter hit and stop.
     if (first.type === 'player') {
+      // If busy/locked (mining), skip even the quick counter branch
+      try { if (state?.externalBusy || state?.holdItemLock) return } catch {}
       ;(async () => {
         try { await pvp.ensureBestWeapon(bot) } catch {}
         try { await pvp.ensureShieldEquipped(bot) } catch {}
@@ -97,6 +102,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
 
     // For mobs or unknown, short auto-counter window with smart blocking
+    // If busy/locked (mining), skip setting up the counter loop
+    try { if (state?.externalBusy || state?.holdItemLock) return } catch {}
     targetId = first.id
     counterCtx = counterCtx || {}
     counterUntil = now() + 3500

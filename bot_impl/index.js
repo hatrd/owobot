@@ -41,18 +41,22 @@ function initAfterSpawn() {
   
   if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
   playerWatcher = setInterval(() => {
-    // Suppress auto-look while pathfinding/following or when explicitly suspended
-    if (state?.autoLookSuspended) return
-    try { if (bot.pathfinder && bot.pathfinder.goal) return } catch {}
+    // Only run when completely idle: no tasks, no locks, no goals
+    try {
+      const hasGoal = !!(bot.pathfinder && bot.pathfinder.goal)
+      const hasTask = !!(state?.currentTask)
+      const runnerBusy = !!(bot._skillRunnerState && bot._skillRunnerState.tasks && bot._skillRunnerState.tasks.size > 0)
+      const busy = state?.externalBusy || state?.holdItemLock || state?.autoLookSuspended || hasGoal || hasTask || runnerBusy || bot.currentWindow || bot.targetDigBlock
+      if (busy) return
+    } catch {}
     const entity = bot.nearestEntity()
-    if (entity !== null) {
-      if (entity.type === 'player') {
-        bot.lookAt(entity.position.offset(0, 1.6, 0))
-      } else if (entity.type === 'mob') {
-        bot.lookAt(entity.position)
-      }
+    if (entity) {
+      try {
+        if (entity.type === 'player') bot.lookAt(entity.position.offset(0, 1.6, 0))
+        else if (entity.type === 'mob') bot.lookAt(entity.position)
+      } catch {}
     }
-  }, 50)
+  }, 120)
 }
 
 async function hardReset (reason) {
@@ -353,6 +357,8 @@ function activate (botInstance, options = {}) {
   try { require('./auto-fish').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('fish') }) } catch (e) { coreLog.warn('auto-fish install error:', e?.message || e) }
   // Feature: auto-swim (float in water)
   try { require('./auto-swim').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('swim') }) } catch (e) { coreLog.warn('auto-swim install error:', e?.message || e) }
+  // Fun: follow jukebox music and bob head
+  try { require('./jukebox-fan').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('jukebox') }) } catch (e) { coreLog.warn('jukebox-fan install error:', e?.message || e) }
 
   // Feature: respond to ".bot here" with "/tpa <username>"
   try { require('./tpa-here').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('tpa') }) } catch (e) { coreLog.warn('tpa-here install error:', e?.message || e) }
@@ -370,6 +376,9 @@ function activate (botInstance, options = {}) {
   // Feature: auto-stash when inventory nearly full
   try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
 
+  // Feature: inventory compression when space is tight (no tossing)
+  try { require('./inventory-compress').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('compress') }) } catch (e) { coreLog.warn('inventory-compress install error:', e?.message || e) }
+
   // Feature: auto-login when server prompts
   try { require('./auto-login').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('login') }) } catch (e) { coreLog.warn('auto-login install error:', e?.message || e) }
 
@@ -379,7 +388,12 @@ function activate (botInstance, options = {}) {
   try {
     const runner = require('./agent/runner').install(bot, { on, registerCleanup, log: logging.getLogger('skill') })
     // lazy register core skills (no placeholders)
-    try { runner.registerSkill('go', require('./skills/go')); runner.registerSkill('gather', require('./skills/gather')); runner.registerSkill('craft', require('./skills/craft')) } catch {}
+    try {
+      runner.registerSkill('go', require('./skills/go'))
+      runner.registerSkill('gather', require('./skills/gather'))
+      runner.registerSkill('craft', require('./skills/craft'))
+      runner.registerSkill('mine_ore', require('./skills/mine-ore'))
+    } catch {}
   } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 
   // Debug: drops scanner CLI
@@ -390,6 +404,8 @@ function activate (botInstance, options = {}) {
   try { require('./place-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('place') }) } catch (e) { coreLog.warn('place-cli install error:', e?.message || e) }
   // CLI: status snapshot
   try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
+  // CLI: start/stop mining ores
+  try { require('./mine-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('mine') }) } catch (e) { coreLog.warn('mine-cli install error:', e?.message || e) }
 
   on('spawn', () => {
     const host = (bot._client && (bot._client.socketServerHost || bot._client.host)) || 'server'
