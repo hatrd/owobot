@@ -2,8 +2,13 @@
 
 // Material priorities for melee weapons
 const WEAPON_ORDER = [
+  // swords first
   'netherite_sword','diamond_sword','iron_sword','stone_sword','golden_sword','wooden_sword',
-  'netherite_axe','diamond_axe','iron_axe','stone_axe','golden_axe','wooden_axe'
+  // then axes
+  'netherite_axe','diamond_axe','iron_axe','stone_axe','golden_axe','wooden_axe',
+  // pragmatic fallbacks when no weapons: pickaxes, then shovel
+  'netherite_pickaxe','diamond_pickaxe','iron_pickaxe','stone_pickaxe','golden_pickaxe','wooden_pickaxe',
+  'netherite_shovel','diamond_shovel','iron_shovel','stone_shovel','golden_shovel','wooden_shovel'
 ]
 
 function findItemByName (bot, name) {

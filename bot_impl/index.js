@@ -396,6 +396,7 @@ function activate (botInstance, options = {}) {
       runner.registerSkill('gather', require('./skills/gather'))
       runner.registerSkill('craft', require('./skills/craft'))
       runner.registerSkill('mine_ore', require('./skills/mine-ore'))
+      runner.registerSkill('write_text', require('./skills/write-text'))
     } catch {}
   } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 

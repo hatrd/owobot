@@ -171,7 +171,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；不要默认使用 hunt_player。',
       '需要强制停止当前行为时，使用 reset{}，不要输出解释文字，只输出 TOOL 行。',
       '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}.',
+      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}.',
       '挖矿也用 gather（only/match 指定矿种，radius 可选），单矿配数量会自动判定结束。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
@@ -475,9 +475,25 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         let payload = null
         try { payload = JSON.parse(toolMatch[1]) } catch {}
         if (payload && payload.tool) {
+          // Heuristic arg completion for write_text: extract ASCII letters/numbers from user message as text
+          try {
+            if (String(payload.tool) === 'write_text') {
+              const a = payload.args || {}
+              const txt = (a.text == null) ? '' : String(a.text)
+              if (!txt.trim()) {
+                const raw = String(content || '')
+                const matches = raw.match(/[A-Za-z0-9][A-Za-z0-9 ]+/g)
+                if (matches && matches.length) {
+                  const best = matches.sort((x, y) => y.length - x.length)[0]
+                  a.text = best.trim().toUpperCase()
+                  payload.args = a
+                }
+              }
+            }
+          } catch {}
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','place_blocks','deposit','withdraw','autofish','mount_near','dismount','observe_detail'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','place_blocks','deposit','withdraw','write_text','autofish','mount_near','dismount','observe_detail'])
           // If the intent is informational, disallow action tools (only allow observe_detail/say)
           if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)

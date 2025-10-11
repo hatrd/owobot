@@ -183,6 +183,19 @@ function install (bot, { log, on, registerCleanup }) {
     return res.ok ? ok('矿脉挖掘已启动', { taskId: res.taskId }) : fail(res.msg || '启动失败')
   }
 
+  // --- Write text on ground using blocks (high-level skill) ---
+  async function write_text (args = {}) {
+    const runner = ensureRunner()
+    if (!runner) return fail('技能运行器不可用')
+    const text = String(args.text || '').trim()
+    if (!text) return fail('缺少文本')
+    const spacing = Math.max(1, parseInt(args.spacing || '1', 10))
+    const size = Math.max(1, parseInt(args.size || '1', 10))
+    const item = args.item ? String(args.item) : null
+    const res = runner.startSkill('write_text', { text, item, spacing, size }, null)
+    return res.ok ? ok('开始铺字~', { taskId: res.taskId }) : fail(res.msg || '启动失败')
+  }
+
   async function observe_detail (args = {}) {
     try {
       const r = observer.detail(bot, args || {})
@@ -1200,6 +1213,26 @@ function install (bot, { log, on, registerCleanup }) {
     try { if (!bot.hawkEye) { bot.loadPlugin(require('minecrafthawkeye')) }; hawkLoaded = !!bot.hawkEye } catch {}
     let rangedActive = false
 
+    // Local helpers (copied from defend_area to avoid scope issues)
+    function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
+    function invGet (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === n) || null } catch { return null } }
+    function pickRangedWeapon () {
+      if (!invHas('arrow')) return null
+      if (invHas('crossbow')) return 'crossbow'
+      if (invHas('bow')) return 'bow'
+      return null
+    }
+    async function ensureWeaponEquipped (weapon) {
+      try {
+        // Respect main-hand lock
+        if (bot.state && bot.state.holdItemLock) return false
+        const it = invGet(weapon)
+        if (!it) return false
+        await bot.equip(it, 'hand')
+        return true
+      } catch { return false }
+    }
+
     function mobName (e) {
       try { const raw = e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || ''; return String(raw).replace(/\u00a7./g, '').toLowerCase() } catch { return '' } }
     function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false }
@@ -1919,7 +1952,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

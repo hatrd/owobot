@@ -100,9 +100,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (bot.isSleeping || bot.vehicle) { setJump(false); return }
     const headInWater = isHeadSubmerged()
     const feetW = feetInWater()
-    // Always hold jump whenever in water (feet/head) to keep floating, even when stationary
     const inWater = headInWater || feetW
-    setJump(inWater, headInWater ? 'head' : (feetW ? 'feet' : ''))
+    const hasGoal = !!(bot.pathfinder && bot.pathfinder.goal)
+    // Non-intrusive: when pathfinder has an active goal, we avoid overriding controls except for brief anti-drown pulses
+    if (!hasGoal) {
+      setJump(inWater, headInWater ? 'head' : (feetW ? 'feet' : ''))
+    } else {
+      // When following a path, only assist if head is submerged for a while
+      if (headInWater && submergedSince && (Date.now() - submergedSince) >= Math.max(400, cfg.forceSurfaceMs)) setJump(true, 'assist-goal')
+      else setJump(false)
+    }
     if (cfg.debug) {
       try {
         const pos = bot.entity.position.floored()
@@ -117,24 +124,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           'jump=', jumping, 'sneak=', !!(bot.controlState && bot.controlState.sneak))
       } catch {}
     }
-    // ensure not sneaking while trying to float
-    try { if (inWater) bot.setControlState('sneak', false) } catch {}
+    // ensure not sneaking while trying to float (only when not navigating)
+    try { if (inWater && !hasGoal) bot.setControlState('sneak', false) } catch {}
     const now = Date.now()
-    // emergency burst: if in water and vertical speed non-positive for a while, look up and nudge forward briefly
+    // emergency assist: when idle in water and sinking, gently look up
     try {
       const vy = Number(bot.entity?.velocity?.y || 0)
-      if (inWater && vy <= 0 && now >= surfaceGoalUntil) {
-        // Avoid interfering with precise positioning during auto-fishing
-        if (!state?.isFishing) {
-          try { await bot.lookAt(bot.entity.position.offset(0, 1.0, 0), true) } catch {}
-          try { bot.setControlState('forward', true); setTimeout(() => { try { bot.setControlState('forward', false) } catch {} }, 350) } catch {}
-        }
+      if (!hasGoal && inWater && vy <= 0 && now >= surfaceGoalUntil) {
+        if (!state?.isFishing) { try { await bot.lookAt(bot.entity.position.offset(0, 1.0, 0), true) } catch {} }
       }
     } catch {}
     if (headInWater) {
       if (!submergedSince) submergedSince = now
       // If submerged for a while, try to push a short surface goal straight up
-      if (now - submergedSince >= cfg.forceSurfaceMs && now >= surfaceGoalUntil) {
+      if (!hasGoal && (now - submergedSince) >= cfg.forceSurfaceMs && now >= surfaceGoalUntil) {
         const base = bot.entity.position.floored()
         let targetY = null
         for (let dy = 2; dy <= Math.max(2, cfg.scanUp); dy++) {
@@ -144,7 +147,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
         }
         const pf = ensurePathfinder()
-        if (pf && targetY != null) {
+        if (pf && targetY != null && !hasGoal) {
           try {
             const { goals } = pf
             bot.pathfinder.setGoal(new goals.GoalNear(base.x, targetY, base.z, 0), true)
@@ -156,10 +159,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         }
       }
       // If still submerged and upward path blocked, try lateral nearest air pocket
-      if ((now - submergedSince) >= (cfg.forceSurfaceMs + 300) && now >= lateralGoalUntil) {
+      if (!hasGoal && (now - submergedSince) >= (cfg.forceSurfaceMs + 300) && now >= lateralGoalUntil) {
         const pf = ensurePathfinder()
         const spot = findNearestAir(8)
-        if (pf && spot) {
+        if (pf && spot && !hasGoal) {
           try {
             const { goals } = pf
             bot.pathfinder.setGoal(new goals.GoalNear(spot.x, spot.y, spot.z, 0), true)
