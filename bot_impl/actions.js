@@ -954,10 +954,6 @@ function install (bot, { log, on, registerCleanup }) {
     let handLockToken = null
     function lockHand () { try { if (bot.state && !bot.state.holdItemLock) { bot.state.holdItemLock = 'ranged_bow'; handLockToken = 'ranged_bow' } } catch {} }
     function unlockHand () { try { if (handLockToken && bot.state && bot.state.holdItemLock === handLockToken) bot.state.holdItemLock = null; handLockToken = null } catch {} }
-    let rangedStickUntil = 0
-    let handLockToken = null
-    function lockHand () { try { if (bot.state && !bot.state.holdItemLock) { bot.state.holdItemLock = 'ranged_bow'; handLockToken = 'ranged_bow' } } catch {} }
-    function unlockHand () { try { if (handLockToken && bot.state && bot.state.holdItemLock === handLockToken) bot.state.holdItemLock = null; handLockToken = null } catch {} }
     let currentId = null
     const startedAt = Date.now()
 
@@ -1006,8 +1002,9 @@ function install (bot, { log, on, registerCleanup }) {
     // Do not short-circuit if already riding; dismount first to avoid stale state
     if (bot.vehicle) {
       try { await bot.dismount() } catch {}
-      await wait(200)
+      await wait(250)
     }
+    const initialMounted = !!bot.vehicle
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -1038,14 +1035,15 @@ function install (bot, { log, on, registerCleanup }) {
 
     const start = Date.now()
     let success = false
-    // Listen for attach event for reliable confirmation
-    let attachedNow = false
-    const onAttach = (entity) => { try { if (entity && bot.entity && entity.id === bot.entity.id) attachedNow = true } catch {} }
-    try { bot.on('entityAttach', onAttach) } catch {}
+    // Listen for mount event for reliable confirmation (handles set_passengers/attach variants)
+    let mountedAt = 0
+    const onMount = () => { mountedAt = Date.now() }
+    try { bot.on('mount', onMount) } catch {}
     try {
       while (Date.now() - start <= timeoutMs) {
         try {
-          if (bot.vehicle) { success = true; break }
+          // Only treat mounted as success if it changed during this call
+          if (bot.vehicle && (!initialMounted || mountedAt >= start)) { success = true; break }
           const ent = resolveTargetEntity()
           if (!ent || !ent.position) { await wait(Math.min(300, tickMs)); continue }
           // Approach within follow range
@@ -1075,7 +1073,7 @@ function install (bot, { log, on, registerCleanup }) {
             // Confirm with a slightly longer window to catch server-side attach
             const confirmUntil = Date.now() + 2500
             while (Date.now() < confirmUntil) {
-              if (bot.vehicle || attachedNow) { success = true; break }
+              if ((bot.vehicle && (!initialMounted || mountedAt >= start)) || (mountedAt >= start)) { success = true; break }
               await wait(60)
             }
             if (success) break
@@ -1092,7 +1090,7 @@ function install (bot, { log, on, registerCleanup }) {
         } catch { await wait(Math.min(300, tickMs)) }
       }
     } finally {
-      try { bot.off('entityAttach', onAttach) } catch {}
+      try { bot.off('mount', onMount) } catch {}
       // Always release controls and clear following
       try { bot.setControlState('forward', false) } catch {}
       try { bot.setControlState('sneak', false) } catch {}

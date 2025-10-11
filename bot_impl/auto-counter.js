@@ -7,6 +7,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let counterCtx = {}
   let counterUntil = 0
   let targetId = null
+  let lastDamage = { id: null, at: 0 }
   let lastCuteAt = 0
 
   function now () { return Date.now() }
@@ -19,10 +20,56 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function entityDistance (a, b) { try { return a.position.distanceTo(b.position) } catch { return Infinity } }
 
+  function isHostileName (nm) {
+    try {
+      const s = String(nm || '').toLowerCase()
+      if (!s) return false
+      const tokens = ['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute']
+      for (const t of tokens) if (s.includes(t)) return true
+      return false
+    } catch { return false }
+  }
+
+  function entityName (e) {
+    try { return String(e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || e?.kind || e?.type || '').replace(/\u00a7./g, '').toLowerCase() } catch { return '' }
+  }
+
+  function nearestHostile (range = 6.0) {
+    try {
+      const me = bot.entity
+      if (!me) return null
+      let best = null; let bestD = Infinity
+      for (const e of Object.values(bot.entities || {})) {
+        if (!e || e === me || !e.position) continue
+        if (e.type !== 'mob') continue
+        const nm = entityName(e)
+        if (!isHostileName(nm)) continue
+        const d = entityDistance(me, e)
+        if (!Number.isFinite(d) || d > range) continue
+        if (d < bestD) { best = e; bestD = d }
+      }
+      return best
+    } catch { return null }
+  }
+
   function findLikelyAttacker () {
     const me = bot.entity
     if (!me) return null
     const nowTs = now()
+    // 1) Prefer explicit damage source if provided by server (1.20+)
+    if (lastDamage.id && (nowTs - lastDamage.at) <= 1500) {
+      const src = bot.entities?.[lastDamage.id]
+      if (src && src.position) {
+        // If source is a player but there is a closer hostile mob, prefer the hostile
+        if (src.type === 'player') {
+          const h = nearestHostile(6.0)
+          if (h) return h
+        }
+        return src
+      }
+    }
+
+    // 2) Otherwise, use recent swings heuristic within 6 blocks, preferring hostiles
     let best = null; let bestD = Infinity
     for (const e of Object.values(bot.entities || {})) {
       if (!e || e === me || !e.position) continue
@@ -31,7 +78,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (d > 6.0) continue
       const swingTs = swings.get(e.id) || 0
       const recentSwing = (nowTs - swingTs) <= 700
-      if (recentSwing && d < bestD) { best = e; bestD = d }
+      if (!recentSwing) continue
+      if (e.type === 'mob') {
+        // prefer hostile mobs
+        best = e; bestD = d
+        break
+      } else if (d < bestD) {
+        best = e; bestD = d
+      }
     }
     if (best) return best
     // fallback: nearest within 3.5 blocks
@@ -127,8 +181,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { if (entity?.id != null) swings.set(entity.id, now()) } catch {}
   }
 
-  function onHurt (entity) {
-    try { if (entity === bot.entity) triggerCounter() } catch {}
+  function onHurt (entity, source) {
+    try {
+      if (entity !== bot.entity) return
+      try { lastDamage = { id: (source && source.id) || null, at: now() } } catch { lastDamage = { id: null, at: now() } }
+      triggerCounter()
+    } catch {}
   }
 
   function onHealth () {
