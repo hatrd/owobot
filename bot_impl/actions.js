@@ -197,6 +197,196 @@ function install (bot, { log, on, registerCleanup }) {
     return res.ok ? ok('开始铺字~', { taskId: res.taskId }) : fail(res.msg || '启动失败')
   }
 
+  // --- Harvest and replant crops ---
+  async function harvest (args = {}) {
+    const radius = Math.max(2, parseInt(args.radius || '12', 10))
+    const onlyRaw = args.only ? String(args.only).toLowerCase() : null // desired crop item/block name
+    const replant = (args.replant !== false)
+    const sowOnly = (args.sowOnly === true)
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = true; m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+
+    function now () { return Date.now() }
+    function blockName (b) { try { return String(b?.name || '').toLowerCase() } catch { return '' } }
+    function props (b) { try { return (typeof b?.getProperties === 'function') ? (b.getProperties() || {}) : {} } catch { return {} } }
+    function isFarmland (b) { const n = blockName(b); return n === 'farmland' }
+    function isSoulSand (b) { const n = blockName(b); return n === 'soul_sand' }
+    function isAir (b) { const n = blockName(b); return !b || n === 'air' }
+
+    // map block names and items
+    const CROPS = [
+      { block: 'wheat', item: 'wheat_seeds', maxAge: 7, soil: 'farmland' },
+      { block: 'carrots', item: 'carrot', maxAge: 7, soil: 'farmland' },
+      { block: 'potatoes', item: 'potato', maxAge: 7, soil: 'farmland' },
+      { block: 'beetroots', item: 'beetroot_seeds', maxAge: 3, soil: 'farmland' },
+      { block: 'nether_wart', item: 'nether_wart', maxAge: 3, soil: 'soul_sand' }
+    ]
+    function cropByBlock (n) { n = String(n||'').toLowerCase(); return CROPS.find(c => c.block === n) || null }
+    function cropByAlias (n) {
+      if (!n) return null
+      const s = String(n).toLowerCase()
+      for (const c of CROPS) {
+        if (c.block === s || c.item === s) return c
+        if (s.includes('wheat') || s.includes('seed')) return CROPS[0]
+        if (s.includes('carrot')) return CROPS[1]
+        if (s.includes('potato') || s.includes('马铃薯') || s.includes('土豆')) return CROPS[2]
+        if (s.includes('beet')) return CROPS[3]
+        if (s.includes('wart') || s.includes('地狱疙瘩') || s.includes('下界疣')) return CROPS[4]
+      }
+      return null
+    }
+
+    const desired = onlyRaw ? cropByAlias(onlyRaw) : null
+
+    function isMature (b) {
+      const n = blockName(b)
+      const c = cropByBlock(n)
+      if (!c) return false
+      const p = props(b)
+      const age = (p && (typeof p.age === 'number')) ? p.age : null
+      if (age == null) return false
+      return age >= c.maxAge
+    }
+
+    function findTargets (onlyCrop = null) {
+      try {
+        const me = bot.entity?.position
+        if (!me) return []
+        const list = []
+        const V = require('vec3').Vec3
+        const base = me.floored ? me.floored() : new V(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z))
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dz = -radius; dz <= radius; dz++) {
+            for (let dy = -2; dy <= 3; dy++) {
+              const p = base.offset(dx, dy, dz)
+              const b = bot.blockAt(p)
+              if (!b) continue
+              const n = blockName(b)
+              const c = cropByBlock(n)
+              if (!c) continue
+              if (onlyCrop && c.block !== onlyCrop.block) continue
+              if (!isMature(b)) continue
+              list.push({ pos: p, crop: c, mature: true })
+            }
+          }
+        }
+        list.sort((a, b) => a.pos.distanceTo(me) - b.pos.distanceTo(me))
+        return list
+      } catch { return [] }
+    }
+
+    function invFind (name) { try { const s = String(name).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === s) || null } catch { return null } }
+
+    async function plantAt (pos, crop) {
+      try {
+        const below = pos.offset(0, -1, 0)
+        const soil = bot.blockAt(below)
+        if (crop.soil === 'farmland' && !isFarmland(soil)) return false
+        if (crop.soil === 'soul_sand' && !isSoulSand(soil)) return false
+        const seed = invFind(crop.item)
+        if (!seed) return false
+        // Equip seed and place on top face of soil
+        await bot.equip(seed, 'hand')
+        try { await bot.lookAt(soil.position.offset(0.5, 0.5, 0.5), true) } catch {}
+        await bot.placeBlock(soil, require('vec3').Vec3(0, 1, 0))
+        return true
+      } catch { return false }
+    }
+
+    function findSowSpots (crop) {
+      try {
+        const me = bot.entity?.position
+        if (!me) return []
+        const list = []
+        const V = require('vec3').Vec3
+        const base = me.floored ? me.floored() : new V(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z))
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dz = -radius; dz <= radius; dz++) {
+            for (let dy = -2; dy <= 2; dy++) {
+              const soilPos = base.offset(dx, dy, dz)
+              const soil = bot.blockAt(soilPos)
+              if (!soil) continue
+              if (crop.soil === 'farmland' && !isFarmland(soil)) continue
+              if (crop.soil === 'soul_sand' && !isSoulSand(soil)) continue
+              const above = bot.blockAt(soilPos.offset(0, 1, 0))
+              if (!isAir(above)) continue
+              list.push(soilPos.offset(0, 1, 0)) // position where crop will be
+            }
+          }
+        }
+        list.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+        return list
+      } catch { return [] }
+    }
+
+    let targets = sowOnly ? [] : findTargets(desired)
+    let done = 0; let replanted = 0
+    for (const t of targets) {
+      try {
+        const me = bot.entity?.position
+        const d = me ? t.pos.distanceTo(me) : 0
+        // Move near the crop
+        bot.pathfinder.setGoal(new goals.GoalNear(t.pos.x, t.pos.y, t.pos.z, 1.8), true)
+        const until = now() + 6000
+        while (now() < until) {
+          const cur = bot.blockAt(t.pos)
+          if (!cur || !isMature(cur)) break
+          const cd = bot.entity.position.distanceTo(t.pos)
+          if (cd <= 2.0) break
+          await wait(80)
+        }
+        // Dig only mature crop (default behavior)
+        const cur = bot.blockAt(t.pos)
+        if (cur && isMature(cur)) {
+          try { await bot.lookAt(cur.position.offset(0.5, 0.4, 0.5), true) } catch {}
+          try { await bot.dig(cur) } catch {}
+          done++
+          // brief wait for drops to land
+          await wait(300)
+          // try replant
+          if (replant) {
+            // quick nearby pickup to acquire seeds if needed
+            if (!invFind(t.crop.item)) {
+              try {
+                // actively collect nearby matching drops for a short window
+                await collect({ radius: Math.min(12, radius), match: t.crop.item })
+              } catch {}
+            }
+            const okp = await plantAt(t.pos, t.crop)
+            if (okp) replanted++
+          }
+        }
+      } catch {}
+    }
+    // If sow-only requested, or nothing to harvest, or replant count is low, do a sow-only pass
+    const wantCrop = desired || (targets[0] && targets[0].crop) || null
+    if (replant !== false && (sowOnly || done === 0 || replanted < done)) {
+      const seedPref = wantCrop || (function pickByInventory () {
+        const order = ['potato','carrot','wheat_seeds','beetroot_seeds','nether_wart']
+        for (const name of order) { if (invFind(name)) return cropByAlias(name) }
+        return null
+      })()
+      if (seedPref) {
+        // Try collect matching seeds before sowing if none in inventory
+        if (!invFind(seedPref.item)) {
+          try { await collect({ radius: Math.min(16, radius + 4), match: seedPref.item }) } catch {}
+        }
+        const spots = findSowSpots(seedPref)
+        for (const p of spots) {
+          const okp = await plantAt(p, seedPref)
+          if (okp) replanted++
+          if (done > 0 && replanted >= done) break
+        }
+      }
+    }
+    try { bot.pathfinder.setGoal(null) } catch {}
+    return ok(`已收割${done}，重种${replanted}`)
+  }
+
   async function observe_detail (args = {}) {
     try {
       const r = observer.detail(bot, args || {})
@@ -2287,7 +2477,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

@@ -69,6 +69,12 @@ Note: approaching a bed will attempt to sleep automatically.
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...` — configure AI key/model/base/path; list tools
 
+## Farming
+- Harvest and replant crops: `harvest{only?, radius?, replant?}`
+  - Examples:
+    - Harvest and replant nearby potatoes: `TOOL {"tool":"harvest","args":{"only":"potato"}}`
+    - Auto-detect crops (harvest mature and replant same type): `TOOL {"tool":"harvest","args":{}}`
+
 ## Hot Reload
 - `bot.js` watches `bot_impl/`, unloads old modules, calls `deactivate()`, then loads the new `index.js`.
 - Modules follow a reload‑safe start pattern: run on `spawn`, when `state.hasSpawned` is true, and immediately on install (guarded).

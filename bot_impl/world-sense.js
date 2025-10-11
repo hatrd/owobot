@@ -12,13 +12,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     maxEvents: 200,
     burstCount: 12,
     burstWindowMs: 3000,
-    immediateFlee: true,
+    immediateFlee: false,
     // sustained piston/redstone spam reaction
     sustainWindowMs: 12000,
     sustainCount: 30,
     allowPlea: true,
     pleaCooldownMs: 15000,
-    escalate: true
+    escalate: false
   }, S.cfg || {})
 
   const events = S.events = Array.isArray(S.events) ? S.events : []
@@ -63,6 +63,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function maybeFlush () {
     if (!cfg.enabled) return
+    // Never react while external actions are executing (avoids fleeing during intentional building/harvesting)
+    try { if (state && state.externalBusy) { events.splice(0); return } } catch {}
     const now = Date.now()
     // Immediate flee on burst block changes
     if (cfg.immediateFlee && now >= fleeCooldownUntil) {
