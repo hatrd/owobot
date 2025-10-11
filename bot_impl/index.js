@@ -312,6 +312,9 @@ function activate (botInstance, options = {}) {
   // expose shared state on bot for modules that only receive bot
   try { bot.state = state } catch {}
 
+  // Optional: dig packet trace/throttle for diagnosing anti-cheat timing
+  try { require('./dig-throttle').install(bot, { log: logging.getLogger('dig') }) } catch (e) { coreLog.warn('dig-throttle install error:', e?.message || e) }
+
   // Track current external task for AI context (source: chat/cli/sense -> player/auto)
   on('external:begin', (info) => {
     try {
