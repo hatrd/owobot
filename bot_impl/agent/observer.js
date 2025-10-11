@@ -85,6 +85,46 @@ function collectHostiles (bot, range = 24) {
   } catch { return { count: 0, nearest: null } }
 }
 
+  function collectAnimals (bot, range = 16, species = null) {
+  try {
+    const me = bot.entity?.position
+    if (!me) return { count: 0, nearest: null, list: [] }
+    const want = species ? String(species).toLowerCase() : null
+    const matches = (nm) => {
+      const s = String(nm || '').toLowerCase()
+      if (!s) return false
+      if (want) {
+        if (want === 'cow' || want === 'cows') {
+          // English + common Chinese aliases
+          return s.includes('cow') || s.includes('mooshroom') || s.includes('奶牛') || s.includes('蘑菇牛') || s.includes('牛')
+        }
+        return s.includes(want)
+      }
+      // broad passive set (common farm animals)
+      const en = ['cow','mooshroom','sheep','pig','chicken','horse','donkey','mule','llama','camel','goat','cat','wolf','fox','rabbit']
+      const cn = ['奶牛','蘑菇牛','牛','绵羊','羊','猪','鸡','马','驴','骡','羊驼','骆驼','山羊','猫','狼','狐狸','兔','兔子']
+      return en.some(t => s.includes(t)) || cn.some(t => s.includes(t))
+    }
+    const list = []
+    for (const e of Object.values(bot.entities || {})) {
+      try {
+        if (!e || !e.position) continue
+        // Exclude players; accept all other types (animal/passive/mob/object variants)
+        const et = String(e.type || '').toLowerCase()
+        if (et === 'player') continue
+        const raw = e.name || (e.displayName && e.displayName.toString && e.displayName.toString()) || ''
+        const nm = String(raw).replace(/\u00a7./g, '').toLowerCase()
+        if (!matches(nm)) continue
+        const d = e.position.distanceTo(me)
+        if (Number.isFinite(d) && d <= range) list.push({ name: nm, d: Number(d.toFixed(2)) })
+      } catch {}
+    }
+    if (!list.length) return { count: 0, nearest: null, list: [] }
+    list.sort((a, b) => a.d - b.d)
+    return { count: list.length, nearest: list[0], list }
+  } catch { return { count: 0, nearest: null, list: [] } }
+}
+
 function collectInventorySummary (bot, top = 6) {
   try {
     const inv = bot.inventory?.items() || []
@@ -268,6 +308,14 @@ function detail (bot, args = {}) {
     }
     list.sort((a, b) => a.d - b.d)
     return { ok: true, msg: `附近实体${list.length}个(半径${radius})`, data: list.slice(0, max) }
+  }
+  if (what === 'animals' || what === 'passives') {
+    const r = collectAnimals(bot, radius, null)
+    return { ok: true, msg: `附近动物${r.count}个(半径${radius})`, data: r.list.slice(0, max) }
+  }
+  if (what === 'cows' || what === 'cow') {
+    const r = collectAnimals(bot, radius, 'cow')
+    return { ok: true, msg: `附近奶牛${r.count}头(半径${radius})`, data: r.list.slice(0, max) }
   }
   if (what === 'blocks') {
     const list = []

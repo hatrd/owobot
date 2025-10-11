@@ -59,6 +59,10 @@ Note: approaching a bed will attempt to sleep automatically.
 - Cull hostiles: `cull_hostiles{radius?,tickMs?}`
  - Ranged attack: `range_attack{name?, match?, radius?, followRange?, durationMs?}` — use bow/crossbow via HawkEye to attack a specific player (explicit `name`) or nearest entity matching `match` (e.g., `iron_golem`). For players, you must provide an exact name.
 
+## Farming & Ranching
+- Harvest and replant crops: `harvest{only?, radius?, replant?, sowOnly?}`
+- Feed animals: `feed_animals{species?, item?, radius?, max?}`
+  - Example: feed nearby cows with wheat: `TOOL {"tool":"feed_animals","args":{"species":"cow","item":"wheat"}}`
 ## CLI Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`)

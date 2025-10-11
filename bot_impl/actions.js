@@ -197,6 +197,100 @@ function install (bot, { log, on, registerCleanup }) {
     return res.ok ? ok('开始铺字~', { taskId: res.taskId }) : fail(res.msg || '启动失败')
   }
 
+  // --- Feed animals (e.g., cows with wheat) ---
+  async function feed_animals (args = {}) {
+    const species = String(args.species || 'cow').toLowerCase()
+    const itemName = String(args.item || (species === 'cow' || species === 'mooshroom' ? 'wheat' : 'wheat')).toLowerCase()
+    const radius = Math.max(2, parseInt(args.radius || '12', 10))
+    const rawMax = args.max
+    const max = (rawMax == null || String(rawMax).toLowerCase() === 'all' || Number(rawMax) === 0)
+      ? Infinity
+      : Math.max(1, parseInt(rawMax, 10) || 1)
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.allowSprinting = true; m.canDig = false
+    bot.pathfinder.setMovements(m)
+
+    function now () { return Date.now() }
+    function invFind (nm) { try { const s = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === s) || null } catch { return null } }
+    function invCount (nm) { try { const s = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).filter(it => String(it.name||'').toLowerCase() === s).reduce((a,b)=>a+(b.count||0),0) } catch { return 0 } }
+    async function ensureItemEquipped (nm) { try { const it = invFind(nm); if (!it) return false; if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === nm) return true; await bot.equip(it, 'hand'); return true } catch { return false } }
+    function isTargetSpecies (e) {
+      try {
+        if (!e || !e.position) return false
+        const et = String(e.type || '').toLowerCase()
+        if (et === 'player') return false
+        const raw = e.name || (e.displayName && e.displayName.toString && e.displayName.toString()) || ''
+        const n = String(raw).toLowerCase()
+        if (species === 'cow') return n.includes('cow') || n.includes('mooshroom') || n.includes('奶牛') || n.includes('蘑菇牛') || n.includes('牛')
+        return n.includes(species)
+      } catch { return false }
+    }
+    function nearbyTargets () {
+      try {
+        const me = bot.entity?.position; if (!me) return []
+        const list = []
+        for (const e of Object.values(bot.entities || {})) {
+          try {
+            if (!isTargetSpecies(e) || !e.position) continue
+            const d = me.distanceTo(e.position)
+            if (!Number.isFinite(d) || d > radius) continue
+            list.push({ e, d })
+          } catch {}
+        }
+        list.sort((a,b)=>a.d-b.d)
+        return list.map(x => x.e)
+      } catch { return [] }
+    }
+
+    const have = invCount(itemName)
+    if (have <= 0) return fail(`缺少${itemName}`)
+
+    let fed = 0
+    const lockToken = 'feed_animals'
+    try { if (bot.state && !bot.state.holdItemLock) bot.state.holdItemLock = lockToken } catch {}
+    try {
+      const start = now()
+      while (fed < max && (now() - start) < 20000) {
+        const list = nearbyTargets()
+        if (!list.length) break
+        for (const t of list) {
+          if (fed >= max) break
+          if (invCount(itemName) <= 0) break
+          // approach target
+          try { bot.pathfinder.setGoal(new goals.GoalFollow(t, 2.0), true) } catch {}
+          const until = now() + 4000
+          while (now() < until) {
+            const cur = bot.entities?.[t.id]
+            if (!cur || !cur.position) break
+            const d = cur.position.distanceTo(bot.entity.position)
+            if (d <= 3.0) break
+            await wait(80)
+          }
+          try { bot.pathfinder.setGoal(null) } catch {}
+          // equip and use on target
+          const before = invCount(itemName)
+          const ok = await ensureItemEquipped(itemName)
+          if (!ok) break
+          try { await bot.lookAt((t.position && t.position.offset(0, 1.2, 0)) || bot.entity.position, true) } catch {}
+          try { await bot.useOn(t) } catch {}
+          await wait(350)
+          const after = invCount(itemName)
+          if (after < before) fed++
+          if (fed >= max) break
+        }
+        if (fed === 0) await wait(200) // brief pause if nothing fed this round
+        // if max is Infinity, continue scanning next rounds until time or wheat runs out
+      }
+    } finally {
+      try { bot.pathfinder.setGoal(null) } catch {}
+      try { if (bot.state && bot.state.holdItemLock === lockToken) bot.state.holdItemLock = null } catch {}
+    }
+    return fed > 0 ? ok(`已喂食${fed}`) : fail('附近没有可喂食目标或缺少小麦')
+  }
+
   // --- Harvest and replant crops ---
   async function harvest (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '12', 10))
@@ -2477,7 +2571,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

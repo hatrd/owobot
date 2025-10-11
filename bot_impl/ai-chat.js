@@ -171,7 +171,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}（会跟随并清怪）；不要默认使用 hunt_player。',
       '需要强制停止当前行为时，使用 reset{}，不要输出解释文字，只输出 TOOL 行。',
       '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
+      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
       '挖矿也用 gather（only/match 指定矿种，radius 可选），单矿配数量会自动判定结束。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
@@ -514,7 +514,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','harvest','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail'])
           // If the intent is informational, disallow action tools (only allow observe_detail/say)
           if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)
@@ -933,54 +933,4 @@ module.exports = { install }
       return false
     } catch { return false }
   }
-        // Pattern: sow crops only (种<作物> / 播种<作物>)
-        {
-          const map = new Map([
-            ['小麦', 'wheat_seeds'],
-            ['马铃薯', 'potato'], ['土豆', 'potato'],
-            ['胡萝卜', 'carrot'],
-            ['甜菜', 'beetroot_seeds'], ['甜菜根', 'beetroot_seeds'],
-            ['下界疣', 'nether_wart']
-          ])
-          const m = text.match(/^(?:种|播种)\s*([\u4e00-\u9fa5_a-zA-Z0-9]+)/)
-          if (m) {
-            const key = m[1].trim()
-            let only = null
-            for (const [cn, id] of map.entries()) { if (key.includes(cn)) { only = id; break } }
-            if (!only) {
-              // simple english token support
-              const low = key.toLowerCase()
-              if (/(wheat|seed)/.test(low)) only = 'wheat_seeds'
-              else if (/potato|土豆|马铃薯/.test(low)) only = 'potato'
-              else if (/carrot/.test(low)) only = 'carrot'
-              else if (/beet/.test(low)) only = 'beetroot_seeds'
-              else if (/wart|疙瘩|下界/.test(low)) only = 'nether_wart'
-            }
-            try { bot.chat('好的') } catch {}
-            ;(async () => {
-              try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'harvest' }) } catch {}
-              let res
-              try { res = await tools.run('harvest', { only, sowOnly: true, replant: true }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'harvest' }) } catch {} }
-              const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
-              try { bot.chat(msg) } catch {}
-            })().catch(() => {})
-            return true
-          }
-        }
-        // Pattern: harvest and replant explicitly mentioned crop (收割并(重种|种植)X)
-        {
-          const m = text.match(/^收割.*?(?:重种|种植)\s*([\u4e00-\u9fa5_a-zA-Z0-9]+)/)
-          if (m) {
-            const key = m[1].trim()
-            const norm = key.includes('小麦') ? 'wheat_seeds' : key.includes('马铃薯') || key.includes('土豆') ? 'potato' : key.includes('胡萝卜') ? 'carrot' : key.includes('甜菜') ? 'beetroot_seeds' : key.includes('下界疣') ? 'nether_wart' : null
-            try { bot.chat('好的') } catch {}
-            ;(async () => {
-              try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'harvest' }) } catch {}
-              let res
-              try { res = await tools.run('harvest', { only: norm, replant: true }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'harvest' }) } catch {} }
-              const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
-              try { bot.chat(msg) } catch {}
-            })().catch(() => {})
-            return true
-          }
-        }
+        // (intentionally no internal keyword-to-tool mappings for farming/feeding; leave to AI)

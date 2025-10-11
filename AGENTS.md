@@ -92,6 +92,7 @@ if (state.autoLookSuspended) { /* skip cosmetic look controls */ }
 - Hot‑reload safety. Because `bot_impl/` hot‑reloads on file events, save atomically and only after the feature is fully ready. For multi‑file work, prepare outside `bot_impl/` and move in at once. Never commit partial implementations.
 - Observation policy. Basic observer data (生命/饥饿/坐标/附近/背包摘要等) is included directly in AI context to reduce tool calls; richer detail is fetched via explicit tools only when needed, with stable schemas.
 - No special cases (接口). Prefer one generalized interface per capability instead of multiple variants. Example: use a single `toss{items:[{name|slot,count?},...]}` to handle single/multiple/slot‑based discards; avoid `toss_hand`/`toss_multi` style forks.
+ - 外部AI决策优先：除非为安全/资源保护需要的硬性保护（如禁止攻击玩家/默认不挖掘），不要在聊天侧做意图到工具的本地关键词映射或“自动纠错”。将意图解析交给外部AI，避免双重决策与不可见的偏差。
 
 ### 现有工具面（AI 使用）
 - 查询类：`observe_detail{what,radius?,max?}`；优先直接回答上下文，禁止为查询调用修改世界的工具。

@@ -410,6 +410,8 @@ function activate (botInstance, options = {}) {
   try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
   // CLI: start/stop mining ores
   try { require('./mine-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('mine') }) } catch (e) { coreLog.warn('mine-cli install error:', e?.message || e) }
+  // CLI: debug helpers (.entities/.animals/.cows/.pos/.inv/.goal/.task/.tools/.hawk/.sense)
+  try { require('./debug-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('dbg') }) } catch (e) { coreLog.warn('debug-cli install error:', e?.message || e) }
 
   on('spawn', () => {
     const host = (bot._client && (bot._client.socketServerHost || bot._client.host)) || 'server'

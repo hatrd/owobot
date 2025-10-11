@@ -75,6 +75,10 @@
     - 收获并重种马铃薯：`TOOL {"tool":"harvest","args":{"only":"potato"}}`
     - 自动识别作物（按原作物重种）：`TOOL {"tool":"harvest","args":{}}`
 
+## 畜牧
+- 喂动物：`feed_animals{species?, item?, radius?, max?}`（`max: all|0` 表示喂半径内所有可喂目标）
+  - 示例：用小麦喂附近的牛：`TOOL {"tool":"feed_animals","args":{"species":"cow","item":"wheat","max":"all"}}`
+
 ## 热重载
 - `bot.js` 递归监听 `bot_impl/`，卸载旧模块，调用 `deactivate()`，再加载新 `index.js`。
 - 模块使用“热重载安全”模式：`spawn`+`state.hasSpawned`+即时受控启动。
