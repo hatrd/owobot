@@ -753,53 +753,26 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`挖掘完成 ${broken}`)
   }
 
-  // --- Harvest: break -> collect -> deposit selected items into nearest container ---
-  async function harvest (args = {}) {
-    const area = args.area || { radius: Math.max(3, parseInt(args.radius || '10', 10)) }
-    const radius = Math.max(3, parseInt(area.radius || '10', 10))
-    let names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
-    let match = args.match ? String(args.match).toLowerCase() : null
-    const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
-    const depositRadius = Math.max(2, parseInt(args.depositRadius || String(Math.max(16, radius)), 10))
-
-    // Resource presets for simpler AI usage
-    const resource = String(args.resource || '').toLowerCase()
-    function applyResource (r) {
-      if (!r) return
-      if (r === 'logs' || r === 'log' || r === '原木' || r === '树木' || r === '树') { match = 'log'; return }
-      if (r === 'sand' || r === '沙' || r === '沙子') { names = ['sand']; return }
-      if (r === 'stone' || r === '原石' || r === '石头') { match = 'stone'; return }
-      if (r === 'gravel' || r === '沙砾' || r === '砾石') { names = ['gravel']; return }
-      if (r === 'dirt' || r === '泥土') { names = ['dirt']; return }
-    }
-    if (!names && !match) applyResource(resource)
-    if (!names && !match) return fail('缺少目标')
-
-    // 1) break blocks until exhausted in area
-    const br = await break_blocks({ names, match, area: { shape: 'sphere', radius: radius, height: area.height }, max: Number.MAX_SAFE_INTEGER, until: 'exhaust', collect: true })
-    // 2) collect nearby drops (filtered by names/match)
-    const collectArgs = { what: 'drops', radius: Math.max(radius, 12), timeoutMs: 6000, until: 'exhaust' }
-    if (names && names.length) collectArgs.names = names
-    if (!names && match) collectArgs.match = match
-    try { await collect(collectArgs) } catch {}
-
-    // 3) deposit target items into nearest chest/barrel
-    // Build items list based on current inventory
-    const inv = bot.inventory?.items() || []
-    let items = []
-    if (names && names.length) {
-      const set = new Set(names)
-      const uniq = new Map()
-      for (const it of inv) { const n = String(it?.name || '').toLowerCase(); if (set.has(n)) uniq.set(n, true) }
-      items = Array.from(uniq.keys()).map(n => ({ name: n }))
-    } else if (match) {
-      const uniq = new Map()
-      for (const it of inv) { const n = String(it?.name || '').toLowerCase(); if (n.includes(match)) uniq.set(n, true) }
-      items = Array.from(uniq.keys()).map(n => ({ name: n }))
-    }
-    if (!items.length) return ok((br && br.msg) ? (br.msg + '（无可存放）') : '完成（无可存放）')
-    const dep = await deposit({ items, radius: depositRadius, includeBarrel })
-    return ok(`${(br && br.msg) ? br.msg : '处理完成'}，${dep && dep.msg ? dep.msg : '已存放'}`)
+  // Helper: ore detection/unification for gather->mine_ore
+  function isOreNameSimple (n) {
+    const s = String(n || '').toLowerCase()
+    if (!s) return false
+    if (s.endsWith('_ore')) return true
+    if (s === 'ancient_debris') return true
+    return false
+  }
+  function oreOnlyToken (n) {
+    const s = String(n || '').toLowerCase()
+    if (s === 'ancient_debris') return 'ancient_debris'
+    if (!s.endsWith('_ore')) return s
+    let base = s.slice(0, -'_ore'.length)
+    if (base.startsWith('deepslate_')) base = base.slice('deepslate_'.length)
+    if (base.startsWith('nether_')) base = base.slice('nether_'.length)
+    // map lapis/redstone/quartz exacts
+    if (base.includes('lapis')) return 'lapis'
+    if (base.includes('redstone')) return 'redstone'
+    if (base.includes('quartz')) return 'quartz'
+    return base
   }
 
   // --- Riding ---
@@ -1384,10 +1357,55 @@ function install (bot, { log, on, registerCleanup }) {
     const height = (args.height != null) ? Math.max(0, parseInt(args.height, 10)) : null
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
     const match = args.match ? String(args.match).toLowerCase() : null
+    const onlyParam = (() => {
+      if (args.only == null) return null
+      if (Array.isArray(args.only)) return args.only.map(x => String(x).toLowerCase())
+      return String(args.only).toLowerCase()
+    })()
     const stacks = args.stacks != null ? Math.max(0, parseInt(args.stacks, 10)) : null
     const count = args.count != null ? Math.max(0, parseInt(args.count, 10)) : null
     const collectDrops = (String(args.collect ?? 'true').toLowerCase() !== 'false')
-    if (!names && !match) return fail('缺少目标')
+    if (!names && !match && !onlyParam) return fail('缺少目标')
+
+    // Unified path: if target looks like ore(s), delegate to mining skill
+    try {
+      const runner = ensureRunner()
+      const looksLikeOre = (() => {
+        if (onlyParam) return true
+        if (names && names.some(isOreNameSimple)) return true
+        if (match && (match.includes('_ore') || ['ore','diamond','iron','gold','copper','coal','redstone','lapis','emerald','quartz','debris','netherite'].some(k => match.includes(k)))) return true
+        return false
+      })()
+      if (runner && looksLikeOre) {
+        let only = null
+        if (onlyParam) {
+          if (Array.isArray(onlyParam)) {
+            only = onlyParam
+          } else {
+            only = onlyParam
+          }
+        } else if (names && names.length) {
+          const uniq = new Map()
+          for (const n of names) { const tok = oreOnlyToken(n); if (tok) uniq.set(tok, true) }
+          only = Array.from(uniq.keys())
+        } else if (match) {
+          only = [oreOnlyToken(match)]
+        }
+        // Expected stop condition for simple single-target requests
+        let expected = null
+        const targetCount = stacks != null ? (stacks * 64) : (count != null ? count : null)
+        if (targetCount && only && only.length === 1) {
+          const tok = String(only[0])
+          const invKey = ({
+            diamond: 'diamond', coal: 'coal', redstone: 'redstone', lapis: 'lapis_lazuli', emerald: 'emerald',
+            iron: 'raw_iron', gold: 'raw_gold', copper: 'raw_copper', quartz: 'quartz', ancient_debris: 'ancient_debris'
+          })[tok]
+          if (invKey) expected = `inventory.${invKey} >= ${targetCount}`
+        }
+        const res = runner.startSkill('mine_ore', { radius: Math.max(4, radius), only: (only && only.length === 1) ? only[0] : only }, expected || null)
+        return res.ok ? ok(`矿物采集已启动`, { taskId: res.taskId }) : fail(res.msg || '启动失败')
+      }
+    } catch {}
 
     function invSumTargets () {
       try {
@@ -1901,7 +1919,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

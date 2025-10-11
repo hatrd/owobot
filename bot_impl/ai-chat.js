@@ -167,13 +167,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return [
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
-      '回答优先使用已提供的“游戏上下文”；若是统计/查询类问题（如“多少/有无/哪些/在哪里/距离多远”等），直接回答，禁止调用会改变世界状态的工具。必要时仅可用 observe_detail 之类信息查询工具。',
-      '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔应使用 defend_area{}（守点清怪）或 cull_hostiles{}；跟随保护玩家使用 defend_player{name}；不要默认使用 hunt_player。',
-      '需要强制停止当前行为时，使用 reset{}（别名: stop{} / stop_all{}），不要输出解释文字，只输出 TOOL 行。',
-      '在确需执行动作时，才输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: defend_area{radius?,tickMs?,dig?}, defend_player{name, radius?, followRange?, tickMs?, dig?}, follow_player{name,range?}, cull_hostiles{radius?,tickMs?}, hunt_player{name,range?,durationMs?}, goto{x,y,z,range?}, goto_block{names?|name?|match?, radius?, range?, dig?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?, keepEquipped?, keepHeld?, keepOffhand?}, withdraw{items:[{name,count?},...], all?, radius?, includeBarrel?, multi?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, mine_ore{radius?, only?}.',
-      '数量词映射："全部/所有/直到没有" -> until="all"；"一组/两组/N组" -> 目标数量≈64*N（原木/通用物品）。如用户指定“收集两组原木”，应使用 gather 或 break_blocks+collect，设置 max≈128 或 stacks=2。',
-      '矿物采集：当用户说“挖矿/挖钻石/挖一组钻石/自动挖钻石”等，请使用 mine_ore，并根据目标矿种设置 only（如 only:"diamond"），并合理设置 radius（默认32）。若用户给出目标数量（如一组钻石），请同时设置 expected:"inventory.diamond >= 64" 用于自动结束。',
+      '回答优先使用已提供的“游戏上下文”；若是统计/查询类问题（如“多少/有无/哪些/在哪里/距离多远”等），直接回答，禁止调用会改变世界状态的工具。必要时仅可用 observe_detail 查询信息。',
+      '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；不要默认使用 hunt_player。',
+      '需要强制停止当前行为时，使用 reset{}，不要输出解释文字，只输出 TOOL 行。',
+      '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
+      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}.',
+      '挖矿也用 gather（only/match 指定矿种，radius 可选），单矿配数量会自动判定结束。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
   }
@@ -478,7 +477,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','withdraw','autofish','mount_near','dismount','flee_trap','observe_detail','mine_ore'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','place_blocks','deposit','withdraw','autofish','mount_near','dismount','observe_detail'])
           // If the intent is informational, disallow action tools (only allow observe_detail/say)
           if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)
