@@ -30,6 +30,9 @@
 - Save atomically: prepare changes fully, then write them. Avoid partial/fragmented saves under `bot_impl/` (the watcher reloads on file events, debounce ≈120ms).
 - If generating files, write to a temp path and `rename` into `bot_impl/` to ensure the new version is complete when reloaded.
 - For large multi-file edits, apply changes outside `bot_impl/` and move them in at once, or stop the bot temporarily.
+- 重载闸门（默认启用）：为避免半成品被热重载，仓库默认启用闸门文件 `open_fire`，只有在触碰该文件后才会真正 reload。
+  - 使用方式：先在 `bot_impl/` 完成所有修改；准备好后执行 `touch open_fire`，此时才会应用热重载。
+  - 如需关闭闸门（恢复到改动即重载）：CLI `--reload-gate off` 或设置环境变量 `HOT_RELOAD_GATE=off`。
 
 ### 热重载下的启动约定
 

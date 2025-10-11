@@ -171,7 +171,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}（会跟随并清怪）；不要默认使用 hunt_player。',
       '需要强制停止当前行为时，使用 reset{}，不要输出解释文字，只输出 TOOL 行。',
       '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, dismount{}.',
+      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
       '挖矿也用 gather（only/match 指定矿种，radius 可选），单矿配数量会自动判定结束。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
     ].join('\n')
@@ -359,14 +359,26 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const task = snap?.task?.name
         return task ? `在${task}呢~` : '闲着呢~'
       }
-      // generic info -> summarize vitals briefly
-      const v = snap.vitals || {}
-      const hp = v.hp != null ? Math.round(v.hp) : null
-      const food = v.food != null ? v.food : null
-      const parts = []
-      if (hp != null) parts.push(`生命${hp}/20`)
-      if (food != null) parts.push(`饥饿${food}/20`)
-      return parts.length ? parts.join(' | ') : ''
+      // For generic info: only answer vitals if explicitly asked
+      if (intent.topic === 'generic') {
+        try {
+          const last = String((state.aiRecent[state.aiRecent.length - 1]?.text) || '')
+          const t = last.toLowerCase()
+          const tCN = last
+          const asksVitals = /(生命|血|血量|状态|饥饿|肚子|hp|health|hunger)/.test(tCN) || /(hp|health|hunger|status)/i.test(t)
+          if (asksVitals) {
+            const v = snap.vitals || {}
+            const hp = v.hp != null ? Math.round(v.hp) : null
+            const food = v.food != null ? v.food : null
+            const parts = []
+            if (hp != null) parts.push(`生命${hp}/20`)
+            if (food != null) parts.push(`饥饿${food}/20`)
+            return parts.length ? parts.join(' | ') : ''
+          }
+        } catch {}
+        return ''
+      }
+      return ''
     } catch { return '' }
   }
 
@@ -502,7 +514,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','dismount','observe_detail'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail'])
           // If the intent is informational, disallow action tools (only allow observe_detail/say)
           if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)
@@ -515,6 +527,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             if (tgt && username && tgt.toLowerCase() === String(username).toLowerCase()) {
               // Switch to defend_area instead
               payload = { tool: 'defend_area', args: { radius: 8 } }
+            }
+          }
+          // Prefer mount over follow when user intent mentions right-click/mount
+          if (String(payload.tool) === 'follow_player') {
+            const raw = String(content || '')
+            if (/(空手|右键|右击|坐我|骑我|骑乘|乘坐|mount)/i.test(raw)) {
+              const name = String(payload.args?.name || username || '').trim()
+              if (name) payload = { tool: 'mount_player', args: { name } }
             }
           }
           if (!allow.has(String(payload.tool))) {
@@ -560,6 +580,18 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!state.ai.enabled) return
     if (!content) return
     if (ctrl.busy) return // drop if previous still running to avoid flooding
+    // Quick dismount (prefer precise tool over full reset)
+    {
+      const t = content
+      if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(t)) {
+        try {
+          const tools = actionsMod.install(bot, { log })
+          const res = await tools.run('dismount', {})
+          try { bot.chat(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`)) } catch {}
+        } catch {}
+        return
+      }
+    }
     // Quick stop command handling (hard stop without LLM)
     if (isStopCommand(content)) {
       try {
@@ -619,6 +651,26 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           })().catch(() => {})
           return true
         }
+        // Pattern: empty-hand right-click a named player (mount-style)
+        {
+          const neg = /(停止|停下|不要|别|取消)/
+          if (!neg.test(text)) {
+            const m1 = text.match(/空手\s*(?:右键)?\s*(?:点击|单击|点)?\s*([^\s，。,.!！？]+)/)
+            const m2 = m1 || text.match(/(?:右键|右击)\s*(?:点击|单击|点)?\s*([^\s，。,.!！？]+)/)
+            const candidate = m2 ? String(m2[1] || '').trim() : ''
+            if (candidate && !/^我|me$/i.test(candidate)) {
+              try { bot.chat('好的') } catch {}
+              ;(async () => {
+                try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'mount_player' }) } catch {}
+                let res
+                try { res = await tools.run('mount_player', { name: candidate }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'mount_player' }) } catch {} }
+                const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
+                try { bot.chat(msg) } catch {}
+              })().catch(() => {})
+              return true
+            }
+          }
+        }
         // Pattern: withdraw specific item like fishing rod from nearby chests
         const nameMap = new Map([
           ['钓鱼竿', 'fishing_rod'],
@@ -639,8 +691,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             return true
           }
         }
-        // Pattern: mount player by saying "坐我/骑我/空手右键我"
-        if (/^(坐我|坐我身上|骑我|骑我身上|骑上我|坐上我|空手(右键)?(点|点击)?我)/.test(text)) {
+        // Pattern: mount player by saying "坐我/骑我/空手右键我" (skip if negative/stop words present)
+        if (!/(停止|停下|不要|别|取消)/.test(text) && /^(坐我|坐我身上|骑我|骑我身上|骑上我|坐上我|空手(右键)?(点|点击)?我)/.test(text)) {
           try { bot.chat('好的') } catch {}
           ;(async () => {
             try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'mount_player' }) } catch {}

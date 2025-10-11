@@ -33,6 +33,7 @@ Examples
 - Defend current spot: say “owk, 守点清怪” → `defend_area{}`
 - Defend a player (follow + protect): `TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
 - Right-click mount a player (empty hand): `TOOL {"tool":"mount_player","args":{"name":"Ameyaku"}}`
+- Shoot nearest iron golem with bow: `TOOL {"tool":"range_attack","args":{"match":"iron_golem"}}`
 - Go to nearest bed: `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
 - Toss main‑hand: `TOOL {"tool":"toss","args":{"slot":"hand"}}`
 
@@ -56,6 +57,7 @@ Note: approaching a bed will attempt to sleep automatically.
 - Defend area: `defend_area{radius?,tickMs?,dig?}` — stand near the anchor, attack hostiles; no digging by default. For mob farms exposing only feet, the bot cycles multiple aim heights to land hits.
 - Defend player: `defend_player{name, radius?, followRange?, tickMs?, dig?}` — follows the player and clears hostiles nearby.
 - Cull hostiles: `cull_hostiles{radius?,tickMs?}`
+ - Ranged attack: `range_attack{name?, match?, radius?, followRange?, durationMs?}` — use bow/crossbow via HawkEye to attack a specific player (explicit `name`) or nearest entity matching `match` (e.g., `iron_golem`). For players, you must provide an exact name.
 
 ## CLI Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
@@ -71,6 +73,9 @@ Note: approaching a bed will attempt to sleep automatically.
 - `bot.js` watches `bot_impl/`, unloads old modules, calls `deactivate()`, then loads the new `index.js`.
 - Modules follow a reload‑safe start pattern: run on `spawn`, when `state.hasSpawned` is true, and immediately on install (guarded).
 - `activate()` returns `{ sharedState }` to persist state across reloads.
+- Reload gate (default ON): edits under `bot_impl/` do not reload immediately; touch the gate file to apply: `touch open_fire`.
+  - Example: edit files → `touch open_fire` to reload once changes are ready.
+  - Disable the gate if you want immediate reloads: CLI `--reload-gate off` or env `HOT_RELOAD_GATE=off`.
 
 ## Development
 - CommonJS, 2‑space indent, no semicolons.

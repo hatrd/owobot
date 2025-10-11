@@ -805,7 +805,12 @@ function install (bot, { log, on, registerCleanup }) {
   async function mount_near (args = {}) {
     const { radius = 6, prefer = null, timeoutMs = 8000 } = args
     if (!bot.entity || !bot.entity.position) return fail('未就绪')
-    if (bot.vehicle) return ok('已在乘坐中')
+    // If already riding something else (e.g., boat), dismount first then proceed
+    if (bot.vehicle) {
+      try { await bot.dismount() } catch {}
+      await wait(200)
+      if (bot.vehicle) return fail('当前在其他坐骑上，无法操作')
+    }
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -861,12 +866,148 @@ function install (bot, { log, on, registerCleanup }) {
     try { if (!bot.vehicle) return ok('当前未乘坐') ; await bot.dismount(); return ok('已下坐') } catch (e) { return fail('下坐失败: ' + (e?.message || e)) }
   }
 
+  // --- Ranged attack (bow/crossbow via HawkEye) ---
+  async function range_attack (args = {}) {
+    const { name = null, match = null } = args
+    const radius = Math.max(4, parseInt(args.radius || '24', 10))
+    const followRange = Math.max(4, parseInt(args.followRange || '6', 10))
+    const durationMs = args.durationMs != null ? Math.max(500, parseInt(args.durationMs, 10)) : null
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.allowSprinting = true
+    m.canDig = false
+    bot.pathfinder.setMovements(m)
+
+    // Load HawkEye plugin
+    let hawkLoaded = false
+    try {
+      if (!bot.hawkEye) {
+        const mod = require('minecrafthawkeye')
+        const plug = (mod && mod.default) ? mod.default : mod
+        if (typeof plug === 'function') bot.loadPlugin(plug)
+      }
+      hawkLoaded = !!bot.hawkEye
+    } catch {}
+    if (!hawkLoaded) return fail('鹰眼不可用')
+
+    function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
+    function invGet (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === n) || null } catch { return null } }
+    function pickRangedWeapon () { if (!invHas('arrow')) return null; if (invHas('crossbow')) return 'crossbow'; if (invHas('bow')) return 'bow'; return null }
+    async function ensureWeaponEquipped (weapon) { try { if (bot.state && bot.state.holdItemLock) return false; const it = invGet(weapon); if (!it) return false; if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === weapon) return true; await bot.equip(it, 'hand'); return true } catch { return false } }
+
+    const weapon = pickRangedWeapon()
+    if (!weapon) return fail('缺少弓箭（需要弓/弩和箭）')
+
+    function entityLabel (e) {
+      try { return String(e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || e?.kind || e?.type || '').replace(/\u00a7./g, '').toLowerCase() } catch { return '' }
+    }
+    function resolvePlayerByName (wanted) {
+      try {
+        const w = String(wanted || '').trim().toLowerCase()
+        if (!w) return null
+        // bot.players map
+        if (bot.players && bot.players[w] && bot.players[w].entity) return bot.players[w].entity
+        // fallback scan
+        for (const e of Object.values(bot.entities || {})) {
+          try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === w) return e } catch {}
+        }
+      } catch {}
+      return null
+    }
+    function resolveNearestByMatch (substr, radius) {
+      const me = bot.entity?.position
+      if (!me) return null
+      const s = String(substr || '').toLowerCase()
+      let best = null; let bestD = Infinity
+      for (const e of Object.values(bot.entities || {})) {
+        try {
+          if (!e || e === bot.entity || !e.position) continue
+          const d = e.position.distanceTo(me)
+          if (!Number.isFinite(d) || d > radius) continue
+          const nm = entityLabel(e)
+          if (!s || (nm && nm.includes(s))) {
+            if (d < bestD) { best = e; bestD = d }
+          }
+        } catch {}
+      }
+      return best
+    }
+
+    // Target resolution with safety: for player, require explicit exact name
+    let target = null
+    if (name) {
+      target = resolvePlayerByName(name)
+      if (!target) return fail('找不到该玩家')
+    } else if (match) {
+      target = resolveNearestByMatch(match, radius)
+      if (!target) return fail('附近没有匹配目标')
+      if (String(target.type).toLowerCase() === 'player') return fail('禁止模糊攻击玩家，请指名玩家名')
+    } else {
+      return fail('缺少目标（name|match）')
+    }
+
+    // Start ranged tracking loop
+    let rangedActive = false
+    let rangedStickUntil = 0
+    let handLockToken = null
+    function lockHand () { try { if (bot.state && !bot.state.holdItemLock) { bot.state.holdItemLock = 'ranged_bow'; handLockToken = 'ranged_bow' } } catch {} }
+    function unlockHand () { try { if (handLockToken && bot.state && bot.state.holdItemLock === handLockToken) bot.state.holdItemLock = null; handLockToken = null } catch {} }
+    let rangedStickUntil = 0
+    let handLockToken = null
+    function lockHand () { try { if (bot.state && !bot.state.holdItemLock) { bot.state.holdItemLock = 'ranged_bow'; handLockToken = 'ranged_bow' } } catch {} }
+    function unlockHand () { try { if (handLockToken && bot.state && bot.state.holdItemLock === handLockToken) bot.state.holdItemLock = null; handLockToken = null } catch {} }
+    let currentId = null
+    const startedAt = Date.now()
+
+    const iv = setInterval(async () => {
+      try {
+        // Yield to other tools while busy
+        try { if (bot.state && bot.state.externalBusy) return } catch {}
+        // Refresh target entity reference
+        const ent = (() => { try { return bot.entities?.[target.id] || target } catch { return target } })()
+        if (!ent || !ent.position) return
+        // Follow within a comfortable distance while ranging
+        bot.pathfinder.setGoal(new goals.GoalFollow(ent, followRange), true)
+        const meD = ent.position.distanceTo(bot.entity.position)
+        // (Re)start hawkeye autoAttack when target changes
+        if (!rangedActive || currentId !== ent.id) {
+          try { bot.hawkEye.stop() } catch {}
+          try { await ensureWeaponEquipped(weapon) } catch {}
+          try { bot.hawkEye.autoAttack(ent, weapon) } catch {}
+          rangedActive = true
+          currentId = ent.id
+        }
+        // Optional duration limit
+        if (durationMs != null && (Date.now() - startedAt) > durationMs) {
+          try { bot.hawkEye.stop() } catch {}
+          try { clearInterval(iv) } catch {}
+          return
+        }
+      } catch {}
+    }, Math.max(150, parseInt(args.tickMs || '250', 10)))
+
+    // Stop hooks
+    const stop = () => { try { bot.hawkEye.stop() } catch {}; try { clearInterval(iv) } catch {} }
+    try { bot.once('agent:stop_all', stop) } catch {}
+    try { bot.once('end', stop) } catch {}
+    try { if (typeof registerCleanup === 'function') registerCleanup(stop) } catch {}
+    try { if (bot.state) bot.state.currentTask = { name: '远程射击', source: 'player', startedAt: Date.now() } } catch {}
+
+    return ok(name ? `开始远程射击玩家 ${name}` : `开始远程射击（匹配:${String(match)}）`)
+  }
+
   // --- Mount player: empty-hand right click on a player entity
   async function mount_player (args = {}) {
     const { name, range = 1.2, followRange = 1.2, timeoutMs = 10000, tickMs = 120, sneak = false } = args
     if (!name) return fail('缺少玩家名')
     if (!bot.entity || !bot.entity.position) return fail('未就绪')
-    if (bot.vehicle) return ok('已在乘坐中')
+    // Do not short-circuit if already riding; dismount first to avoid stale state
+    if (bot.vehicle) {
+      try { await bot.dismount() } catch {}
+      await wait(200)
+    }
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -897,6 +1038,10 @@ function install (bot, { log, on, registerCleanup }) {
 
     const start = Date.now()
     let success = false
+    // Listen for attach event for reliable confirmation
+    let attachedNow = false
+    const onAttach = (entity) => { try { if (entity && bot.entity && entity.id === bot.entity.id) attachedNow = true } catch {} }
+    try { bot.on('entityAttach', onAttach) } catch {}
     try {
       while (Date.now() - start <= timeoutMs) {
         try {
@@ -915,21 +1060,11 @@ function install (bot, { log, on, registerCleanup }) {
             try { bot.pathfinder.setGoal(null) } catch {}
             // Try multiple interaction styles
             const burst = async () => {
-              for (let i = 0; i < 5; i++) {
+              for (let i = 0; i < 6; i++) {
                 // High-level interact (no position)
                 try { if (typeof bot.activateEntity === 'function') await bot.activateEntity(ent) } catch {}
                 // Interact-at head position (plugins often listen on InteractAt)
                 try { if (typeof bot.activateEntityAt === 'function') await bot.activateEntityAt(ent, ent.position.offset(0, 1.5, 0)) } catch {}
-                // Low-level packets (best effort across protocol variants)
-                try {
-                  if (bot._client && bot._client.write) {
-                    // interact with main hand
-                    bot._client.write('use_entity', { target: ent.id, mouse: 0, sneaking: false, hand: 0 })
-                    // interact-at chest position relative to entity
-                    const rel = { x: 0, y: 1.2, z: 0 }
-                    bot._client.write('use_entity', { target: ent.id, mouse: 2, sneaking: false, hand: 0, x: rel.x, y: rel.y, z: rel.z })
-                  }
-                } catch {}
                 try { if (typeof bot.swingArm === 'function') bot.swingArm('right') } catch {}
                 if (bot.vehicle) return true
                 await wait(90)
@@ -937,9 +1072,12 @@ function install (bot, { log, on, registerCleanup }) {
               return false
             }
             if (await burst()) { success = true; break }
-            // Confirm shortly
-            const confirmUntil = Date.now() + 1000
-            while (Date.now() < confirmUntil) { if (bot.vehicle) { success = true; break } ; await wait(60) }
+            // Confirm with a slightly longer window to catch server-side attach
+            const confirmUntil = Date.now() + 2500
+            while (Date.now() < confirmUntil) {
+              if (bot.vehicle || attachedNow) { success = true; break }
+              await wait(60)
+            }
             if (success) break
             // Nudge and retry once without sneak, then with sneak
             try { bot.setControlState('forward', true); await wait(220); bot.setControlState('forward', false) } catch {}
@@ -954,6 +1092,7 @@ function install (bot, { log, on, registerCleanup }) {
         } catch { await wait(Math.min(300, tickMs)) }
       }
     } finally {
+      try { bot.off('entityAttach', onAttach) } catch {}
       // Always release controls and clear following
       try { bot.setControlState('forward', false) } catch {}
       try { bot.setControlState('sneak', false) } catch {}
@@ -1134,7 +1273,14 @@ function install (bot, { log, on, registerCleanup }) {
     let currentMobId = null
     // optional ranged plugin support
     let hawkLoaded = false
-    try { if (!bot.hawkEye) { bot.loadPlugin(require('minecrafthawkeye')) }; hawkLoaded = !!bot.hawkEye } catch {}
+    try {
+      if (!bot.hawkEye) {
+        const mod = require('minecrafthawkeye')
+        const plug = (mod && mod.default) ? mod.default : mod
+        if (typeof plug === 'function') bot.loadPlugin(plug)
+      }
+      hawkLoaded = !!bot.hawkEye
+    } catch {}
     let rangedActive = false
 
     function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
@@ -1146,7 +1292,7 @@ function install (bot, { log, on, registerCleanup }) {
       if (invHas('bow')) return 'bow'
       return null
     }
-    function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false }
+    function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false; rangedStickUntil = 0; unlockHand() }
     async function ensureWeaponEquipped (weapon) {
       try {
         // Respect main-hand lock to avoid stealing hands from tasks (e.g., mining)
@@ -1205,6 +1351,8 @@ function install (bot, { log, on, registerCleanup }) {
 
     guardInterval = setInterval(async () => {
       try {
+        // Yield to externally-triggered tools (e.g., mount_player) during execution
+        try { if (bot.state && bot.state.externalBusy) return } catch {}
         const centerPos = anchor || bot.entity?.position
         if (!centerPos) return
         // nearest hostile around center
@@ -1236,16 +1384,23 @@ function install (bot, { log, on, registerCleanup }) {
                 stopRanged()
                 // try to equip weapon explicitly to avoid other modules holding tools
                 try { await ensureWeaponEquipped(weapon) } catch {}
+                lockHand()
                 bot.hawkEye.autoAttack(nearest, weapon)
                 rangedActive = true
                 currentMobId = nearest.id
                 mode = 'ranged'
+                rangedStickUntil = Date.now() + 1200
               if ((guardDebug || (bot.state && bot.state.ai && bot.state.ai.trace)) && log?.info) log.info('[defend] ranged ->', weapon, 'mob=', mobName(nearest))
               }
               // keep some distance while ranging
               bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 6), true)
             } catch {}
           } else {
+            // honor a brief stickiness after switching to ranged, so the draw can complete
+            if (mode === 'ranged' && Date.now() < rangedStickUntil && meD >= 2.6) {
+              try { bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 6), true) } catch {}
+              return
+            }
             // Evaluate reachability; farm模式或不可达时，尝试原地击杀（刷怪塔窗口）
             let reachable = true
             try {
@@ -1333,7 +1488,14 @@ function install (bot, { log, on, registerCleanup }) {
     let mode = 'follow'
     let currentMobId = null
     let hawkLoaded = false
-    try { if (!bot.hawkEye) { bot.loadPlugin(require('minecrafthawkeye')) }; hawkLoaded = !!bot.hawkEye } catch {}
+    try {
+      if (!bot.hawkEye) {
+        const mod = require('minecrafthawkeye')
+        const plug = (mod && mod.default) ? mod.default : mod
+        if (typeof plug === 'function') bot.loadPlugin(plug)
+      }
+      hawkLoaded = !!bot.hawkEye
+    } catch {}
     let rangedActive = false
 
     // Local helpers (aligned with defend_area)
@@ -1345,7 +1507,7 @@ function install (bot, { log, on, registerCleanup }) {
       if (invHas('bow')) return 'bow'
       return null
     }
-    function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false }
+    function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false; rangedStickUntil = 0; unlockHand() }
     async function ensureWeaponEquipped (weapon) {
       try {
         if (bot.state && bot.state.holdItemLock) return false
@@ -1373,6 +1535,7 @@ function install (bot, { log, on, registerCleanup }) {
 
     guardInterval = setInterval(async () => {
       try {
+        try { if (bot.state && bot.state.externalBusy) return } catch {}
         const targetEnt = resolveGuardEntity()
         if (!targetEnt) return
         // Follow the player target
@@ -1396,16 +1559,23 @@ function install (bot, { log, on, registerCleanup }) {
             if (!rangedActive || currentMobId !== nearest.id) {
               stopRanged()
               try { await ensureWeaponEquipped(weapon) } catch {}
+              lockHand()
               bot.hawkEye.autoAttack(nearest, weapon)
               rangedActive = true
               currentMobId = nearest.id
               mode = 'ranged'
+              rangedStickUntil = Date.now() + 1200
               if (guardDebug && log?.info) log.info('[defend_player] ranged ->', mobName(nearest))
             }
             // keep some distance while ranging
             bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 6), true)
           } catch {}
         } else {
+          // honor short stickiness to let the draw complete
+          if (mode === 'ranged' && Date.now() < rangedStickUntil && meD >= 2.6) {
+            try { bot.pathfinder.setGoal(new goals.GoalFollow(nearest, 6), true) } catch {}
+            return
+          }
           // Evaluate reachability similar to defend_area
           let reachable = true
           try {
@@ -2119,7 +2289,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

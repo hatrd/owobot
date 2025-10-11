@@ -121,6 +121,20 @@ rl.on('line', (line) => {
 const pluginRoot = path.resolve(__dirname, 'bot_impl')
 let plugin = null
 let sharedState = { pendingGreets: new Map(), greetedPlayers: new Set(), readyForGreeting: false, extinguishing: false }
+// Optional: reload gate file to control when hot-reload applies
+function resolveReloadGate () {
+  const arg = argv.args['reload-gate']
+  const env = process.env.HOT_RELOAD_GATE
+  // Default: gate ON using 'open_fire' unless explicitly disabled
+  let v = (arg != null) ? String(arg) : (env != null ? String(env) : 'open_fire')
+  const s = String(v).toLowerCase()
+  if (s === '0' || s === 'off' || s === 'false' || s === 'no' || s === 'disable' || s === 'disabled') return null
+  if (s === '' || s === '1' || s === 'on' || s === 'true' || s === 'yes') v = 'open_fire'
+  return path.resolve(process.cwd(), v)
+}
+const reloadGatePath = resolveReloadGate()
+let gateWatcher = null
+let pendingReload = false
 
 function clearPluginCache() {
   for (const id of Object.keys(require.cache)) {
@@ -167,11 +181,37 @@ const watchers = new Map()
 let shuttingDown = false
 
 function debounceReload(label) {
+  if (reloadGatePath) {
+    // Gate enabled: mark pending and instruct operator how to trigger
+    pendingReload = true
+    console.log('Detected change in', label, '- gated. Touch', path.basename(reloadGatePath), 'to apply reload.')
+    return
+  }
   clearTimeout(reloadTimer)
   reloadTimer = setTimeout(() => {
     console.log('Detected change in', label, '- reloading...')
     loadPlugin()
   }, 120)
+}
+
+function watchReloadGate() {
+  if (!reloadGatePath || gateWatcher) return
+  try {
+    const gateDir = path.dirname(reloadGatePath)
+    const gateBase = path.basename(reloadGatePath)
+    gateWatcher = fs.watch(gateDir, { persistent: true }, (event, filename) => {
+      if (!filename) return
+      const fname = filename.toString()
+      if (fname !== gateBase) return
+      // Any change (create/modify/rename) triggers reload
+      console.log('Reload gate touched -> applying reload now')
+      pendingReload = false
+      loadPlugin()
+    })
+    console.log('Hot reload gate enabled at', reloadGatePath, '(touch to reload)')
+  } catch (e) {
+    console.error('Failed to watch reload gate:', e?.message || e)
+  }
 }
 
 function watchDirRecursive(dir) {
@@ -198,6 +238,7 @@ function watchDirRecursive(dir) {
 
 watchDirRecursive(pluginRoot)
 console.log('Hot reload watching directory', path.basename(pluginRoot))
+watchReloadGate()
 
 function closeAllWatchers() {
   for (const [dir, w] of watchers) {
@@ -212,6 +253,7 @@ process.on('SIGINT', () => {
   console.log('Shutting down bot...')
   try { if (plugin && plugin.deactivate) plugin.deactivate() } catch {}
   try { closeAllWatchers() } catch {}
+  try { if (gateWatcher) gateWatcher.close() } catch {}
   try { rl.close() } catch {}
   try {
     bot && bot.once('end', () => {
