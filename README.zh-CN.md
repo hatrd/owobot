@@ -32,6 +32,7 @@
 常用示例
 - 驻守当前位置清怪：说 “owk, 驻守当前位置清怪” → `defend_area{}`
 - 跟随并保护玩家：`TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
+- 对玩家右键上坐（空手）：`TOOL {"tool":"mount_player","args":{"name":"Ameyaku"}}`
 - 去最近的床：`TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
 - 丢出主手物品：`TOOL {"tool":"toss","args":{"slot":"hand"}}`
 
@@ -53,7 +54,7 @@
 
 ## 战斗/防御工具
 - 守点清怪：`defend_area{radius?,tickMs?,dig?}`（默认不挖掘；刷怪塔“只露脚”会尝试多种瞄准高度）
-- 护卫玩家：`defend_player{name, radius?, followRange?, tickMs?, dig?}`
+- 护卫玩家：`defend_player{name, radius?, followRange?, tickMs?, dig?}`（跟随并清怪）
 - 半径清怪：`cull_hostiles{radius?,tickMs?}`
 
 ## CLI 命令

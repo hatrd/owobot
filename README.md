@@ -31,7 +31,8 @@ Mineflayer bot with hot reload and optional AI chat.
 
 Examples
 - Defend current spot: say “owk, 守点清怪” → `defend_area{}`
-- Defend a player: `TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
+- Defend a player (follow + protect): `TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
+- Right-click mount a player (empty hand): `TOOL {"tool":"mount_player","args":{"name":"Ameyaku"}}`
 - Go to nearest bed: `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
 - Toss main‑hand: `TOOL {"tool":"toss","args":{"slot":"hand"}}`
 
@@ -53,7 +54,7 @@ Note: approaching a bed will attempt to sleep automatically.
 
 ## Combat / Defense Tools
 - Defend area: `defend_area{radius?,tickMs?,dig?}` — stand near the anchor, attack hostiles; no digging by default. For mob farms exposing only feet, the bot cycles multiple aim heights to land hits.
-- Defend player: `defend_player{name, radius?, followRange?, tickMs?, dig?}`
+- Defend player: `defend_player{name, radius?, followRange?, tickMs?, dig?}` — follows the player and clears hostiles nearby.
 - Cull hostiles: `cull_hostiles{radius?,tickMs?}`
 
 ## CLI Commands
@@ -89,6 +90,6 @@ Example: `npm start -- --host my.server --port 25565 --username MyBot --greet of
 
 常用示例
 - 驻守当前位置清怪：说 “owk, 驻守当前位置清怪” → `defend_area{}`
-- 跟随并保护玩家 Ameyaku：`TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
+- 跟随并保护玩家：`TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
 - 去最近的床：`TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
 - 丢出主手物品：`TOOL {"tool":"toss","args":{"slot":"hand"}}`
