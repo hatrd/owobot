@@ -171,7 +171,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔应使用 defend_area{}（守点清怪）或 cull_hostiles{}；跟随保护玩家使用 defend_player{name}；不要默认使用 hunt_player。',
       '需要强制停止当前行为时，使用 reset{}（别名: stop{} / stop_all{}），不要输出解释文字，只输出 TOOL 行。',
       '在确需执行动作时，才输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: defend_area{radius?,tickMs?,dig?}, defend_player{name, radius?, followRange?, tickMs?, dig?}, follow_player{name,range?}, cull_hostiles{radius?,tickMs?}, hunt_player{name,range?,durationMs?}, goto{x,y,z,range?}, goto_block{names?|name?|match?, radius?, range?, dig?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?, keepEquipped?, keepHeld?, keepOffhand?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, mine_ore{radius?, only?}.',
+      '可用工具: defend_area{radius?,tickMs?,dig?}, defend_player{name, radius?, followRange?, tickMs?, dig?}, follow_player{name,range?}, cull_hostiles{radius?,tickMs?}, hunt_player{name,range?,durationMs?}, goto{x,y,z,range?}, goto_block{names?|name?|match?, radius?, range?, dig?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...], all?}, break_blocks{match?|names?,area:{shape:"sphere"|"down",radius?,height?,steps?,origin?},max?,until?="exhaust"|"all",collect?}, gather{names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{resource?=logs|sand|stone|dirt|gravel, names?|match?, radius?, height?, depositRadius?, includeBarrel?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, pickup{radius?,names?,match?,max?,timeoutMs?,until?}, deposit{items:[{name|slot,count?},...], all?, radius?, includeBarrel?, keepEquipped?, keepHeld?, keepOffhand?}, withdraw{items:[{name,count?},...], all?, radius?, includeBarrel?, multi?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, dismount{}, flee_trap{radius?}, mine_ore{radius?, only?}.',
       '数量词映射："全部/所有/直到没有" -> until="all"；"一组/两组/N组" -> 目标数量≈64*N（原木/通用物品）。如用户指定“收集两组原木”，应使用 gather 或 break_blocks+collect，设置 max≈128 或 stacks=2。',
       '矿物采集：当用户说“挖矿/挖钻石/挖一组钻石/自动挖钻石”等，请使用 mine_ore，并根据目标矿种设置 only（如 only:"diamond"），并合理设置 radius（默认32）。若用户给出目标数量（如一组钻石），请同时设置 expected:"inventory.diamond >= 64" 用于自动结束。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
@@ -184,6 +184,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const t = String(text || '').toLowerCase()
       const tCN = String(text || '')
       const isInfo = /多少|几个|有无|有没有|哪些|什么|在哪|哪里|距离|多远/.test(tCN) || /(how many|how much|list|where|distance)/i.test(t)
+      // "what are you doing" style
+      if (/在干嘛|在干什么|干嘛呢|做什么|在做什么|你在忙什么|现在.*(在)?做/.test(tCN)) return { kind: 'info', topic: 'doing' }
+      // Position / coordinates queries
+      const asksPosition = /(坐标|位置)/.test(tCN) || /你在(哪|哪里|哪儿)/.test(tCN)
+      if (asksPosition) return { kind: 'info', topic: 'position' }
       // Simple item alias map (CN -> EN id)
       const NAME_ALIASES = new Map([
         ['钻石', 'diamond'],
@@ -206,8 +211,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         return null
       }
       const item = extractItem(tCN)
+      // Minerals bucket: when users ask about "矿/矿物/矿石" counts, treat as inventory mineral summary
+      const asksMinerals = /(矿物|矿石|矿)/.test(tCN) && /(多少|几个|有多少|多少个)/.test(tCN)
+      const bareHowMany = /^(有多少|多少)\s*[?？。!！]*$/u.test(tCN.trim())
       if (isInfo) {
-        if (/背包|包里|inventory/.test(tCN) || (/(多少|几个)/.test(tCN) && item)) return { kind: 'info', topic: 'inventory', item }
+        if (/背包|包里|inventory/.test(tCN)) return { kind: 'info', topic: 'inventory', item, list: !item }
+        if (asksMinerals || bareHowMany) return { kind: 'info', topic: 'inventory', item: null, subset: 'minerals' }
+        if ((/(多少|几个)/.test(tCN) && item)) return { kind: 'info', topic: 'inventory', item }
         if (/敌对|怪|怪物|hostile|敌人/i.test(tCN)) return { kind: 'info', topic: 'hostiles' }
         if (/实体|entities?|entity/i.test(t)) return { kind: 'info', topic: 'entities' }
         if (/玩家|people|player/i.test(tCN)) return { kind: 'info', topic: 'players' }
@@ -223,11 +233,49 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (!intent || intent.kind !== 'info') return ''
       const snap = observer.snapshot(bot, {})
       // Inventory count quick answer
+      const cnMap = new Map([
+        ['diamond', '钻石'],
+        ['iron_ingot', '铁锭'],
+        ['gold_ingot', '金锭'],
+        ['copper_ingot', '铜锭'],
+        ['coal', '煤'],
+        ['redstone', '红石'],
+        ['lapis_lazuli', '青金石'],
+        ['emerald', '绿宝石'],
+        ['torch', '火把'],
+        ['stick', '木棍'],
+        ['charcoal', '木炭'],
+        ['netherite_scrap', '下界合金碎片'],
+        ['raw_iron', '粗铁'],
+        ['raw_gold', '粗金'],
+        ['raw_copper', '粗铜']
+      ])
+      const toCN = (name) => cnMap.get(String(name || '').toLowerCase()) || String(name || '').replace(/_/g, ' ')
+
       if (intent.topic === 'inventory' && intent.item) {
         const name = String(intent.item).toLowerCase()
         let cnt = 0
         try { for (const it of (bot.inventory?.items() || [])) { if (String(it?.name || '').toLowerCase() === name) cnt += (it.count || 0) } } catch {}
-        return `${intent.item.replace(/_/g,' ')}x${cnt}`.replace('diamond','钻石').replace('iron ingot','铁锭').replace('gold ingot','金锭').replace('copper ingot','铜锭').replace('redstone','红石').replace('coal','煤').replace('lapis lazuli','青金石').replace('emerald','绿宝石').replace('torch','火把').replace('stick','木棍')
+        return `${toCN(intent.item)}x${cnt}`
+      }
+      // Inventory listing (e.g., 背包里都有什么)
+      if (intent.topic === 'inventory' && !intent.item && intent.list) {
+        const top = Array.isArray(snap?.inv?.top) ? snap.inv.top.slice(0, 8) : []
+        if (!top.length) return '背包空空的~'
+        const rows = top.map(it => `${toCN(it.name)}x${it.count}`)
+        return '背包: ' + rows.join(', ')
+      }
+      // Minerals summary (e.g., 有多少矿/矿物/矿石)
+      if (intent.topic === 'inventory' && !intent.item && intent.subset === 'minerals') {
+        const want = ['diamond','iron_ingot','gold_ingot','copper_ingot','coal','redstone','lapis_lazuli','emerald','netherite_scrap']
+        const raws = ['raw_iron','raw_gold','raw_copper']
+        const bag = new Map()
+        try { for (const it of (bot.inventory?.items() || [])) { const n = String(it?.name || '').toLowerCase(); bag.set(n, (bag.get(n) || 0) + (it.count || 0)) } } catch {}
+        const parts = []
+        for (const n of want) { const c = bag.get(n) || 0; if (c > 0) parts.push(`${toCN(n)}x${c}`) }
+        // include raws if ingots are zero or to be thorough
+        for (const n of raws) { const c = bag.get(n) || 0; if (c > 0) parts.push(`${toCN(n)}x${c}`) }
+        return parts.length ? ('矿物: ' + parts.join(', ')) : '背包没有矿物~'
       }
       if (intent.topic === 'hostiles') {
         const hs = snap.nearby?.hostiles || { count: 0, nearest: null }
@@ -300,6 +348,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (intent.topic === 'drops') {
         const dr = snap.nearby?.drops || []
         return dr.length ? `附近掉落物${dr.length}个，最近${Number(dr[0].d).toFixed(1)}m` : '附近没有掉落物~'
+      }
+      if (intent.topic === 'position') {
+        const p = snap.pos
+        if (!p) return ''
+        const dim = snap.dim || 'overworld'
+        return `坐标:${p.x},${p.y},${p.z} | 维度:${dim}`
+      }
+      if (intent.topic === 'doing') {
+        const task = snap?.task?.name
+        return task ? `在${task}呢~` : '闲着呢~'
       }
       // generic info -> summarize vitals briefly
       const v = snap.vitals || {}
@@ -420,7 +478,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (payload && payload.tool) {
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','autofish','mount_near','dismount','flee_trap','observe_detail','mine_ore'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','break_blocks','gather','harvest','place_blocks','pickup','deposit','withdraw','autofish','mount_near','dismount','flee_trap','observe_detail','mine_ore'])
           // If the intent is informational, disallow action tools (only allow observe_detail/say)
           if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)
@@ -512,6 +570,55 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try { bot.chat(quick) } catch {}
       return
     }
+
+    // Fast deterministic actions (avoid LLM for common commands)
+    const acted = await (async () => {
+      try {
+        const text = String(content)
+        const tools = actionsMod.install(bot, { log })
+        // Pattern: say a message directly (e.g., 输出 /home)
+        const mSay = text.match(/^(输出|发送)\s+(.+)/)
+        if (mSay) {
+          const out = mSay[2].trim().slice(0, 120)
+          try { bot.chat(out) } catch {}
+          return true
+        }
+        // Pattern: withdraw all from nearest chest/barrel
+        if (/(取出|拿出|拿|取|收集).*(最近|最近的)?\s*(箱子|箱|木桶|容器).*(全部|所有|一切|所有(物品|东西)?)/.test(text)) {
+          try { bot.chat('好的') } catch {}
+          ;(async () => {
+            try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'withdraw' }) } catch {}
+            let res
+            try { res = await tools.run('withdraw', { all: true, includeBarrel: true }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'withdraw' }) } catch {} }
+            const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
+            try { bot.chat(msg) } catch {}
+          })().catch(() => {})
+          return true
+        }
+        // Pattern: withdraw specific item like fishing rod from nearby chests
+        const nameMap = new Map([
+          ['钓鱼竿', 'fishing_rod'],
+          ['鱼竿', 'fishing_rod'],
+          ['fishing rod', 'fishing_rod']
+        ])
+        for (const [cn, id] of nameMap.entries()) {
+          const re = new RegExp(`(从|在)?(箱子|木桶|容器).*?(取|拿|拿出|取出).*(?:${cn})`)
+          if (re.test(text)) {
+            try { bot.chat('好的') } catch {}
+            ;(async () => {
+              try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'withdraw' }) } catch {}
+              let res
+              try { res = await tools.run('withdraw', { items: [{ name: id, count: 1 }], includeBarrel: true, multi: true }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'withdraw' }) } catch {} }
+              const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
+              try { bot.chat(msg) } catch {}
+            })().catch(() => {})
+            return true
+          }
+        }
+      } catch {}
+      return false
+    })()
+    if (acted) return
 
     ctrl.busy = true
     try {

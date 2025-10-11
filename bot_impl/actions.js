@@ -1770,7 +1770,138 @@ function install (bot, { log, on, registerCleanup }) {
   // Back-compat alias for previous API
   async function deposit_all (args = {}) { return deposit({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, autofish, mine_ore, skill_start, skill_status, skill_cancel }
+  // --- Withdraw items from nearest (or multiple) chest/barrel ---
+  async function withdraw (args = {}) {
+    const radius = Math.max(2, parseInt(args.radius || '18', 10))
+    const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
+    const multi = (String(args.multi || args.searchAll || 'true').toLowerCase() !== 'false')
+    if (!ensurePathfinder()) return fail('无寻路')
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const m = new Movements(bot, mcData)
+    m.canDig = false; m.allowSprinting = true
+    bot.pathfinder.setMovements(m)
+
+    function isContainerName (n) {
+      const s = String(n || '').toLowerCase()
+      if (s === 'chest' || s === 'trapped_chest') return true
+      if (includeBarrel && s === 'barrel') return true
+      return false
+    }
+
+    const me = bot.entity?.position
+    if (!me) return fail('未就绪')
+    const blocks = bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 48 }) || []
+    if (!blocks.length) return fail('附近没有箱子')
+    blocks.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+
+    // Build spec list similar to toss/deposit interface
+    const specs = (() => {
+      if (Array.isArray(args.items) && args.items.length) return args.items
+      if (Array.isArray(args.names) && args.names.length) return args.names.map(n => ({ name: n }))
+      if (args.name) return [{ name: args.name, count: args.count }]
+      if (args.slot != null) return [{ slot: args.slot, count: args.count }]
+      return []
+    })()
+
+    const takeAll = ((!specs || specs.length === 0) && (args.all === true || String(args.all).toLowerCase() === 'true'))
+
+    let kinds = 0
+    let total = 0
+    const { Vec3 } = require('vec3')
+
+    function fromContainerSlots (container) {
+      const res = []
+      try {
+        const invStart = container.inventoryStart || 0
+        const end = Math.max(0, invStart)
+        for (let i = 0; i < end; i++) {
+          const it = container.slots?.[i]
+          if (it && it.count > 0) res.push(it)
+        }
+      } catch {}
+      return res
+    }
+
+    function matchesName (it, nm) { return String(it?.name || '').toLowerCase() === String(nm || '').toLowerCase() }
+
+    // Helper to approach and open a container block (Vec3)
+    async function openAt (pos) {
+      bot.pathfinder.setGoal(new goals.GoalNear(pos.x, pos.y, pos.z, 1), true)
+      const until = Date.now() + 6000
+      while (Date.now() < until) { await wait(100); const d = bot.entity.position.distanceTo(pos); if (d <= 2.2) break }
+      try { bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      await wait(60)
+      const blk = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
+      if (!blk) return null
+      try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
+      try { return await bot.openContainer(blk) } catch { return null }
+    }
+
+    // If taking all: just use nearest container
+    if (takeAll) {
+      const target = blocks[0]
+      let container = await openAt(target)
+      if (!container) return fail('无法打开箱子')
+      try {
+        const list = fromContainerSlots(container)
+        for (const it of list) {
+          const cnt = it.count || 0
+          if (cnt <= 0) continue
+          try { await container.withdraw(it.type, it.metadata, cnt, it.nbt); kinds++; total += cnt } catch {}
+        }
+      } finally { try { container.close() } catch {} }
+      if (kinds <= 0) return fail('箱子里没有可取的物品')
+      return ok(`已经把箱子里的东西都取出来啦~ 共${kinds}种${total}个`)
+    }
+
+    // Named/slot-based withdrawal, possibly across multiple containers
+    const want = specs.map(s => ({ name: s.name ? String(s.name).toLowerCase() : null, count: (s.count == null ? null : Math.max(0, Number(s.count))), slot: s.slot }))
+    // Track remaining counts by name; null means unlimited
+    const remainByName = new Map()
+    for (const s of want) {
+      if (!s || !s.name) continue
+      const key = s.name
+      const add = (s.count == null) ? Infinity : Math.max(0, Number(s.count))
+      const cur = remainByName.has(key) ? remainByName.get(key) : 0
+      const next = (cur === Infinity || add === Infinity) ? Infinity : (cur + add)
+      remainByName.set(key, next)
+    }
+
+    for (let i = 0; i < blocks.length; i++) {
+      const pos = blocks[i]
+      let container = await openAt(pos)
+      if (!container) continue
+      try {
+        const list = fromContainerSlots(container)
+        // Slot-specific (container slot index) support is rare; we focus on names
+        for (const it of list) {
+          if (!it || it.count <= 0) continue
+          // Try each desired name
+          for (const [nm, rem0] of remainByName.entries()) {
+            if (rem0 <= 0) continue
+            if (!matchesName(it, nm)) continue
+            const take = Math.min(rem0, it.count || 0)
+            if (take <= 0) continue
+            try { await container.withdraw(it.type, it.metadata, take, it.nbt); kinds++; total += take; remainByName.set(nm, rem0 - take) } catch {}
+          }
+        }
+      } finally { try { container.close() } catch {} }
+      // Stop early if all satisfied
+      let done = true
+      for (const v of remainByName.values()) { if (v > 0) { done = false; break } }
+      if (done) break
+      if (!multi) break
+    }
+
+    if (kinds <= 0) return fail('没有取到物品')
+    return ok(`已取出${kinds}种${total}个`)
+  }
+
+  async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
+
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, cull_hostiles, mount_near, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]
