@@ -21,6 +21,10 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   let locked = false
   let actions = null
   let exploreUntil = 0
+  let lastTrashAt = 0
+  const TRASH = Array.isArray(args.trash) ? args.trash.map(s => String(s).toLowerCase()) : ['netherrack']
+  const TRASH_MINFREE = Math.max(0, parseInt(args.trashMinFree || '4', 10))
+  const TRASH_COOLDOWN_MS = 4000
 
   function ensureMcData () { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
   function ensurePathfinder () {
@@ -319,6 +323,24 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   async function tick () {
     if (!inited) await start()
     if (busy) return { status: 'running', progress: 0 }
+
+    // Opportunistic auto-trash: keep space by dropping low-value blocks (no pathfinder usage)
+    try {
+      const now = Date.now()
+      const slots = bot.inventory?.slots || []
+      let free = 0; for (let i = 9; i < (slots.length || 45); i++) if (!slots[i]) free++
+      if (free <= TRASH_MINFREE && (now - lastTrashAt) >= TRASH_COOLDOWN_MS) {
+        const inv = bot.inventory?.items() || []
+        const present = new Set(inv.map(it => String(it?.name || '').toLowerCase()))
+        const want = TRASH.filter(n => present.has(n))
+        if (want.length) {
+          busy = true
+          try { const acts = ensureActions(); if (acts) await acts.run('toss', { names: want }) } catch {}
+          finally { busy = false; lastTrashAt = now }
+          return { status: 'running', progress: 0, events: [{ type: 'auto_trash', names: want }] }
+        }
+      }
+    } catch {}
 
     // If we had given up recently, fail
     if (gaveUpAt && Date.now() - gaveUpAt < 500) return { status: 'failed', progress: 0, events: [{ type: 'missing_target' }] }

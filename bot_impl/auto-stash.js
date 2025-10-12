@@ -4,9 +4,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[STASH]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[STASH]', ...a) }
 
   const S = state.autoStash = state.autoStash || {}
-  const cfg = S.cfg = Object.assign({ enabled: true, intervalMs: 12000, minFree: 4, radius: 18, debug: false }, S.cfg || {})
+  const cfg = S.cfg = Object.assign({ enabled: false, intervalMs: 12000, minFree: 4, radius: 18, debug: false }, S.cfg || {})
   let timer = null
   let running = false
+  // Backoff window to avoid thrashing when no containers nearby or repeated failures
+  S.nextAllowedAt = S.nextAllowedAt || 0
+  S.backoffMs = S.backoffMs || { fail: 45000, noChest: 90000 }
 
   function invEmptyCount () {
     try {
@@ -35,12 +38,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return false
   }
 
+  function isBusySoft () {
+    try {
+      const hasGoal = !!(bot.pathfinder && bot.pathfinder.goal)
+      const hasTask = !!(state?.currentTask)
+      const runnerBusy = !!(bot._skillRunnerState && bot._skillRunnerState.tasks && bot._skillRunnerState.tasks.size > 0)
+      const busy = state?.externalBusy || state?.holdItemLock || state?.autoLookSuspended || hasGoal || hasTask || runnerBusy || bot.currentWindow || bot.targetDigBlock
+      return Boolean(busy)
+    } catch { return true }
+  }
+
   async function tick () {
     if (!cfg.enabled || running) return
-    // skip if busy or in window or not ready
+    const now = Date.now()
+    if (now < (S.nextAllowedAt || 0)) return
+    // skip if not ready or busy (e.g., mining/pathfinding/skills running)
     try { if (!bot.entity || !bot.entity.position) return } catch { return }
-    try { if (state.externalBusy) return } catch {}
-    try { if (bot.currentWindow) return } catch {}
+    if (isBusySoft()) return
     const free = invEmptyCount()
     if (free > Math.max(0, cfg.minFree || 0)) return
     running = true
@@ -48,9 +62,18 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const names = listByName().filter(n => !isProtected(n))
       if (!names.length) return
       const actions = require('./actions').install(bot, { log })
-      L.info('stash -> free=', free, 'items=', names.length)
+      if (cfg.debug) L.info('stash -> free=', free, 'items=', names.length)
       const r = await actions.run('deposit', { names, radius: Math.max(8, cfg.radius || 18), includeBarrel: true })
-      if (!r || !r.ok) L.warn('stash fail:', r && r.msg)
+      if (!r || !r.ok) {
+        const msg = String(r && r.msg || '')
+        if (/没有箱子|箱子不可见|无法打开箱子/.test(msg)) S.nextAllowedAt = now + (S.backoffMs?.noChest || 90000)
+        else S.nextAllowedAt = now + (S.backoffMs?.fail || 45000)
+        L.warn('stash fail:', msg || '未知', 'backoff until', new Date(S.nextAllowedAt).toLocaleTimeString())
+      } else {
+        // small cooldown after success to avoid immediate re-trigger while inventory updates settle
+        S.nextAllowedAt = now + Math.max(4000, Math.min(15000, cfg.intervalMs))
+        if (cfg.debug) L.info('stash ok, cooldown until', new Date(S.nextAllowedAt).toLocaleTimeString())
+      }
     } catch (e) { L.warn('stash error:', e?.message || e) }
     finally { running = false }
   }
@@ -84,4 +107,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-

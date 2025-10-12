@@ -333,8 +333,14 @@ function activate (botInstance, options = {}) {
 
   // Event: display server messages
   on('message', (message) => {
-    const rendered = typeof message.toAnsi === 'function' ? message.toAnsi() : message.toString()
-    console.log(rendered)
+    try {
+      const rendered = typeof message.toAnsi === 'function' ? message.toAnsi() : String(message)
+      const max = 800
+      const out = rendered.length > max ? (rendered.slice(0, max - 1) + '…') : rendered
+      console.log(out)
+    } catch (e) {
+      try { console.log(String(message)) } catch {}
+    }
   })
 
   // Feature: sleep when item dropped onto a bed at night
@@ -376,7 +382,7 @@ function activate (botInstance, options = {}) {
 
   // Feature: auto-plant saplings when available in inventory
   try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
-  // Feature: auto-stash when inventory nearly full
+  // Feature: auto-stash when inventory nearly full (default disabled; intended for fishing)
   try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
 
   // Feature: inventory compression when space is tight (no tossing)

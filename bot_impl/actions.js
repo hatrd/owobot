@@ -699,6 +699,11 @@ function install (bot, { log, on, registerCleanup }) {
     if (bot.heldItem) extra.push(bot.heldItem)
     const off = bot.inventory?.slots?.[45]
     if (off) extra.push(off)
+    // include armor slots as candidates
+    try {
+      const slots = bot.inventory?.slots || []
+      for (const idx of [5, 6, 7, 8]) { const it = slots[idx]; if (it && it.name) extra.push(it) }
+    } catch {}
     const all = inv.concat(extra)
     const same = all.filter(it => String(it.name || '').toLowerCase() === needle)
     if (same.length) return same
@@ -803,6 +808,37 @@ function install (bot, { log, on, registerCleanup }) {
     }
 
     const summary = []
+
+    function isEquipSlot (slot) { return slot === 5 || slot === 6 || slot === 7 || slot === 8 || slot === 45 }
+    async function dropItemObject (it, count) {
+      try {
+        const hasSlot = typeof it.slot === 'number'
+        if (hasSlot && isEquipSlot(it.slot)) {
+          // For equipped/offhand slots, prefer dropping the entire stack directly
+          await bot.tossStack(it)
+          return it.count || 1
+        }
+        const n = Math.max(0, Number(count != null ? count : (it.count || 0)))
+        if (n <= 0) return 0
+        await bot.toss(it.type, null, n)
+        return n
+      } catch { return 0 }
+    }
+    // helper: unequip armor if the requested name matches equipped piece
+    async function unequipIfEquipped (nm) {
+      try {
+        const n = normalizeName(nm)
+        const slots = bot.inventory?.slots || []
+        const at = { head: slots[5]?.name || null, torso: slots[6]?.name || null, legs: slots[7]?.name || null, feet: slots[8]?.name || null }
+        const map = { head: 'helmet', torso: 'chestplate', legs: 'leggings', feet: 'boots' }
+        for (const [dest, suffix] of Object.entries(map)) {
+          const cur = String(at[dest] || '').toLowerCase()
+          if (cur && cur === n) { try { await bot.unequip(dest) } catch {} ; return true }
+        }
+      } catch {}
+      return false
+    }
+
     for (const spec of arr) {
       const cnt = (spec && spec.count != null) ? Math.max(0, Number(spec.count)) : null
       if (spec.slot) {
@@ -815,16 +851,21 @@ function install (bot, { log, on, registerCleanup }) {
       }
       const nm = spec?.name
       if (!nm) { summary.push('unknown:x0'); continue }
+      // If targeting equipped armor, unequip first to bring it into inventory
+      await unequipIfEquipped(nm)
       const items = findAllByName(nm)
       if (!items || items.length === 0) { summary.push(`${normalizeName(nm)}x0`); continue }
       if (cnt != null) {
         const it = items[0]
         const n = Math.min(cnt, it.count || 0)
-        if (n > 0) await bot.toss(it.type, null, n)
-        summary.push(`${it.name}x${n}`)
+        const dropped = await dropItemObject(it, n)
+        summary.push(`${it.name}x${dropped}`)
       } else {
         let total = 0
-        for (const it of items) { const c = it.count || 0; if (c > 0) { await bot.toss(it.type, null, c); total += c } }
+        for (const it of items) {
+          const c = it.count || 0
+          if (c > 0) { const d = await dropItemObject(it, c); total += d }
+        }
         summary.push(`${normalizeName(nm)}x${total}`)
       }
     }
