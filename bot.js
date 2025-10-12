@@ -34,6 +34,8 @@ const options = {
   auth: argv.args.auth || process.env.MC_AUTH || 'offline'
 }
 if (argv.args.password || process.env.MC_PASSWORD) options.password = argv.args.password || process.env.MC_PASSWORD
+// Explicit protocol version (e.g., 1.21.4). Strongly recommended to avoid packet schema mismatches.
+if (argv.args.version || process.env.MC_VERSION) options.version = argv.args.version || process.env.MC_VERSION
 // Greeting toggle via CLI: --greet on|off
 if (argv.args.greet) { process.env.MC_GREET = parseBool(argv.args.greet) ? '1' : '0' }
 
@@ -46,6 +48,7 @@ console.log('Starting bot with config:', {
   port: options.port,
   username: options.username,
   auth: options.auth,
+  version: options.version,
   hasPassword: Boolean(options.password),
   debug: DEBUG,
   greet: parseBool(process.env.MC_GREET, true)
@@ -74,12 +77,22 @@ function scheduleReconnect(reason) {
 
 function attachCoreBotListeners() {
   bot.on('kicked', (reason) => {
-    try { console.log(`[${ts()}] Kicked by server:`, typeof reason === 'string' ? reason : JSON.stringify(reason)) } catch {}
+    try {
+      const m = process.memoryUsage && process.memoryUsage()
+      const fmt = (n) => Math.round((n || 0) / (1024 * 1024)) + 'MB'
+      const mem = m ? `rss=${fmt(m.rss)} heapUsed=${fmt(m.heapUsed)} heapTotal=${fmt(m.heapTotal)}` : ''
+      console.log(`[${ts()}] Kicked by server:`, typeof reason === 'string' ? reason : JSON.stringify(reason), mem)
+    } catch {}
     try { if (plugin && typeof plugin.deactivate === 'function') plugin.deactivate() } catch {}
     scheduleReconnect('kicked')
   })
   bot.on('end', (reason) => {
-    try { console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '') } catch {}
+    try {
+      const m = process.memoryUsage && process.memoryUsage()
+      const fmt = (n) => Math.round((n || 0) / (1024 * 1024)) + 'MB'
+      const mem = m ? `rss=${fmt(m.rss)} heapUsed=${fmt(m.heapUsed)} heapTotal=${fmt(m.heapTotal)}` : ''
+      console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '', mem)
+    } catch {}
     try { if (plugin && typeof plugin.deactivate === 'function') plugin.deactivate() } catch {}
     scheduleReconnect('end')
   })

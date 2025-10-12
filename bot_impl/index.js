@@ -15,6 +15,7 @@ let state = null
 const listeners = []
 let fireWatcher = null
 let playerWatcher = null
+let explosionCooldownUntil = 0
 function initAfterSpawn() {
   // Reset greeting bookkeeping
   state.greetedPlayers.clear()
@@ -57,6 +58,25 @@ function initAfterSpawn() {
       } catch {}
     }
   }, 120)
+
+  // Guard: explosion storms may thrash physics/pathfinder and trigger disconnects on some servers.
+  // On explosion, briefly clear goals and controls, and pause automations to let chunks/physics settle.
+  try {
+    let lastExplosionAt = 0
+    const onExplosion = (pos, strength, affected, source) => {
+      const now = Date.now()
+      // Coalesce bursts
+      if (now - lastExplosionAt < 200) return
+      lastExplosionAt = now
+      try { coreLog.warn('Explosion near', pos ? `${pos.x},${pos.y},${pos.z}` : 'unknown', 'strength=', strength) } catch {}
+      explosionCooldownUntil = now + 1500
+      try { if (state) state.explosionCooldownUntil = explosionCooldownUntil } catch {}
+      try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
+      try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
+      try { bot.clearControlStates() } catch {}
+    }
+    on('explosion', onExplosion)
+  } catch {}
 }
 
 async function hardReset (reason) {
@@ -384,6 +404,8 @@ function activate (botInstance, options = {}) {
   try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
   // Feature: auto-stash when inventory nearly full (default disabled; intended for fishing)
   try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
+  // Diagnostics: explosion tracing and samplers
+  try { require('./explosion-diag').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('explo') }) } catch (e) { coreLog.warn('explosion-diag install error:', e?.message || e) }
 
   // Feature: inventory compression when space is tight (no tossing)
   try { require('./inventory-compress').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('compress') }) } catch (e) { coreLog.warn('inventory-compress install error:', e?.message || e) }

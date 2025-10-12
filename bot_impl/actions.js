@@ -29,7 +29,13 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = (args.dig === true); m.allowSprinting = true
+    m.canDig = (args.dig === true)
+    m.allowSprinting = true
+    try { m.allow1by1towers = false } catch {}
+    try { m.allowParkour = false } catch {}
+    try { m.allowParkourPlace = false } catch {}
+    try { m.scafoldingBlocks = [] } catch {}
+    try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
     bot.pathfinder.setGoal(new goals.GoalNear(x, y, z, range))
     return ok(`前往 ${x},${y},${z}`)
@@ -47,7 +53,13 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = (args.dig === true); m.allowSprinting = true
+    m.canDig = (args.dig === true)
+    m.allowSprinting = true
+    try { m.allow1by1towers = false } catch {}
+    try { m.allowParkour = false } catch {}
+    try { m.allowParkourPlace = false } catch {}
+    try { m.scafoldingBlocks = [] } catch {}
+    try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
 
     const me = bot.entity.position
@@ -130,7 +142,13 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = true
+    m.allowSprinting = true
+    try { m.allow1by1towers = false } catch {}
+    try { m.allowParkour = false } catch {}
+    try { m.allowParkourPlace = false } catch {}
+    try { m.scafoldingBlocks = [] } catch {}
+    try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
     bot.pathfinder.setGoal(new goals.GoalFollow(ent, range), true)
     return ok(`跟随 ${name}`)
@@ -301,7 +319,13 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = true
+    m.allowSprinting = true
+    try { m.allow1by1towers = false } catch {}
+    try { m.allowParkour = false } catch {}
+    try { m.allowParkourPlace = false } catch {}
+    try { m.scafoldingBlocks = [] } catch {}
+    try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
 
     function now () { return Date.now() }
@@ -966,12 +990,27 @@ function install (bot, { log, on, registerCleanup }) {
       return true
     }
 
+    function explosionCooling () { try { return Date.now() < ((bot.state && bot.state.explosionCooldownUntil) || 0) } catch { return false } }
+    function isFluidName (n) { try { const s = String(n || '').toLowerCase(); if (!s) return false; return s.includes('water') || s.includes('lava') } catch { return false } }
+    function isFallingBlockName (n) {
+      try {
+        const s = String(n || '').toLowerCase()
+        if (!s) return false
+        if (s === 'sand' || s === 'red_sand' || s === 'gravel') return true
+        if (s.endsWith('_concrete_powder')) return true
+        if (s === 'anvil' || s === 'chipped_anvil' || s === 'damaged_anvil') return true
+        return false
+      } catch { return false }
+    }
+    function isOreNameForSafety (n) { try { const s = String(n || '').toLowerCase(); return !!s && (s.endsWith('_ore') || s === 'ancient_debris') } catch { return false } }
     async function approachAndDig (p) {
+      if (explosionCooling()) return false
       // approach
       bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
       const until = Date.now() + 8000
       while (Date.now() < until) {
         await wait(100)
+        if (explosionCooling()) return false
         const d = bot.entity.position.distanceTo(p)
         if (d <= 2.3) break
       }
@@ -984,6 +1023,14 @@ function install (bot, { log, on, registerCleanup }) {
       // safety: avoid lava neighbor on/below
       const below = bot.blockAt(p.offset(0, -1, 0))
       if (isLavaLike(block) || isLavaLike(below)) return false
+      // ore mining safety: if the target is an ore and the block directly above is fluid or a falling block, skip to avoid suffocation
+      try {
+        if (isOreNameForSafety(block.name)) {
+          const above = bot.blockAt(p.offset(0, 1, 0))
+          const an = String(above?.name || '').toLowerCase()
+          if (isFluidName(an) || isFallingBlockName(an)) return false
+        }
+      } catch {}
       try { await toolSel.ensureBestToolForBlock(bot, block) } catch {}
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -2162,12 +2209,14 @@ function install (bot, { log, on, registerCleanup }) {
     const stacks = args.stacks != null ? Math.max(0, parseInt(args.stacks, 10)) : null
     const count = args.count != null ? Math.max(0, parseInt(args.count, 10)) : null
     const collectDrops = (String(args.collect ?? 'true').toLowerCase() !== 'false')
-    if (!names && !match && !onlyParam) return fail('缺少目标')
+    // If no target specified, default to "any ore" for strong compatibility
+    const defaultAnyOre = (!names && !match && !onlyParam)
 
     // Unified path: if target looks like ore(s), delegate to mining skill
     try {
       const runner = ensureRunner()
       const looksLikeOre = (() => {
+        if (defaultAnyOre) return true
         if (onlyParam) return true
         if (names && names.some(isOreNameSimple)) return true
         if (match && (match.includes('_ore') || ['ore','diamond','iron','gold','copper','coal','redstone','lapis','emerald','quartz','debris','netherite'].some(k => match.includes(k)))) return true
@@ -2175,7 +2224,9 @@ function install (bot, { log, on, registerCleanup }) {
       })()
       if (runner && looksLikeOre) {
         let only = null
-        if (onlyParam) {
+        if (defaultAnyOre) {
+          only = null // mine any ore
+        } else if (onlyParam) {
           if (Array.isArray(onlyParam)) {
             only = onlyParam
           } else {

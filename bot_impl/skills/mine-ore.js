@@ -4,15 +4,45 @@
 module.exports = function mineOreFactory ({ bot, args, log }) {
   const L = log
   const radius = Math.max(4, parseInt(args.radius || '32', 10))
-  const only = (() => {
-    if (!args.only) return null
-    if (Array.isArray(args.only)) return args.only.map(x => String(x).toLowerCase())
-    return String(args.only).toLowerCase()
-  })()
+  // Normalize 'only' filter: accept english tokens and common Chinese synonyms.
+  function normalizeOnlyToken (s) {
+    const v = String(s || '').toLowerCase().trim()
+    if (!v) return null
+    // Any/All
+    if (v === 'any' || v === 'all' || v === 'ore' || v === '矿' || v === '矿物' || v === '随意' || v === '随意矿' || v === '随意矿物') return null
+    // Chinese -> English mappings
+    if (v === '煤' || v === '煤矿' || v === '煤炭') return 'coal'
+    if (v === '铁' || v === '铁矿' || v === '生铁') return 'iron'
+    if (v === '金' || v === '金矿') return 'gold'
+    if (v === '铜' || v === '铜矿') return 'copper'
+    if (v === '钻' || v === '钻石' || v === '钻矿') return 'diamond'
+    if (v === '红石' || v === '红石矿') return 'redstone'
+    if (v === '青金' || v === '青金石' || v === '青金矿' || v === '青金石矿') return 'lapis'
+    if (v === '绿宝石' || v === '绿宝石矿') return 'emerald'
+    if (v === '石英' || v === '石英矿') return 'quartz'
+    if (v === '远古残骸' || v === '残骸' || v === '下界合金矿') return 'ancient_debris'
+    // already english tokens like 'coal','iron', or full ids like 'diamond_ore'
+    return v
+  }
+
+  function normalizeOnly (val) {
+    if (!val) return null
+    if (Array.isArray(val)) {
+      const mapped = val.map(normalizeOnlyToken).filter(x => x !== undefined)
+      // If array contains a null (meaning any), treat as no filter
+      if (mapped.some(x => x === null)) return null
+      return mapped
+    }
+    const t = normalizeOnlyToken(val)
+    return t === null ? null : t
+  }
+
+  const only = normalizeOnly(args.only)
   const maxPerTick = 1
   let inited = false
   let target = null
   let stack = [] // vein DFS stack of positions (Vec3)
+  const avoided = new Set() // positions of ore avoided due to hazards
   let busy = false
   let gaveUpAt = 0
   let mcData = null
@@ -53,8 +83,8 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   function isTargetOre (n) {
     if (!isOreName(n)) return false
     if (!only) return true
-    if (Array.isArray(only)) return only.some(tok => String(n).toLowerCase().includes(tok))
-    return String(n).toLowerCase().includes(only)
+    if (Array.isArray(only)) return only.some(tok => String(n).toLowerCase().includes(String(tok)))
+    return String(n).toLowerCase().includes(String(only))
   }
 
   function hasPickaxe () {
@@ -88,7 +118,13 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     try {
       const { goals, Movements } = pathfinder
       const mc = ensureMcData()
-      const m = new Movements(bot, mc); m.canDig = !!allowDig; m.allowSprinting = true
+      const m = new Movements(bot, mc)
+      m.canDig = !!allowDig
+      m.allowSprinting = true
+      try { m.allow1by1towers = false } catch {}
+      try { m.allowParkour = false } catch {}
+      try { m.allowParkourPlace = false } catch {}
+      try { m.scafoldingBlocks = [] } catch {}
       bot.pathfinder.setMovements(m)
       // Approach near the block (do not target occupying the ore's cell)
       bot.pathfinder.setGoal(new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2), true)
@@ -119,6 +155,38 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   function neighborOffsets () {
     const V = require('vec3').Vec3
     return [new V(1,0,0), new V(-1,0,0), new V(0,1,0), new V(0,-1,0), new V(0,0,1), new V(0,0,-1)]
+  }
+
+  function isLiquidName (n) {
+    const s = String(n || '').toLowerCase()
+    if (!s) return false
+    return s.includes('water') || s.includes('lava')
+  }
+
+  function isFallingBlockName (n) {
+    try {
+      const s = String(n || '').toLowerCase()
+      if (!s) return false
+      if (s === 'sand' || s === 'red_sand' || s === 'gravel') return true
+      if (s.endsWith('_concrete_powder')) return true
+      if (s === 'anvil' || s === 'chipped_anvil' || s === 'damaged_anvil') return true
+      return false
+    } catch { return false }
+  }
+
+  function posKey (p) { return `${p?.x}|${p?.y}|${p?.z}` }
+
+  function liquidNeighbor (oreBlock) {
+    try {
+      if (!oreBlock) return null
+      for (const d of neighborOffsets()) {
+        const p = oreBlock.position.plus(d)
+        const b = bot.blockAt(p)
+        const nm = String(b?.name || '').toLowerCase()
+        if (isLiquidName(nm)) return { type: nm.includes('lava') ? 'lava' : 'water', pos: p }
+      }
+      return null
+    } catch { return null }
   }
 
   function findBlockingNeighbor (oreBlock) {
@@ -200,6 +268,10 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     try { return bot.blockAtCursor ? (bot.blockAtCursor(6) || null) : null } catch { return null }
   }
 
+  function explosionCooling () {
+    try { const t = (bot.state && bot.state.explosionCooldownUntil) || 0; return Date.now() < t } catch { return false }
+  }
+
   async function gotoNearAsync (pos, range = 1.5, allowDig = true, timeoutMs = 8000) {
     if (!ensurePathfinder()) return false
     const { goals, Movements } = pathfinder
@@ -207,6 +279,10 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mc)
     m.canDig = !!allowDig
     m.allowSprinting = true
+    try { m.allow1by1towers = false } catch {}
+    try { m.allowParkour = false } catch {}
+    try { m.allowParkourPlace = false } catch {}
+    try { m.scafoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
     const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(1, Math.floor(range)))
     try { await bot.pathfinder.goto(goal) } catch {}
@@ -216,8 +292,28 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
 
   async function digBlockAt (pos) {
     try {
+      if (explosionCooling()) return false
       const ore = bot.blockAt(pos)
       if (!ore) return true
+      // Ceiling hazard: skip if fluid or falling block directly above the ore
+      try {
+        const above = bot.blockAt(ore.position.offset(0, 1, 0))
+        const an = String(above?.name || '').toLowerCase()
+        if (isLiquidName(an) || isFallingBlockName(an)) {
+          avoided.add(posKey(ore.position))
+          try { L && L.info && L.info('avoid ore due to ceiling hazard', an, 'at', `${ore.position.x},${ore.position.y},${ore.position.z}`) } catch {}
+          try { bot.emit('mine_ore:hazard', { type: 'ceiling', above: an, ore: ore.position }) } catch {}
+          return false
+        }
+      } catch {}
+      // Basic liquid hazard avoidance: skip ores adjacent to water/lava
+      const hazard = liquidNeighbor(ore)
+      if (hazard) {
+        avoided.add(posKey(ore.position))
+        try { L && L.info && L.info('avoid ore due to liquid', hazard.type, 'at', hazard.pos && `${hazard.pos.x},${hazard.pos.y},${hazard.pos.z}`) } catch {}
+        try { bot.emit('mine_ore:hazard', { type: 'liquid', liquid: hazard.type, ore: ore.position }) } catch {}
+        return false
+      }
       // Approach near ore; allow pathfinder to dig through stone, but we dig ore ourselves
       await gotoNearAsync(ore.position, 1.5, true, 8000)
       // Equip appropriate tool and clear conflicting controls
@@ -244,6 +340,12 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
             if (hp && !(hp.x === ore.position.x && hp.y === ore.position.y && hp.z === ore.position.z)) {
               const cover = bot.blockAt(hit.position)
               if (cover && !isAirName(cover.name) && !isTargetOre(cover.name)) {
+                // If the cover is liquid, avoid this ore entirely
+                if (isLiquidName(cover.name)) {
+                  avoided.add(posKey(ore.position))
+                  try { bot.emit('mine_ore:hazard', { type: 'liquid', liquid: cover.name, ore: ore.position }) } catch {}
+                  return false
+                }
                 await gotoNearAsync(cover.position, 1.5, true, 6000)
                 try { await bot.lookAt(cover.position.offset(0.5, 0.5, 0.5), true) } catch {}
                 try { const ts2 = ensureToolSel(); await ts2.ensureBestToolForBlock(bot, cover) } catch {}
@@ -271,7 +373,8 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     }) || []
     if (!found.length) return null
     found.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
-    return found[0]
+    for (const p of found) { if (!avoided.has(posKey(p))) return p }
+    return null
   }
 
   async function gotoNear (pos) {
@@ -279,7 +382,12 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const { Movements, goals } = pathfinder
     const mcd = ensureMcData()
     const m = new Movements(bot, mcd)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = true
+    m.allowSprinting = true
+    try { m.allow1by1towers = false } catch {}
+    try { m.allowParkour = false } catch {}
+    try { m.allowParkourPlace = false } catch {}
+    try { m.scafoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
     const g = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 1)
     bot.pathfinder.setGoal(g)
@@ -294,7 +402,12 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       const { Movements, goals } = pathfinder
       const mcd = ensureMcData()
       const m = new Movements(bot, mcd)
-      m.canDig = true; m.allowSprinting = true
+      m.canDig = true
+      m.allowSprinting = true
+      try { m.allow1by1towers = false } catch {}
+      try { m.allowParkour = false } catch {}
+      try { m.allowParkourPlace = false } catch {}
+      try { m.scafoldingBlocks = [] } catch {}
       bot.pathfinder.setMovements(m)
       const angle = Math.random() * Math.PI * 2
       const dx = Math.round(Math.cos(angle) * step)
@@ -323,6 +436,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   async function tick () {
     if (!inited) await start()
     if (busy) return { status: 'running', progress: 0 }
+    if (explosionCooling()) return { status: 'running', progress: 0, events: [{ type: 'cooldown', reason: 'explosion' }] }
 
     // Opportunistic auto-trash: keep space by dropping low-value blocks (no pathfinder usage)
     try {
@@ -351,6 +465,9 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     // If stack has ore positions, continue vein
     if (stack.length) {
       const pos = stack.pop()
+      if (avoided.has(posKey(pos))) {
+        return { status: 'running', progress: 0, events: [{ type: 'skipped_hazard' }] }
+      }
       busy = true
       const ok = await digBlockAt(pos)
       busy = false
