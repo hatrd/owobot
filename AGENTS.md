@@ -55,6 +55,9 @@ If you need one‑time “post‑spawn init”, extract a common function (e.g. 
 ## 架构
 - Single bot process; `bot_impl` can maintain shared state across reloads via `activate()` return value. Clean up timers/listeners in `deactivate()`.
 
+### 已移除模块
+- 如果移除了一个模块，就不要保留任何信息。包括写一条注释说这个模块已经移除。
+
 ### 协调（优先级与锁）
 - `state.externalBusy`: set true while executing player/AI‑triggered tools. Self‑running automations should pause when this is true.
 - `state.holdItemLock`: set to a string (e.g. `'fishing_rod'`) to lock the main hand; modules that equip should skip main‑hand changes but may still equip off‑hand (shield).

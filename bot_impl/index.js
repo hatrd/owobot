@@ -411,8 +411,6 @@ function activate (botInstance, options = {}) {
   try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
   // Feature: auto-stash when inventory nearly full (default disabled; intended for fishing)
   try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
-  // Diagnostics: explosion tracing and samplers
-  try { require('./explosion-diag').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('explo') }) } catch (e) { coreLog.warn('explosion-diag install error:', e?.message || e) }
 
   // Feature: inventory compression when space is tight (no tossing)
   try { require('./inventory-compress').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('compress') }) } catch (e) { coreLog.warn('inventory-compress install error:', e?.message || e) }

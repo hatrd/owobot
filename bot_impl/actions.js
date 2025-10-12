@@ -876,10 +876,19 @@ function install (bot, { log, on, registerCleanup }) {
       const items = findAllByName(nm)
       if (!items || items.length === 0) { summary.push(`${normalizeName(nm)}x0`); continue }
       if (cnt != null) {
-        const it = items[0]
-        const n = Math.min(cnt, it.count || 0)
-        const dropped = await dropItemObject(it, n)
-        summary.push(`${it.name}x${dropped}`)
+        // Distribute the requested count across all matching stacks
+        let remaining = cnt
+        let totalDropped = 0
+        for (const it of items) {
+          if (remaining <= 0) break
+          const n = Math.min(remaining, it.count || 0)
+          if (n > 0) {
+            const d = await dropItemObject(it, n)
+            totalDropped += d
+            remaining -= d
+          }
+        }
+        summary.push(`${normalizeName(nm)}x${totalDropped}`)
       } else {
         let total = 0
         for (const it of items) {
