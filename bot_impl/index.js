@@ -431,6 +431,17 @@ function activate (botInstance, options = {}) {
       runner.registerSkill('mine_ore', require('./skills/mine-ore'))
       runner.registerSkill('write_text', require('./skills/write-text'))
     } catch {}
+    // Reflect runner tasks into shared state for observer/.status after hot-reload
+    try {
+      on('skill:start', (ev) => { try { state.currentTask = { name: String(ev?.name || ''), source: 'auto', startedAt: ev?.createdAt || Date.now() } } catch {} })
+      on('skill:end', (ev) => { try { if (state.currentTask && state.currentTask.name === ev?.name) state.currentTask = null } catch {} })
+      // On reload, if tasks already running, expose one to state.currentTask
+      try {
+        const tasks = runner.listTasks && runner.listTasks()
+        const running = Array.isArray(tasks) ? tasks.find(t => t.status === 'running') : null
+        if (running) state.currentTask = { name: String(running.name || 'skill'), source: 'auto', startedAt: running.createdAt || Date.now() }
+      } catch {}
+    } catch {}
   } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 
   // Debug: drops scanner CLI

@@ -29,6 +29,7 @@ function install (bot, { on, registerCleanup, log }) {
     const task = { id, name, args, expected, status: 'running', progress: 0, createdAt: Date.now(), events: [], controller: ctl, lastTickAt: 0 }
     S.tasks.set(id, task)
     info('start', name, 'id=', id)
+    try { bot.emit('skill:start', { id, name, args, createdAt: task.createdAt }) } catch {}
     // allow skill to run any immediate init
     try { if (typeof ctl.start === 'function') ctl.start() } catch (e) { warn('start err', e?.message || e) }
     return { ok: true, msg: '已开始', taskId: id }
@@ -119,7 +120,11 @@ function install (bot, { on, registerCleanup, log }) {
         if (res && res.status && res.status !== 'running') {
           task.status = res.status
           task.progress = Number.isFinite(res.progress) ? res.progress : (res.status === 'succeeded' ? 1 : task.progress)
-          if (res.status !== 'running') { S.tasks.delete(task.id); info('end', task.name, 'id=', task.id, 'status=', res.status) }
+          if (res.status !== 'running') {
+            S.tasks.delete(task.id)
+            info('end', task.name, 'id=', task.id, 'status=', res.status)
+            try { bot.emit('skill:end', { id: task.id, name: task.name, status: res.status }) } catch {}
+          }
         } else {
           task.progress = Number.isFinite(res.progress) ? res.progress : task.progress
         }
@@ -129,6 +134,7 @@ function install (bot, { on, registerCleanup, log }) {
         pushEvents(task, [{ type: 'error', error: String(e?.message || e) }])
         S.tasks.delete(task.id)
         info('end', task.name, 'id=', task.id, 'status=failed')
+        try { bot.emit('skill:end', { id: task.id, name: task.name, status: 'failed' }) } catch {}
       }
     }
   }
@@ -146,8 +152,15 @@ function install (bot, { on, registerCleanup, log }) {
   on && on('agent:stop_all', shutdown)
   registerCleanup && registerCleanup(() => { shutdown() })
 
+  function listTasks () {
+    const out = []
+    for (const t of S.tasks.values()) {
+      out.push({ id: t.id, name: t.name, status: t.status, createdAt: t.createdAt })
+    }
+    return out
+  }
   // expose on bot for other modules
-  bot._skillRunner = { registerSkill, startSkill, status, cancel, pause, resume, listSkills }
+  bot._skillRunner = { registerSkill, startSkill, status, cancel, pause, resume, listSkills, listTasks }
   info('runner ready')
   return bot._skillRunner
 }

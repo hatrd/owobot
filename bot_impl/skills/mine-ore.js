@@ -160,6 +160,50 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     return s.includes('water') || s.includes('lava')
   }
 
+  function isSolidName (n) {
+    const s = String(n || '').toLowerCase()
+    if (!s) return false
+    if (isAirName(s)) return false
+    if (isLiquidName(s)) return false
+    return true
+  }
+
+  function isSafeStandFeet (feetPos) {
+    try {
+      const feet = bot.blockAt(feetPos)
+      const head = bot.blockAt(feetPos.offset(0, 1, 0))
+      const under = bot.blockAt(feetPos.offset(0, -1, 0))
+      const feetOk = (!feet || isAirName(feet.name))
+      const headOk = (!head || isAirName(head.name))
+      const underOk = (!!under && isSolidName(under.name))
+      if (!feetOk || !headOk || !underOk) return false
+      // avoid standing where below-under is liquid or air (steep fall risk after digging underfoot)
+      const belowUnder = bot.blockAt(feetPos.offset(0, -2, 0))
+      if (!belowUnder) return true
+      const bn = String(belowUnder.name || '').toLowerCase()
+      if (isLiquidName(bn)) return false
+      return true
+    } catch { return false }
+  }
+
+  function findSideStandForOre (oreBlock) {
+    try {
+      if (!oreBlock) return null
+      const me = bot.entity?.position
+      const V = require('vec3').Vec3
+      const dirs = [new V(1,0,0), new V(-1,0,0), new V(0,0,1), new V(0,0,-1)]
+      let best = null; let bestD = Infinity
+      for (const d of dirs) {
+        const stand = oreBlock.position.plus(d)
+        // We stand with feet at 'stand' (requires two-block air and solid under)
+        if (!isSafeStandFeet(stand)) continue
+        const dd = me ? stand.distanceTo(me) : 0
+        if (dd < bestD) { best = stand; bestD = dd }
+      }
+      return best
+    } catch { return null }
+  }
+
   function isFallingBlockName (n) {
     try {
       const s = String(n || '').toLowerCase()
@@ -197,7 +241,6 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
         if (!b) continue
         const nm = String(b.name || '').toLowerCase()
         if (isAirName(nm)) continue
-        if (isTargetOre(nm)) continue // never dig target ore as a cover
         // Prefer the neighbor closest to us
         const dist = p.distanceTo(me)
         if (dist < bestD) { best = b; bestD = dist }
@@ -289,15 +332,52 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       if (explosionCooling()) return false
       const ore = bot.blockAt(pos)
       if (!ore) return true
-      // Ceiling hazard: skip if fluid or falling block directly above the ore
+      // Do not dig a block directly under our feet; reposition to a safe side first
+      try {
+        const meFeet = bot.entity?.position?.floored?.() || bot.entity?.position
+        if (meFeet) {
+          const underFeet = meFeet.offset(0, -1, 0)
+          const standingOnOre = (underFeet.x === ore.position.x && underFeet.y === ore.position.y && underFeet.z === ore.position.z)
+          if (standingOnOre) {
+            const side = findSideStandForOre(ore)
+            if (side) { await gotoNearAsync(side, 0.5, true, 6000) }
+            return false
+          }
+        }
+      } catch {}
+      // Ceiling hazard handling
       try {
         const above = bot.blockAt(ore.position.offset(0, 1, 0))
         const an = String(above?.name || '').toLowerCase()
-        if (isLiquidName(an) || isFallingBlockName(an)) {
+        if (isLiquidName(an)) {
+          // liquids above: still avoid (risk of flooding)
           avoided.add(posKey(ore.position))
-          try { L && L.info && L.info('avoid ore due to ceiling hazard', an, 'at', `${ore.position.x},${ore.position.y},${ore.position.z}`) } catch {}
+          try { L && L.info && L.info('avoid ore due to liquid above', an, 'at', `${ore.position.x},${ore.position.y},${ore.position.z}`) } catch {}
           try { bot.emit('mine_ore:hazard', { type: 'ceiling', above: an, ore: ore.position }) } catch {}
           return false
+        } else if (isFallingBlockName(an)) {
+          // gravel/sand above: try to clear it safely from the side instead of avoiding the ore entirely
+          try {
+            const side = findSideStandForOre(ore)
+            if (side) { await gotoNearAsync(side, 0.7, true, 6000) }
+            try { await bot.lookAt(above.position.offset(0.5, 0.5, 0.5), true) } catch {}
+            try { const ts = ensureToolSel(); await ts.ensureBestToolForBlock(bot, above) } catch {}
+            try { await bot.dig(above, 'raycast') } catch {}
+          } catch {}
+          // Let next tick retry the ore after cover clears/falls
+          return false
+        }
+      } catch {}
+      // If ore is hanging (air/liquid below), avoid standing on it to dig from top; prefer side stand
+      try {
+        const below = bot.blockAt(ore.position.offset(0, -1, 0))
+        const bn = String(below?.name || '').toLowerCase()
+        if (!below || isAirName(bn) || isLiquidName(bn)) {
+          const meFeet = bot.entity?.position?.floored?.() || bot.entity?.position
+          if (meFeet && meFeet.y === ore.position.y + 1) {
+            const side = findSideStandForOre(ore)
+            if (side) { await gotoNearAsync(side, 0.5, true, 6000); return false }
+          }
         }
       } catch {}
       // Basic liquid hazard avoidance: skip ores adjacent to water/lava
@@ -310,6 +390,18 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       }
       // Approach near ore; allow pathfinder to dig through stone, but we dig ore ourselves
       await gotoNearAsync(ore.position, 1.5, true, 8000)
+      // Re-check after approach: avoid digging underfoot
+      try {
+        const meFeet = bot.entity?.position?.floored?.() || bot.entity?.position
+        if (meFeet) {
+          const underFeet = meFeet.offset(0, -1, 0)
+          const standingOnOre = (underFeet.x === ore.position.x && underFeet.y === ore.position.y && underFeet.z === ore.position.z)
+          if (standingOnOre) {
+            const side = findSideStandForOre(ore)
+            if (side) { await gotoNearAsync(side, 0.5, true, 6000); return false }
+          }
+        }
+      } catch {}
       // Equip appropriate tool and clear conflicting controls
       try { const ts = ensureToolSel(); await ts.ensureBestToolForBlock(bot, ore) } catch {}
       try {
