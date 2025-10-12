@@ -343,8 +343,15 @@ function activate (botInstance, options = {}) {
       state.currentTask = { name: String(info?.tool || info?.name || 'unknown'), source, startedAt: Date.now() }
     } catch {}
   })
-  on('external:end', () => {
-    try { state.currentTask = null } catch {}
+  on('external:end', (info) => {
+    try {
+      const endTool = String(info?.tool || '').toLowerCase()
+      const cur = state.currentTask && String(state.currentTask.name || '').toLowerCase()
+      // Only clear if names match or no current task; avoid clearing tasks started by another module (e.g., skills)
+      if (!cur || !endTool || cur === endTool) {
+        state.currentTask = null
+      }
+    } catch {}
   })
 
   function registerCleanup (fn) {

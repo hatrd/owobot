@@ -28,6 +28,7 @@ function install (bot, { on, registerCleanup, log }) {
     const id = makeId()
     const task = { id, name, args, expected, status: 'running', progress: 0, createdAt: Date.now(), events: [], controller: ctl, lastTickAt: 0 }
     S.tasks.set(id, task)
+    info('start', name, 'id=', id)
     // allow skill to run any immediate init
     try { if (typeof ctl.start === 'function') ctl.start() } catch (e) { warn('start err', e?.message || e) }
     return { ok: true, msg: '已开始', taskId: id }
@@ -118,7 +119,7 @@ function install (bot, { on, registerCleanup, log }) {
         if (res && res.status && res.status !== 'running') {
           task.status = res.status
           task.progress = Number.isFinite(res.progress) ? res.progress : (res.status === 'succeeded' ? 1 : task.progress)
-          if (res.status !== 'running') S.tasks.delete(task.id)
+          if (res.status !== 'running') { S.tasks.delete(task.id); info('end', task.name, 'id=', task.id, 'status=', res.status) }
         } else {
           task.progress = Number.isFinite(res.progress) ? res.progress : task.progress
         }
@@ -127,6 +128,7 @@ function install (bot, { on, registerCleanup, log }) {
         task.status = 'failed'
         pushEvents(task, [{ type: 'error', error: String(e?.message || e) }])
         S.tasks.delete(task.id)
+        info('end', task.name, 'id=', task.id, 'status=failed')
       }
     }
   }
