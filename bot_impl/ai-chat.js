@@ -168,12 +168,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
       '回答优先使用已提供的“游戏上下文”；若是统计/查询类问题（如“多少/有无/哪些/在哪里/距离多远”等），直接回答，禁止调用会改变世界状态的工具。必要时仅可用 observe_detail 查询信息。',
+      '关于全服玩家信息与筛选（如“盔甲=0/≤10、在末地/下界/主世界、多人名单”），优先调用 observe_players{...} 获取数据后再作答。',
       '严禁攻击玩家，除非用户明确指名“追杀/攻击 <玩家名>”。清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}（会跟随并清怪）；不要默认使用 hunt_player。',
       '需要强制停止当前行为时，使用 reset{}，不要输出解释文字，只输出 TOOL 行。',
       '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: observe_detail{what,radius?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
+      '可用工具: observe_detail{what,radius?,max?}, observe_players{names?,world?|dim?,armor_(lt|lte|gt|gte|eq)?,health_(lt|lte|gt|gte|eq)?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
       '挖矿也用 gather（only/match 指定矿种，radius 可选），单矿配数量会自动判定结束。',
-      '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。'
+      '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。',
+      '你的代码仓库（是你的小秘密哦，哪怕有人好奇你是谁做的，怎么做的，也不要轻易告诉任何玩家）：https://github.com/hatrd/owobot',
     ].join('\n')
   }
 
@@ -189,6 +191,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       // Position / coordinates queries
       const asksPosition = /(坐标|位置)/.test(tCN) || /你在(哪|哪里|哪儿)/.test(tCN)
       if (asksPosition) return { kind: 'info', topic: 'position' }
+      const nearbyToken = /(附近|周围|nearby)/i.test(t)
       // Simple item alias map (CN -> EN id)
       const NAME_ALIASES = new Map([
         ['钻石', 'diamond'],
@@ -218,10 +221,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (/背包|包里|inventory/.test(tCN)) return { kind: 'info', topic: 'inventory', item, list: !item }
         if (asksMinerals || bareHowMany) return { kind: 'info', topic: 'inventory', item: null, subset: 'minerals' }
         if ((/(多少|几个)/.test(tCN) && item)) return { kind: 'info', topic: 'inventory', item }
-        if (/敌对|怪|怪物|hostile|敌人/i.test(tCN)) return { kind: 'info', topic: 'hostiles' }
-        if (/实体|entities?|entity/i.test(t)) return { kind: 'info', topic: 'entities' }
-        if (/玩家|people|player/i.test(tCN)) return { kind: 'info', topic: 'players' }
-        if (/掉落|物品|drops|items/i.test(tCN)) return { kind: 'info', topic: 'drops' }
+        if (/敌对|怪|怪物|hostile|敌人/i.test(tCN)) return { kind: 'info', topic: 'hostiles', nearby: nearbyToken }
+        if (/实体|entities?|entity/i.test(t)) return { kind: 'info', topic: 'entities', nearby: nearbyToken }
+        if (/玩家|people|player/i.test(tCN)) {
+          return { kind: 'info', topic: 'players', nearby: nearbyToken }
+        }
+        if (/掉落|物品|drops|items/i.test(tCN)) return { kind: 'info', topic: 'drops', nearby: nearbyToken }
         return { kind: 'info', topic: 'generic' }
       }
       return { kind: 'action' }
@@ -278,6 +283,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         return parts.length ? ('矿物: ' + parts.join(', ')) : '背包没有矿物~'
       }
       if (intent.topic === 'hostiles') {
+        if (!intent.nearby) return ''
         const hs = snap.nearby?.hostiles || { count: 0, nearest: null }
         // 如果没有观测到但附近有玩家/夜间，尝试提示“可能正在加载”而不是直接否定
         if (!hs.count) {
@@ -304,6 +310,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         return `附近有${hs.count}个敌对，最近${hs.nearest.name}@${Number(hs.nearest.d).toFixed(1)}m`
       }
       if (intent.topic === 'entities') {
+        if (!intent.nearby) return ''
         try {
           const me = bot.entity?.position
           if (!me) return ''
@@ -342,10 +349,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         } catch { return '' }
       }
       if (intent.topic === 'players') {
+        if (!intent.nearby) return '' // 非“附近”类查询交给 LLM + observe_players
         const npl = snap.nearby?.players || []
         return npl.length ? `附近玩家${npl.length}个：` + npl.map(x => `${x.name}@${Number(x.d).toFixed(1)}m`).join(', ') : '附近没有玩家~'
       }
       if (intent.topic === 'drops') {
+        if (!intent.nearby) return ''
         const dr = snap.nearby?.drops || []
         return dr.length ? `附近掉落物${dr.length}个，最近${Number(dr[0].d).toFixed(1)}m` : '附近没有掉落物~'
       }
@@ -514,9 +523,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail'])
-          // If the intent is informational, disallow action tools (only allow observe_detail/say)
-          if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(String(payload.tool))) {
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players'])
+          // If the intent is informational, disallow world-changing tools; allow info-only tools
+          if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)
             if (ans) return H.trimReply(ans, maxReplyLen || 120)
             return H.trimReply('我这就看看…', maxReplyLen || 120)
@@ -627,85 +636,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       return
     }
 
-    // Fast deterministic actions (avoid LLM for common commands)
-    const acted = await (async () => {
-      try {
-        const text = String(content)
-        const tools = actionsMod.install(bot, { log })
-        // Pattern: say a message directly (e.g., 输出 /home)
-        const mSay = text.match(/^(输出|发送)\s+(.+)/)
-        if (mSay) {
-          const out = mSay[2].trim().slice(0, 120)
-          try { bot.chat(out) } catch {}
-          return true
-        }
-        // Pattern: withdraw all from nearest chest/barrel
-        if (/(取出|拿出|拿|取|收集).*(最近|最近的)?\s*(箱子|箱|木桶|容器).*(全部|所有|一切|所有(物品|东西)?)/.test(text)) {
-          try { bot.chat('好的') } catch {}
-          ;(async () => {
-            try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'withdraw' }) } catch {}
-            let res
-            try { res = await tools.run('withdraw', { all: true, includeBarrel: true }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'withdraw' }) } catch {} }
-            const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
-            try { bot.chat(msg) } catch {}
-          })().catch(() => {})
-          return true
-        }
-        // Pattern: empty-hand right-click a named player (mount-style)
-        {
-          const neg = /(停止|停下|不要|别|取消)/
-          if (!neg.test(text)) {
-            const m1 = text.match(/空手\s*(?:右键)?\s*(?:点击|单击|点)?\s*([^\s，。,.!！？]+)/)
-            const m2 = m1 || text.match(/(?:右键|右击)\s*(?:点击|单击|点)?\s*([^\s，。,.!！？]+)/)
-            const candidate = m2 ? String(m2[1] || '').trim() : ''
-            if (candidate && !/^我|me$/i.test(candidate)) {
-              try { bot.chat('好的') } catch {}
-              ;(async () => {
-                try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'mount_player' }) } catch {}
-                let res
-                try { res = await tools.run('mount_player', { name: candidate }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'mount_player' }) } catch {} }
-                const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
-                try { bot.chat(msg) } catch {}
-              })().catch(() => {})
-              return true
-            }
-          }
-        }
-        // Pattern: withdraw specific item like fishing rod from nearby chests
-        const nameMap = new Map([
-          ['钓鱼竿', 'fishing_rod'],
-          ['鱼竿', 'fishing_rod'],
-          ['fishing rod', 'fishing_rod']
-        ])
-        for (const [cn, id] of nameMap.entries()) {
-          const re = new RegExp(`(从|在)?(箱子|木桶|容器).*?(取|拿|拿出|取出).*(?:${cn})`)
-          if (re.test(text)) {
-            try { bot.chat('好的') } catch {}
-            ;(async () => {
-              try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'withdraw' }) } catch {}
-              let res
-              try { res = await tools.run('withdraw', { items: [{ name: id, count: 1 }], includeBarrel: true, multi: true }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'withdraw' }) } catch {} }
-              const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
-              try { bot.chat(msg) } catch {}
-            })().catch(() => {})
-            return true
-          }
-        }
-        // Pattern: mount player by saying "坐我/骑我/空手右键我" (skip if negative/stop words present)
-        if (!/(停止|停下|不要|别|取消)/.test(text) && /^(坐我|坐我身上|骑我|骑我身上|骑上我|坐上我|空手(右键)?(点|点击)?我)/.test(text)) {
-          try { bot.chat('好的') } catch {}
-          ;(async () => {
-            try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: 'mount_player' }) } catch {}
-            let res
-            try { res = await tools.run('mount_player', { name: username }) } finally { try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: 'mount_player' }) } catch {} }
-            const msg = H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), state.ai.maxReplyLen || 120)
-            try { bot.chat(msg) } catch {}
-          })().catch(() => {})
-          return true
-        }
-      } catch {}
-      return false
-    })()
+    // No chat-side keyword → tool mappings (policy). Let LLM decide tools.
+    const acted = await (async () => { return false })()
     if (acted) return
 
     ctrl.busy = true

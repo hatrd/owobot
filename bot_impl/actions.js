@@ -488,6 +488,110 @@ function install (bot, { log, on, registerCleanup }) {
     } catch (e) { return fail(String(e?.message || e)) }
   }
 
+  // Observe players' info from external map API (generalized)
+  async function observe_players (args = {}) {
+    const url = String(process.env.MAP_API_URL || '').trim()
+    if (!url) return fail('MAP_API_URL 未配置')
+    const names = Array.isArray(args.names) ? args.names.filter(Boolean).map(s => String(s)) : null
+    const single = args.name ? String(args.name) : null
+    const filterWorldRaw = String(args.world || args.dim || '').trim()
+    const maxOut = Math.max(1, parseInt(args.max || '20', 10))
+    const toDim = (w) => {
+      const s = String(w || '')
+      if (s === 'world_nether' || /nether/i.test(s)) return '下界'
+      if (s === 'world_the_end' || /end$/i.test(s)) return '末地'
+      if (s === 'world' || /overworld|^world$/i.test(s)) return '主世界'
+      return s || '未知'
+    }
+    const worldKey = (() => {
+      if (!filterWorldRaw) return null
+      const v = filterWorldRaw.toLowerCase()
+      if (/nether|下界/.test(v)) return 'world_nether'
+      if (/the_end|end|末地/.test(v)) return 'world_the_end'
+      if (/overworld|主世界|^world$/.test(v)) return 'world'
+      // If an exact world id is passed, pass it through
+      return filterWorldRaw
+    })()
+    const wantNames = (() => {
+      if (names && names.length) return names
+      if (single) return [single]
+      return null
+    })()
+
+    function num (v) { const n = Number(v); return Number.isFinite(n) ? n : null }
+    function parseThresh (pfx) {
+      const eq = num(args[pfx + '_eq'] ?? args[pfx + 'Eq'])
+      const lt = num(args[pfx + '_lt'] ?? args[pfx + 'Lt'])
+      const lte = num(args[pfx + '_lte'] ?? args[pfx + 'Lte'])
+      const gt = num(args[pfx + '_gt'] ?? args[pfx + 'Gt'])
+      const gte = num(args[pfx + '_gte'] ?? args[pfx + 'Gte'])
+      const min = num(args[pfx + 'Min'])
+      const max = num(args[pfx + 'Max'])
+      return { eq, lt: lt ?? (max != null ? max - Number.EPSILON : null), lte: lte ?? max, gt: gt ?? (min != null ? min + Number.EPSILON : null), gte: gte ?? min }
+    }
+    const armorT = parseThresh('armor')
+    const healthT = parseThresh('health')
+    function passNum (val, t) {
+      if (t.eq != null && val !== t.eq) return false
+      if (t.lte != null && !(val <= t.lte)) return false
+      if (t.lt != null && !(val < t.lt)) return false
+      if (t.gte != null && !(val >= t.gte)) return false
+      if (t.gt != null && !(val > t.gt)) return false
+      return true
+    }
+
+    const ac = new AbortController()
+    const timeout = setTimeout(() => { try { ac.abort('timeout') } catch {} }, 5000)
+    try {
+      const res = await fetch(url, { method: 'GET', signal: ac.signal })
+      if (!res.ok) return fail(`HTTP ${res.status}`)
+      const data = await res.json()
+      const list = Array.isArray(data?.players) ? data.players : []
+
+      let rows = list
+      if (worldKey) rows = rows.filter(p => String(p?.world || '') === worldKey)
+      if (wantNames) {
+        const set = new Set(wantNames.map(n => String(n).toLowerCase()))
+        rows = rows.filter(p => set.has(String(p?.name || '').toLowerCase()))
+      }
+      // Numeric filters
+      rows = rows.filter(p => {
+        const a = Number(p?.armor ?? 0)
+        const h = Number(p?.health ?? 0)
+        return passNum(a, armorT) && passNum(h, healthT)
+      })
+
+      if (!rows.length) {
+        if (wantNames && wantNames.length) return fail('未找到指定玩家')
+        const dimCN = worldKey ? toDim(worldKey) : '全部'
+        return ok(`${dimCN}: 无`, { data: [] })
+      }
+
+      const mapped = rows.map(p => {
+        const dim = toDim(p.world)
+        return {
+          name: p.name,
+          world: p.world,
+          dim,
+          x: Number(p.x || 0), y: Number(p.y || 0), z: Number(p.z || 0),
+          health: Number(p.health == null ? 0 : p.health),
+          armor: Number(p.armor == null ? 0 : p.armor)
+        }
+      })
+
+      // Build concise message
+      const dimCN = worldKey ? toDim(worldKey) : null
+      const parts = mapped.slice(0, maxOut).map(r => `${r.name}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.z)} 生命${Math.round(r.health)}/20 盔甲${Math.round(r.armor)}`)
+      const msg = dimCN ? `${dimCN}: ${parts.join('; ')}` : parts.join('; ')
+      return ok(msg, { data: mapped.slice(0, maxOut) })
+    } catch (e) {
+      return fail(String(e?.message || e))
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+
   // --- High-level skills bridge ---
   function ensureRunner () {
     try { return skillRunnerMod.ensure(bot, { on, registerCleanup, log }) } catch { return null }
@@ -2571,7 +2675,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
 
   async function run (tool, args) {
     const fn = registry[tool]

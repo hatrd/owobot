@@ -92,10 +92,18 @@ if (state.autoLookSuspended) { /* skip cosmetic look controls */ }
 - Hot‑reload safety. Because `bot_impl/` hot‑reloads on file events, save atomically and only after the feature is fully ready. For multi‑file work, prepare outside `bot_impl/` and move in at once. Never commit partial implementations.
 - Observation policy. Basic observer data (生命/饥饿/坐标/附近/背包摘要等) is included directly in AI context to reduce tool calls; richer detail is fetched via explicit tools only when needed, with stable schemas.
 - No special cases (接口). Prefer one generalized interface per capability instead of multiple variants. Example: use a single `toss{items:[{name|slot,count?},...]}` to handle single/multiple/slot‑based discards; avoid `toss_hand`/`toss_multi` style forks.
- - 外部AI决策优先：除非为安全/资源保护需要的硬性保护（如禁止攻击玩家/默认不挖掘），不要在聊天侧做意图到工具的本地关键词映射或“自动纠错”。将意图解析交给外部AI，避免双重决策与不可见的偏差。
+- 工具应做通用化设计：例如玩家观察统一使用 `observe_players{names?, world?|dim?}` 来兼容单人/多人/按维度查询；不保留旧别名，接口即最新且唯一。
+- 外部AI决策优先：除非为安全/资源保护需要的硬性保护（如禁止攻击玩家/默认不挖掘），不要在聊天侧做意图到工具的本地关键词映射或“自动纠错”。将意图解析交给外部AI，避免双重决策与不可见的偏差。
+  - 明确例外：玩家定位与信息查询一律通过外部AI 触发 `observe_players{...}`（或 `observe_detail{...}` 等查询工具），不要添加任何基于正则/关键词的本地快捷匹配（即便是“<名字> 在哪里/坐标/位置”这类）。这样可利用AI对拼写/别名/上下文的强纠错能力。
+  - 允许的本地硬性保护/快捷处理仅限安全相关（如 `reset{}`、`dismount{}` 的强制停止），且应尽量简单、可证明安全。
+
+### 外部数据源与配置
+- 需要依赖外部服务的工具必须通过环境变量配置，不要在代码里写死默认值。
+  - 例如玩家观察工具 `observe_players{...}` 依赖地图接口，使用 `MAP_API_URL` 指定（无默认）。未配置时应返回结构化失败，不得静默退化或硬编码回退URL。
 
 ### 现有工具面（AI 使用）
 - 查询类：`observe_detail{what,radius?,max?}`；优先直接回答上下文，禁止为查询调用修改世界的工具。
+- 玩家观察：`observe_players{names?, world?|dim?, armor_(lt|lte|gt|gte|eq)?, health_(lt|lte|gt|gte|eq)?, max?}`。支持单人/多人/按维度筛选，以及生命/盔甲阈值过滤（如 `armor_eq:0` 或 `armor_lte:10`）。
 - 寻路：`goto{x,y,z,range?}`；`goto_block{names?|name?|match?,radius?,range?,dig?}`（默认不挖掘，仅 `dig:true` 允许）。
 - 战斗/防御：`defend_area{radius?,tickMs?,dig?}`（驻守清怪）、`defend_player{name,radius?,followRange?,tickMs?,dig?}`（护卫玩家）、`cull_hostiles{radius?,tickMs?}`（半径清怪）。不建议使用 `hunt_player`，除非用户明确要求并指名玩家。
 - 物品与交互：`equip`、`toss`、`collect|pickup`、`deposit|deposit_all`、`place_blocks`、`break_blocks`、`gather`、`harvest`、`autofish`、`mount_near|dismount`、`say`、`reset|stop|stop_all`。
