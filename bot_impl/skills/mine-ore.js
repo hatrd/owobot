@@ -121,10 +121,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       const m = new Movements(bot, mc)
       m.canDig = !!allowDig
       m.allowSprinting = true
-      try { m.allow1by1towers = false } catch {}
-      try { m.allowParkour = false } catch {}
-      try { m.allowParkourPlace = false } catch {}
-      try { m.scafoldingBlocks = [] } catch {}
+      // Allow default parkour/tower/scaffolding behavior
       bot.pathfinder.setMovements(m)
       // Approach near the block (do not target occupying the ore's cell)
       bot.pathfinder.setGoal(new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2), true)
@@ -279,10 +276,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mc)
     m.canDig = !!allowDig
     m.allowSprinting = true
-    try { m.allow1by1towers = false } catch {}
-    try { m.allowParkour = false } catch {}
-    try { m.allowParkourPlace = false } catch {}
-    try { m.scafoldingBlocks = [] } catch {}
+    // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
     const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(1, Math.floor(range)))
     try { await bot.pathfinder.goto(goal) } catch {}
@@ -384,10 +378,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mcd)
     m.canDig = true
     m.allowSprinting = true
-    try { m.allow1by1towers = false } catch {}
-    try { m.allowParkour = false } catch {}
-    try { m.allowParkourPlace = false } catch {}
-    try { m.scafoldingBlocks = [] } catch {}
+    // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
     const g = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 1)
     bot.pathfinder.setGoal(g)
@@ -404,10 +395,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       const m = new Movements(bot, mcd)
       m.canDig = true
       m.allowSprinting = true
-      try { m.allow1by1towers = false } catch {}
-      try { m.allowParkour = false } catch {}
-      try { m.allowParkourPlace = false } catch {}
-      try { m.scafoldingBlocks = [] } catch {}
+      // Allow default parkour/tower/scaffolding behavior
       bot.pathfinder.setMovements(m)
       const angle = Math.random() * Math.PI * 2
       const dx = Math.round(Math.cos(angle) * step)

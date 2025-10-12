@@ -53,6 +53,11 @@
   - 最近原木：`TOOL {"tool":"goto_block","args":{"match":"_log","radius":32}}`
 提示：靠近床会自动尝试睡觉。
 
+默认挖掘策略（精简版）
+- 大多数工具默认不挖掘，除非传入 `dig:true`：`goto`、`goto_block`、`follow_player`、`collect|pickup`、`mount_near`、`mount_player`、`flee_trap`、`place_blocks`、`cull_hostiles`。
+- 专用采集工具内部自带挖掘：`break_blocks`、`gather`、`harvest` 会自行选工具并做安全检查。
+- 矿脉挖掘技能为提高效率，使用更激进的寻路/移动策略；其它工具保持保守策略。
+
 ## 战斗/防御工具
 - 守点清怪：`defend_area{radius?,tickMs?,dig?}`（默认不挖掘；刷怪塔“只露脚”会尝试多种瞄准高度）
 - 护卫玩家：`defend_player{name, radius?, followRange?, tickMs?, dig?}`（跟随并清怪）

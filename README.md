@@ -53,6 +53,11 @@ Examples
   - Logs: `TOOL {"tool":"goto_block","args":{"match":"_log","radius":32}}`
 Note: approaching a bed will attempt to sleep automatically.
 
+Default digging policy (simplified)
+- Most tools do not dig unless `dig:true`: `goto`, `goto_block`, `follow_player`, `collect|pickup`, `mount_near`, `mount_player`, `flee_trap`, `place_blocks`, `cull_hostiles`.
+- Purpose-built gatherers dig internally: `break_blocks`, `gather`, `harvest` choose tools and safety on their own.
+- Ore mining skill uses a more aggressive movement profile for efficiency; other tools remain conservative.
+
 ## Combat / Defense Tools
 - Defend area: `defend_area{radius?,tickMs?,dig?}` — stand near the anchor, attack hostiles; no digging by default. For mob farms exposing only feet, the bot cycles multiple aim heights to land hits.
 - Defend player: `defend_player{name, radius?, followRange?, tickMs?, dig?}` — follows the player and clears hostiles nearby.

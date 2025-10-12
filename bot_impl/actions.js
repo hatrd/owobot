@@ -58,7 +58,7 @@ function install (bot, { log, on, registerCleanup }) {
     try { m.allow1by1towers = false } catch {}
     try { m.allowParkour = false } catch {}
     try { m.allowParkourPlace = false } catch {}
-    try { m.scafoldingBlocks = [] } catch {}
+    try { m.scafodingBlocks = [] } catch {}
     try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
 
@@ -142,7 +142,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true
+    m.canDig = (args.dig === true)
     m.allowSprinting = true
     try { m.allow1by1towers = false } catch {}
     try { m.allowParkour = false } catch {}
@@ -319,13 +319,9 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true
+    m.canDig = (args.dig === true)
     m.allowSprinting = true
-    try { m.allow1by1towers = false } catch {}
-    try { m.allowParkour = false } catch {}
-    try { m.allowParkourPlace = false } catch {}
-    try { m.scafoldingBlocks = [] } catch {}
-    try { m.scaffoldingBlocks = [] } catch {}
+    // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
 
     function now () { return Date.now() }
@@ -903,7 +899,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.allowSprinting = true; m.canDig = true
+    m.allowSprinting = true; m.canDig = (args.dig === true)
     bot.pathfinder.setMovements(m)
     huntTarget = String(name)
     if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null }
@@ -977,7 +973,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     miningAbort = false
 
@@ -1291,7 +1287,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
     function pickNearest () {
@@ -1485,7 +1481,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = false; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
     const targetName = String(name).trim().toLowerCase()
@@ -1596,7 +1592,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     const base = bot.entity?.position?.floored?.() || bot.entity?.position
     if (!base) return fail('未就绪')
@@ -2117,7 +2113,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     const radius = Math.max(1, parseInt(args.radius || '20', 10))
     const max = Math.max(1, parseInt(args.max || '80', 10))
@@ -2303,7 +2299,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = true; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
     // default valid bases for saplings
@@ -2521,7 +2517,7 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = false; m.allowSprinting = true
+    m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
     function isContainerName (n) {
