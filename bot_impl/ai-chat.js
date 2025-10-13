@@ -168,7 +168,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
       '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
-      '可用工具: observe_detail{what,radius?,max?}, observe_players{names?,world?|dim?,armor_(lt|lte|gt|gte|eq)?,health_(lt|lte|gt|gte|eq)?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
+      '可用工具: observe_detail{what,radius?,max?}, observe_players{names?,world?|dim?,armor_(lt|lte|gt|gte|eq)?,health_(lt|lte|gt|gte|eq)?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, pickup{names?|match?,radius?,max?,until?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
       '回答优先使用已提供的“游戏上下文”；若是统计/查询上下文类问题，直接回答。上下文不足可用 observe_detail 查询信息。',
       '关于全服玩家坐标等信息（如“盔甲=0/≤10、在末地/下界/主世界、多人名单”），调用 observe_players{...}.',
       '清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；明确指名“追杀/攻击 <玩家名>”才使用 hunt_player。',
@@ -186,6 +186,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       const t = String(text || '').toLowerCase()
       const tCN = String(text || '')
+      // Planning/command-like phrases should not be treated as pure info
+      // Examples: "你要/需要/打算/计划/准备/收集/采集/获取/去挖/去找/目标/任务/帮我/请你"
+      const planLike = /(你要|要不要|需要|打算|计划|准备|收集|采集|获取|去(拿|挖|找)|目标|任务|帮我|请你)/.test(tCN)
+      if (planLike) return { kind: 'action' }
       // Narrow info detection to avoid over-capturing casual questions
       const isInfo = /多少|几个|有无|有没有|哪些|在哪|哪里|距离|多远|谁|名单|列表/.test(tCN) || /(how many|how much|list|where|distance|who|which)/i.test(t)
       // "what are you doing" style
@@ -222,7 +226,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (isInfo) {
         if (/背包|包里|inventory/.test(tCN)) return { kind: 'info', topic: 'inventory', item, list: !item }
         if (asksMinerals || bareHowMany) return { kind: 'info', topic: 'inventory', item: null, subset: 'minerals' }
-        if ((/(多少|几个)/.test(tCN) && item)) return { kind: 'info', topic: 'inventory', item }
+        // Only treat as inventory count if phrased as possession ("有/带着/身上") rather than desire/plan
+        if ((/(多少|几个)/.test(tCN) && item && /(有|带着|身上|背包|包里)/.test(tCN))) return { kind: 'info', topic: 'inventory', item }
         if (/敌对|怪|怪物|hostile|敌人/i.test(tCN)) return { kind: 'info', topic: 'hostiles', nearby: nearbyToken }
         if (/实体|entities?|entity/i.test(t)) return { kind: 'info', topic: 'entities', nearby: nearbyToken }
         if (/玩家|people|player/i.test(tCN)) {
@@ -525,7 +530,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','say','equip','toss','pickup','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players'])
           // If the intent is informational, disallow world-changing tools; allow info-only tools
           if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(String(payload.tool))) {
             const ans = quickAnswer(intent)
