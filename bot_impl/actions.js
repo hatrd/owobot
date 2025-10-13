@@ -508,7 +508,7 @@ function install (bot, { log, on, registerCleanup }) {
     } catch (e) { return fail(String(e?.message || e)) }
   }
 
-  // Observe players' info from external map API (generalized)
+  // Observe players' info from external map API (accept external URL, parse both schemas)
   async function observe_players (args = {}) {
     const url = String(process.env.MAP_API_URL || '').trim()
     if (!url) return fail('MAP_API_URL 未配置')
@@ -551,6 +551,7 @@ function install (bot, { log, on, registerCleanup }) {
     }
     const armorT = parseThresh('armor')
     const healthT = parseThresh('health')
+    const hasThresh = (t) => (t && (t.eq != null || t.lt != null || t.lte != null || t.gt != null || t.gte != null))
     function passNum (val, t) {
       if (t.eq != null && val !== t.eq) return false
       if (t.lte != null && !(val <= t.lte)) return false
@@ -560,15 +561,129 @@ function install (bot, { log, on, registerCleanup }) {
       return true
     }
 
+    function parseWorldFromUrl (u) {
+      try {
+        const m = String(u || '').match(/\/maps\/([^/]+)\/live\/players\.json/i)
+        if (m && m[1]) return m[1]
+      } catch {}
+      return 'world'
+    }
+
+    function normalizePlayers (data, u) {
+      const worldFromUrl = parseWorldFromUrl(u)
+      const list = Array.isArray(data?.players) ? data.players : []
+      return list.map(p => {
+        const pos = p?.position
+        const hasPosObject = pos && typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number'
+        const hasFlatXYZ = typeof p?.x === 'number' && typeof p?.y === 'number' && typeof p?.z === 'number'
+        const x = hasFlatXYZ ? Number(p.x) : (hasPosObject ? Number(pos.x) : 0)
+        const y = hasFlatXYZ ? Number(p.y) : (hasPosObject ? Number(pos.y) : 0)
+        const z = hasFlatXYZ ? Number(p.z) : (hasPosObject ? Number(pos.z) : 0)
+        const world = String(p?.world || worldFromUrl || 'world')
+        const health = (p?.health == null ? null : Number(p.health))
+        const armor = (p?.armor == null ? null : Number(p.armor))
+        return { name: String(p?.name || ''), world, x, y, z, health, armor }
+      })
+    }
+
+    function baseRoot (u) {
+      try {
+        const o = new URL(u)
+        const path = o.pathname || '/'
+        const prefix = path.replace(/\/maps\/.+\/live\/players\.json$/i, '').replace(/\/$/, '')
+        return `${o.protocol}//${o.host}${prefix}` || null
+      } catch { return null }
+    }
+    function parseMapId (u) {
+      try { const m = String(u).match(/\/maps\/([^/]+)\/live\/players\.json/i); return m && m[1] ? m[1] : null } catch { return null }
+    }
+    function isBlueMapShape (data) {
+      try { const p = Array.isArray(data?.players) ? data.players[0] : null; return !!(p && (p.position || (p.foreign != null))) } catch { return false }
+    }
+
+    async function blueMapCollectAll (root, currentMapId, seedData) {
+      // Cache map list briefly in state
+      const cache = (bot.state && (bot.state.blueMap = bot.state.blueMap || {})) || {}
+      let maps = Array.isArray(cache.maps) ? cache.maps : null
+      let liveRoot = cache.liveRoot || null
+      const now = Date.now()
+      if (!maps || !liveRoot || !cache.mapsFetchedAt || (now - cache.mapsFetchedAt) > 30_000) {
+        // Prefer BlueMap root settings.json for map list and roots
+        try {
+          const ac = new AbortController(); const to = setTimeout(() => { try { ac.abort('timeout') } catch {} }, 4000)
+          const resp = await fetch(`${root}/settings.json`, { method: 'GET', signal: ac.signal })
+          clearTimeout(to)
+          if (resp.ok) {
+            const dj = await resp.json().catch(() => null)
+            const arr = Array.isArray(dj?.maps) ? dj.maps : (Array.isArray(dj) ? dj : [])
+            maps = arr.map(m => (m && (m.id || m.key || m.mapId || m)) ? (m.id || m.key || m.mapId || m) : null).filter(Boolean)
+            liveRoot = String(dj?.liveDataRoot || 'maps')
+          }
+        } catch {}
+        if (!maps || !maps.length) maps = [currentMapId].filter(Boolean)
+        if (!liveRoot) liveRoot = 'maps'
+        try { cache.maps = maps; cache.liveRoot = liveRoot; cache.mapsFetchedAt = now; if (bot.state) bot.state.blueMap = cache } catch {}
+      }
+
+      const all = []
+      // Include already-fetched current map data
+      try {
+        const list = Array.isArray(seedData?.players) ? seedData.players : []
+        for (const p of list) {
+          try {
+            if (p && p.foreign === false) {
+              const pos = p.position || {}
+              all.push({ name: String(p.name||''), world: currentMapId || 'world', x: Number(pos.x||0), y: Number(pos.y||0), z: Number(pos.z||0), health: null, armor: null })
+            }
+          } catch {}
+        }
+      } catch {}
+
+      // Fetch other maps in parallel to find players with foreign:false there
+      const others = maps.filter(id => id && id !== currentMapId)
+      await Promise.all(others.map(async (id) => {
+        try {
+          const ac = new AbortController(); const to = setTimeout(() => { try { ac.abort('timeout') } catch {} }, 4000)
+          const r = await fetch(`${root}/${liveRoot}/${id}/live/players.json`, { method: 'GET', signal: ac.signal })
+          clearTimeout(to)
+          if (!r.ok) return
+          const dj = await r.json().catch(() => null)
+          const list = Array.isArray(dj?.players) ? dj.players : []
+          for (const p of list) {
+            try {
+              if (p && p.foreign === false) {
+                const pos = p.position || {}
+                all.push({ name: String(p.name||''), world: id, x: Number(pos.x||0), y: Number(pos.y||0), z: Number(pos.z||0), health: null, armor: null })
+              }
+            } catch {}
+          }
+        } catch {}
+      }))
+      return all
+    }
+
     const ac = new AbortController()
     const timeout = setTimeout(() => { try { ac.abort('timeout') } catch {} }, 5000)
     try {
       const res = await fetch(url, { method: 'GET', signal: ac.signal })
       if (!res.ok) return fail(`HTTP ${res.status}`)
       const data = await res.json()
-      const list = Array.isArray(data?.players) ? data.players : []
+      let rows = []
+      const bluemapMode = isBlueMapShape(data)
+      if (bluemapMode) {
+        const root = baseRoot(url)
+        const cur = parseMapId(url)
+        const all = await blueMapCollectAll(root, cur, data)
+        rows = all
+      } else {
+        rows = normalizePlayers(data, url)
+      }
 
-      let rows = list
+      // If BlueMap and user is asking about health/armor (thresholds), we can't answer
+      if ((hasThresh(armorT) || hasThresh(healthT)) && bluemapMode) {
+        return ok('不知道（BlueMap未提供生命/盔甲）', { data: [] })
+      }
+
       if (worldKey) rows = rows.filter(p => String(p?.world || '') === worldKey)
       if (wantNames) {
         const set = new Set(wantNames.map(n => String(n).toLowerCase()))
@@ -576,9 +691,11 @@ function install (bot, { log, on, registerCleanup }) {
       }
       // Numeric filters
       rows = rows.filter(p => {
-        const a = Number(p?.armor ?? 0)
-        const h = Number(p?.health ?? 0)
-        return passNum(a, armorT) && passNum(h, healthT)
+        const a = (p?.armor == null ? null : Number(p.armor))
+        const h = (p?.health == null ? null : Number(p.health))
+        if (hasThresh(armorT) && a == null) return false
+        if (hasThresh(healthT) && h == null) return false
+        return passNum(a ?? 0, armorT) && passNum(h ?? 0, healthT)
       })
 
       if (!rows.length) {
@@ -587,21 +704,21 @@ function install (bot, { log, on, registerCleanup }) {
         return ok(`${dimCN}: 无`, { data: [] })
       }
 
-      const mapped = rows.map(p => {
-        const dim = toDim(p.world)
-        return {
-          name: p.name,
-          world: p.world,
-          dim,
-          x: Number(p.x || 0), y: Number(p.y || 0), z: Number(p.z || 0),
-          health: Number(p.health == null ? 0 : p.health),
-          armor: Number(p.armor == null ? 0 : p.armor)
-        }
-      })
+      const mapped = rows.map(p => ({
+        name: p.name,
+        world: p.world,
+        dim: toDim(p.world),
+        x: Number(p.x || 0), y: Number(p.y || 0), z: Number(p.z || 0),
+        health: (p.health == null ? null : Number(p.health)),
+        armor: (p.armor == null ? null : Number(p.armor))
+      }))
 
       // Build concise message
       const dimCN = worldKey ? toDim(worldKey) : null
-      const parts = mapped.slice(0, maxOut).map(r => `${r.name}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.z)} 生命${Math.round(r.health)}/20 盔甲${Math.round(r.armor)}`)
+      const parts = mapped.slice(0, maxOut).map(r => {
+        if (r.health == null || r.armor == null) return `${r.name}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.z)}`
+        return `${r.name}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.z)} 生命${Math.round(r.health)}/20 盔甲${Math.round(r.armor)}`
+      })
       const msg = dimCN ? `${dimCN}: ${parts.join('; ')}` : parts.join('; ')
       return ok(msg, { data: mapped.slice(0, maxOut) })
     } catch (e) {

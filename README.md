@@ -22,6 +22,24 @@ Mineflayer bot with hot reload and optional AI chat.
 - Increase model output tokens: `.ai budget maxtokens 512`
 - Increase post‑trim length: `.ai reply maxlen 240`
 
+## Player Map Integration
+- Env var: set `MAP_API_URL` to a live players endpoint.
+  - Legacy shape: any URL returning `{ "players": [{ "name","world","x","y","z","health?","armor?" }, ...] }`.
+  - BlueMap: `http(s)://<host>/<prefix>/maps/<mapId>/live/players.json`.
+- Behavior by API type:
+  - Legacy API
+    - Supports filters on `world|dim` and `armor_*` / `health_*` thresholds.
+    - Output includes health/armor when present.
+  - BlueMap
+    - Discovers all maps via `<base>/settings.json` (reads `maps` and `liveDataRoot`) and queries each `/<liveDataRoot>/<mapId>/live/players.json`.
+    - Uses `foreign:false` per map to determine the player’s actual dimension.
+    - Health/armor are not provided; output omits them. If a query asks for health/armor (or uses `armor_*` / `health_*` filters), the bot will reply it doesn’t know.
+- Custom worlds: supported automatically via BlueMap `settings.json` map list.
+- Examples:
+  - BlueMap: `MAP_API_URL=http://example.com/maps/world/live/players.json npm start`
+  - Legacy: `MAP_API_URL=http://example.com/api/players.json npm start`
+- Note: Environment variables are process‑bound. Changing `MAP_API_URL` requires restarting the bot; hot reload (`touch open_fire`) only reloads code, not env.
+
 ## AI Chat Usage
 - Trigger: first 3 alnum chars of bot name (e.g. `owk`).
 - Info queries (how many/any/which/where/distance): answer from context; use `observe_detail` only if needed; do not call world‑changing tools.

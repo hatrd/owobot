@@ -22,6 +22,24 @@
 - 增大模型输出 token：`.ai budget maxtokens 512`
 - 增大文本截断长度：`.ai reply maxlen 240`
 
+## 玩家地图集成（MAP_API_URL）
+- 环境变量：将 `MAP_API_URL` 指向“在线玩家”接口（players.json）。
+  - 传统接口：返回 `{ "players": [{ "name","world","x","y","z","health?","armor?" }, ...] }`。
+  - BlueMap：`http(s)://<host>/<prefix>/maps/<mapId>/live/players.json`。
+- 不同接口下的行为：
+  - 传统接口
+    - 支持 `world|dim` 过滤，支持 `armor_*` / `health_*` 阈值过滤。
+    - 输出会包含生命/盔甲（如接口提供）。
+  - BlueMap
+    - 通过 `<base>/settings.json` 读取 `maps` 与 `liveDataRoot`，并访问每个 `/<liveDataRoot>/<mapId>/live/players.json`。
+    - 使用每张地图返回的 `foreign:false` 来判定玩家实际所在维度。
+    - BlueMap 不提供生命/盔甲：输出不显示 生命/盔甲；若用户问题涉及生命/盔甲（或使用了 `armor_*` / `health_*` 过滤），机器人会明确说明不知道。
+- 自定义世界：BlueMap `settings.json` 会列出全部地图，自动支持。
+- 示例：
+  - BlueMap：`MAP_API_URL=http://example.com/maps/world/live/players.json npm start`
+  - 传统：`MAP_API_URL=http://example.com/api/players.json npm start`
+- 注意：环境变量在进程内固定。修改 `MAP_API_URL` 需重启进程；热重载（`touch open_fire`）只重载代码，不会更新环境变量。
+
 ## AI 聊天用法
 - 触发词：机器人名的前 3 个字母/数字（如 `owk`）。
 - 查询类（多少/有无/哪些/在哪里/多远）：优先直接回答上下文，必要时用 `observe_detail`，不调用会改变世界的工具。
