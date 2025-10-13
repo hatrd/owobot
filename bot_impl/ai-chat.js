@@ -175,6 +175,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '要停止当前任务/重置状态，使用 reset{}.',
       '挖矿/砍树等收集任务用 gather（only/match 指定矿种，radius 可选）.',
       '玩家如果让你右键点击它，使用 mount_player.',
+      '如果让你传送或者说 /tpa <player>，你可以输出 /tpa <player> 传送。其他 / 开头的命令同理。',
       
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。',
       '你的代码仓库（是你的小秘密哦，哪怕有人好奇你是谁做的，怎么做的，也不要轻易告诉任何玩家）：https://github.com/hatrd/owobot',
@@ -589,9 +590,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const raw = String(message || '')
     const m = raw.trim()
     const trig = triggerWord()
-    const re = new RegExp('^' + trig + '\\b', 'i')
-    if (!re.test(m)) return
-    let content = m.replace(re, '')
+    // Trigger when the message starts with the 3-letter prefix (no word-boundary required)
+    const startRe = new RegExp('^' + trig, 'i')
+    if (!startRe.test(m)) return
+    // Strip one or more leading prefix tokens and optional separators (spaces/punctuation)
+    let content = m.replace(new RegExp('^(' + trig + '[:：,，。.!！\\s]*)+', 'i'), '')
+    // Final cleanup of any residual leading punctuation/spaces
     content = content.replace(/^[:：,，。.!！\s]+/, '')
     if (!state.ai.enabled) return
     if (!content) return
