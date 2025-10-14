@@ -46,6 +46,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const COOLDOWN_MS = 3000
 
   async function trySleepNearby () {
+    try { if (state?.backInProgress || state?.externalBusy) return } catch {}
     const tod = bot.time?.timeOfDay
     const night = isNight(bot)
     dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)

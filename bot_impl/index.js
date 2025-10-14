@@ -378,6 +378,8 @@ function activate (botInstance, options = {}) {
 
   // Feature: auto-eat when hungry
   try { require('./auto-eat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('eat') }) } catch (e) { coreLog.warn('auto-eat install error:', e?.message || e) }
+  // Feature: auto-back and pickup on death prompt
+  try { require('./auto-back').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('back') }) } catch (e) { coreLog.warn('auto-back install error:', e?.message || e) }
 
   // Feature: runtime log control via chat
   try { require('./log-control').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('log') }) } catch (e) { coreLog.warn('log-control install error:', e?.message || e) }

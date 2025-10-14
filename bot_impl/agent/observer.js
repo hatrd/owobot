@@ -166,12 +166,17 @@ function collectHotbar (bot) {
   } catch { return [] }
 }
 
-function collectBlocks (bot) {
+  function collectBlocks (bot) {
   try {
     const pos = bot.entity?.position
     const under = pos ? bot.blockAt(pos.offset(0, -1, 0)) : null
     let look = null
-    try { const r = bot.blockAtCursor?.(5); look = r?.block || null } catch {}
+    try {
+      const r = bot.blockAtCursor?.(5)
+      // mineflayer.blockAtCursor may return a Block or { block, face, ... }
+      const b = (r && r.name) ? r : (r && r.block) ? r.block : null
+      look = b || null
+    } catch {}
     return { under: under ? under.name : null, look: look ? look.name : null }
   } catch { return { under: null, look: null } }
 }
