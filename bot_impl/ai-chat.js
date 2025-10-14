@@ -171,7 +171,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '可用工具: observe_detail{what,radius?,max?}, observe_players{names?,world?|dim?,armor_(lt|lte|gt|gte|eq)?,health_(lt|lte|gt|gte|eq)?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, pickup{names?|match?,radius?,max?,until?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
       '回答优先使用已提供的“游戏上下文”；若是统计/查询上下文类问题，直接回答。上下文不足可用 observe_detail 查询信息。',
       '关于全服玩家坐标等信息（如“盔甲=0/≤10、在末地/下界/主世界、多人名单”），调用 observe_players{...}.',
-      '清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；明确指名“追杀/攻击 <玩家名>”才使用 hunt_player。',
+      '清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；明确指名“追杀/攻击/追击 <玩家名>”才使用 hunt_player。',
       '要停止当前任务/重置状态，使用 reset{}.',
       '挖矿/砍树等收集任务用 gather（only/match 指定矿种，radius 可选）.',
       '玩家如果让你右键点击它，使用 mount_player.',
@@ -537,14 +537,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             const ans = quickAnswer(intent)
             if (ans) return H.trimReply(ans, maxReplyLen || 120)
             return H.trimReply('我这就看看…', maxReplyLen || 120)
-          }
-          // Guard-rail: never hunt the requester implicitly
-          if (String(payload.tool) === 'hunt_player') {
-            const tgt = String(payload.args?.name || '').trim()
-            if (tgt && username && tgt.toLowerCase() === String(username).toLowerCase()) {
-              // Switch to defend_area instead
-              payload = { tool: 'defend_area', args: { radius: 8 } }
-            }
           }
           // Prefer mount over follow when user intent mentions right-click/mount
           if (String(payload.tool) === 'follow_player') {
