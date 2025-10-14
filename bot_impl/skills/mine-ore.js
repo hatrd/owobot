@@ -3,7 +3,8 @@
 
 module.exports = function mineOreFactory ({ bot, args, log }) {
   const L = log
-  const radius = Math.max(4, parseInt(args.radius || '32', 10))
+  const baseRadius = Math.max(4, parseInt(args.radius || '32', 10))
+  const maxRadius = Math.max(baseRadius, parseInt(args.maxRadius || String(Math.min(64, baseRadius * 4)), 10))
   // Normalize 'only' filter: accept english tokens and common Chinese synonyms.
   function normalizeOnlyToken (s) {
     const v = String(s || '').toLowerCase().trim()
@@ -39,8 +40,12 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
 
   const only = normalizeOnly(args.only)
   const maxPerTick = 1
+  let searchRadius = baseRadius
+  let lastRadiusBoostAt = 0
+  let lastOreSeenAt = Date.now()
+  let expansions = 0
+  let exploreAttempts = 0
   let inited = false
-  let target = null
   let stack = [] // vein DFS stack of positions (Vec3)
   const avoided = new Set() // positions of ore avoided due to hazards
   let busy = false
@@ -62,6 +67,26 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   }
   function ensureToolSel () { if (!toolSel) toolSel = require('../tool-select'); return toolSel }
   function ensureActions () { if (!actions) { try { actions = require('../actions').install(bot, { log }) } catch {} } return actions }
+
+  function resetSearchRadius () {
+    searchRadius = baseRadius
+    lastRadiusBoostAt = Date.now()
+    lastOreSeenAt = Date.now()
+  }
+
+  function expandSearchRadius () {
+    const now = Date.now()
+    if (searchRadius >= maxRadius) return false
+    if (now - lastOreSeenAt < 1000) return false
+    if (now - lastRadiusBoostAt < 2000) return false
+    const delta = Math.max(4, Math.floor(baseRadius / 2))
+    const next = Math.min(maxRadius, searchRadius + delta)
+    if (next <= searchRadius) return false
+    searchRadius = next
+    lastRadiusBoostAt = now
+    expansions++
+    return true
+  }
 
   function lockHands () {
     try { if (bot.state) { bot.state.holdItemLock = 'pickaxe'; bot.state.externalBusy = true; bot.state.autoLookSuspended = true } } catch {}
@@ -85,6 +110,36 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     if (!only) return true
     if (Array.isArray(only)) return only.some(tok => String(n).toLowerCase().includes(String(tok)))
     return String(n).toLowerCase().includes(String(only))
+  }
+
+  function displayOreNameFromToken (tok) {
+    const t = String(tok || '').toLowerCase()
+    if (!t) return null
+    if (t.includes('redstone')) return '红石'
+    if (t.includes('diamond')) return '钻石'
+    if (t.includes('iron')) return '铁'
+    if (t.includes('gold')) return '金'
+    if (t.includes('copper')) return '铜'
+    if (t.includes('coal')) return '煤炭'
+    if (t.includes('lapis')) return '青金石'
+    if (t.includes('emerald')) return '绿宝石'
+    if (t.includes('quartz')) return '石英'
+    if (t.includes('ancient_debris') || t.includes('debris') || t.includes('netherite')) return '远古残骸'
+    if (t.endsWith('_ore')) return t.replace(/_ore$/,'')
+    return t
+  }
+
+  function displayTargetLabel () {
+    try {
+      if (!only) return '矿物'
+      if (Array.isArray(only)) {
+        const mapped = only.map(displayOreNameFromToken).filter(Boolean)
+        if (mapped.length === 0) return '矿物'
+        if (mapped.length === 1) return mapped[0]
+        return mapped.slice(0, 3).join('/') + (mapped.length > 3 ? '等' : '')
+      }
+      return displayOreNameFromToken(only) || '矿物'
+    } catch { return '矿物' }
   }
 
   function hasPickaxe () {
@@ -184,6 +239,63 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       if (isLiquidName(bn)) return false
       return true
     } catch { return false }
+  }
+
+  function isSafeExploreFeet (feetPos) {
+    try {
+      if (!feetPos) return false
+      if (!isSafeStandFeet(feetPos)) return false
+      const below = bot.blockAt(feetPos.offset(0, -1, 0))
+      const belowName = String(below?.name || '').toLowerCase()
+      if (isLiquidName(belowName)) return false
+      for (const d of neighborOffsets()) {
+        if (d.y !== 0) continue
+        const neighbor = bot.blockAt(feetPos.plus(d))
+        const nm = String(neighbor?.name || '').toLowerCase()
+        if (isLiquidName(nm)) return false
+      }
+      return true
+    } catch { return false }
+  }
+
+  function nearLiquidAt (pos) {
+    try {
+      if (!pos) return false
+      const here = bot.blockAt(pos)
+      if (here && isLiquidName(String(here.name || ''))) return true
+      const head = bot.blockAt(pos.offset(0, 1, 0))
+      if (head && isLiquidName(String(head.name || ''))) return true
+      for (const d of neighborOffsets()) {
+        if (d.y !== 0) continue
+        const b = bot.blockAt(pos.plus(d))
+        const nm = String(b?.name || '').toLowerCase()
+        if (isLiquidName(nm)) return true
+      }
+      return false
+    } catch { return false }
+  }
+
+  function pickExploreTarget (step) {
+    try {
+      const me = bot.entity?.position
+      if (!me) return null
+      const V = require('vec3').Vec3
+      const attempts = 12
+      const baseY = Math.floor(me.y)
+      for (let i = 0; i < attempts; i++) {
+        const angle = Math.random() * Math.PI * 2
+        const dist = Math.max(4, step - Math.floor(Math.random() * Math.min(step, 6)))
+        const dx = Math.round(Math.cos(angle) * dist)
+        const dz = Math.round(Math.sin(angle) * dist)
+        const start = new V(Math.floor(me.x + dx), baseY, Math.floor(me.z + dz))
+        for (let dy = -2; dy <= 2; dy++) {
+          const feet = start.offset(0, dy, 0)
+          if (feet.distanceTo(me) > Math.max(4, searchRadius)) continue
+          if (isSafeExploreFeet(feet)) return feet
+        }
+      }
+      return null
+    } catch { return null }
   }
 
   function findSideStandForOre (oreBlock) {
@@ -319,6 +431,8 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mc)
     m.canDig = !!allowDig
     m.allowSprinting = true
+    // Safer movement while mining to avoid risky jumps into liquids
+    try { m.allowParkour = false; m.maxDropDown = 2; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 5 } catch {}
     // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
     const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(1, Math.floor(range)))
@@ -453,8 +567,10 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   function findNearestOre () {
     const me = bot.entity?.position
     if (!me) return null
+    const maxDistance = Math.max(4, searchRadius)
+    const count = Math.max(48, Math.min(128, Math.floor(maxDistance * 1.5)))
     const found = bot.findBlocks({
-      point: me, maxDistance: Math.max(4, radius), count: 48,
+      point: me, maxDistance, count,
       matching: (b) => b && isTargetOre(b.name)
     }) || []
     if (!found.length) return null
@@ -470,6 +586,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mcd)
     m.canDig = true
     m.allowSprinting = true
+    try { m.allowParkour = false; m.maxDropDown = 2; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 5 } catch {}
     // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
     const g = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 1)
@@ -477,26 +594,23 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     return true
   }
 
-  function randomExploreStep (step = 16) {
+  function randomExploreStep () {
     try {
-      const me = bot.entity?.position
-      if (!me) return false
       if (!ensurePathfinder()) return false
       const { Movements, goals } = pathfinder
       const mcd = ensureMcData()
       const m = new Movements(bot, mcd)
       m.canDig = true
       m.allowSprinting = true
+      try { m.allowParkour = false; m.maxDropDown = 2; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 5 } catch {}
       // Allow default parkour/tower/scaffolding behavior
       bot.pathfinder.setMovements(m)
-      const angle = Math.random() * Math.PI * 2
-      const dx = Math.round(Math.cos(angle) * step)
-      const dz = Math.round(Math.sin(angle) * step)
-      const tx = Math.floor(me.x + dx)
-      const tz = Math.floor(me.z + dz)
-      const ty = Math.floor(me.y)
-      bot.pathfinder.setGoal(new goals.GoalNear(tx, ty, tz, 1), true)
-      exploreUntil = Date.now() + 2500
+      const step = Math.min(48, Math.max(8, Math.floor(searchRadius / 2)))
+      const targetFeet = pickExploreTarget(step)
+      if (!targetFeet) return false
+      bot.pathfinder.setGoal(new goals.GoalNear(targetFeet.x, targetFeet.y, targetFeet.z, 1), true)
+      exploreUntil = Date.now() + Math.max(3000, step * 250)
+      exploreAttempts++
       return true
     } catch { return false }
   }
@@ -557,11 +671,33 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     // No stack: find nearest ore and path to it
     const found = findNearestOre()
     if (!found) {
-      // No ore seen nearby: perform a short exploration step and keep running
-      if (Date.now() < exploreUntil) return { status: 'running', progress: 0, events: [{ type: 'searching' }] }
-      randomExploreStep(Math.min(32, Math.max(8, Math.floor(radius / 2))))
-      return { status: 'running', progress: 0, events: [{ type: 'searching' }] }
+      const me = bot.entity?.position?.floored?.() || bot.entity?.position
+      if (Date.now() < exploreUntil && bot.pathfinder?.goal) {
+        return { status: 'running', progress: 0, events: [{ type: 'searching', radius: searchRadius }] }
+      }
+      try { if (bot.pathfinder?.goal) bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      // If standing in/near liquid, first sidestep to a safe tile
+      if (me && nearLiquidAt(me)) {
+        const okStep = randomExploreStep()
+        if (okStep) return { status: 'running', progress: 0, events: [{ type: 'escape_liquid' }] }
+      }
+      const expanded = expandSearchRadius()
+      const stepped = randomExploreStep()
+      const events = [{ type: 'searching', radius: searchRadius }]
+      if (expanded) events.push({ type: 'search_radius_expanded', radius: searchRadius })
+      if (!stepped) events.push({ type: 'search_target_missing' })
+      // Give up if we've been searching at max radius for long enough
+      const tooLongNoOre = (Date.now() - lastOreSeenAt) > 15000
+      if (searchRadius >= maxRadius && (tooLongNoOre || exploreAttempts >= 8)) {
+        gaveUpAt = Date.now()
+        try { const label = displayTargetLabel(); bot.chat(`附近没有找到${label}`) } catch {}
+        releaseHands()
+        return { status: 'failed', progress: 0, events: [{ type: 'missing_target' }] }
+      }
+      return { status: 'running', progress: 0, events }
     }
+    resetSearchRadius()
     // Always delegate approach+dig to digBlockAt (handles reachability)
     busy = true
     const ok = await digBlockAt(found)
