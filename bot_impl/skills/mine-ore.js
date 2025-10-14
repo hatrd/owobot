@@ -60,6 +60,60 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   const TRASH = Array.isArray(args.trash) ? args.trash.map(s => String(s).toLowerCase()) : ['netherrack']
   const TRASH_MINFREE = Math.max(0, parseInt(args.trashMinFree || '4', 10))
   const TRASH_COOLDOWN_MS = 4000
+  let lastEatAt = 0
+
+  function mcFoodsByName () {
+    try { const mc = ensureMcData(); return mc?.foodsByName || {} } catch { return {} }
+  }
+  function isEdibleItem (it) {
+    try { if (!it) return false; const foods = mcFoodsByName(); return Boolean(foods[it.name]) && it.name !== 'enchanted_golden_apple' && it.name !== 'golden_apple' } catch { return false }
+  }
+  function pickEdibleItem () {
+    try {
+      const items = bot.inventory?.items() || []
+      const foods = items.filter(isEdibleItem)
+      const foodsMap = mcFoodsByName()
+      foods.sort((a, b) => {
+        const fa = foodsMap[a.name]?.foodPoints || 0
+        const fb = foodsMap[b.name]?.foodPoints || 0
+        if (fb !== fa) return fb - fa
+        return (b.count || 0) - (a.count || 0)
+      })
+      return foods[0] || null
+    } catch { return null }
+  }
+  async function ensureOnHotbar (slot) {
+    try {
+      if (slot >= 36 && slot <= 44) { bot.setQuickBarSlot(slot - 36); return true }
+      await bot.moveSlotItem(slot, 36)
+      bot.setQuickBarSlot(0)
+      return true
+    } catch { return false }
+  }
+  async function maybeEatIfHungry () {
+    try {
+      if (bot.food == null) return false
+      const now = Date.now()
+      if (now - lastEatAt < 1500) return false
+      const threshold = Math.max(1, parseInt(process.env.AUTO_EAT_START_AT || '18', 10))
+      if (bot.food >= threshold) return false
+      const foodItem = pickEdibleItem()
+      if (!foodItem) return false
+      // Temporarily release hand lock to equip food
+      const prevLock = (bot.state && bot.state.holdItemLock) || null
+      try { if (bot.state) bot.state.holdItemLock = null } catch {}
+      try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      await ensureOnHotbar(foodItem.slot)
+      await bot.consume()
+      lastEatAt = now
+      // Restore lock
+      try { if (bot.state) bot.state.holdItemLock = prevLock } catch {}
+      return true
+    } catch {
+      return false
+    }
+  }
 
   function ensureMcData () { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
   function ensurePathfinder () {
@@ -67,6 +121,26 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
   }
   function ensureToolSel () { if (!toolSel) toolSel = require('../tool-select'); return toolSel }
   function ensureActions () { if (!actions) { try { actions = require('../actions').install(bot, { log }) } catch {} } return actions }
+
+  // Prevent pathfinder from breaking the current support block under the bot's feet.
+  function forbidBreakingUnderfoot (m) {
+    try {
+      const V = require('vec3').Vec3
+      const me = bot.entity?.position
+      if (!me) return m
+      const feetSupport = new V(Math.floor(me.x), Math.floor(me.y) - 1, Math.floor(me.z))
+      if (!Array.isArray(m.exclusionAreasBreak)) m.exclusionAreasBreak = []
+      m.exclusionAreasBreak.push((block) => {
+        try {
+          const p = block && block.position
+          if (!p) return 0
+          if (p.x === feetSupport.x && p.y === feetSupport.y && p.z === feetSupport.z) return 100
+          return 0
+        } catch { return 0 }
+      })
+    } catch {}
+    return m
+  }
 
   function resetSearchRadius () {
     searchRadius = baseRadius
@@ -431,8 +505,9 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mc)
     m.canDig = !!allowDig
     m.allowSprinting = true
-    // Safer movement while mining to avoid risky jumps into liquids
-    try { m.allowParkour = false; m.maxDropDown = 2; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 5 } catch {}
+    // Safer movement while mining; allow tower placement to escape holes
+    try { m.allowParkour = false; m.allow1by1towers = true; m.maxDropDown = 4; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 8 } catch {}
+    forbidBreakingUnderfoot(m)
     // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
     const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(1, Math.floor(range)))
@@ -586,7 +661,8 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     const m = new Movements(bot, mcd)
     m.canDig = true
     m.allowSprinting = true
-    try { m.allowParkour = false; m.maxDropDown = 2; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 5 } catch {}
+    try { m.allowParkour = false; m.allow1by1towers = true; m.maxDropDown = 4; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 8 } catch {}
+    forbidBreakingUnderfoot(m)
     // Allow default parkour/tower/scaffolding behavior
     bot.pathfinder.setMovements(m)
     const g = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 1)
@@ -599,10 +675,11 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
       if (!ensurePathfinder()) return false
       const { Movements, goals } = pathfinder
       const mcd = ensureMcData()
-      const m = new Movements(bot, mcd)
-      m.canDig = true
-      m.allowSprinting = true
-      try { m.allowParkour = false; m.maxDropDown = 2; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 5 } catch {}
+    const m = new Movements(bot, mcd)
+    m.canDig = true
+    m.allowSprinting = true
+    try { m.allowParkour = false; m.allow1by1towers = true; m.maxDropDown = 4; m.infiniteLiquidDropdownDistance = false; m.liquidCost = 8 } catch {}
+    forbidBreakingUnderfoot(m)
       // Allow default parkour/tower/scaffolding behavior
       bot.pathfinder.setMovements(m)
       const step = Math.min(48, Math.max(8, Math.floor(searchRadius / 2)))
@@ -631,6 +708,9 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     if (!inited) await start()
     if (busy) return { status: 'running', progress: 0 }
     if (explosionCooling()) return { status: 'running', progress: 0, events: [{ type: 'cooldown', reason: 'explosion' }] }
+
+    // Proactive auto-eat during mining to avoid starvation
+    try { await maybeEatIfHungry() } catch {}
 
     // Opportunistic auto-trash: keep space by dropping low-value blocks (no pathfinder usage)
     try {
