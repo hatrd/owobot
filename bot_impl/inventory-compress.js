@@ -21,13 +21,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { return bot.findBlock({ matching: (b) => b && b.name === 'crafting_table', maxDistance: Math.max(2, radius) }) || null } catch { return null }
   }
 
-  async function craftOne (outName, tableBlock) {
+  function unitPerOutput (rule) {
+    // 3x3 => 9 units; quartz 2x2 => 4 units
+    if (rule.table) return 9
+    if (rule.need === 'quartz') return 4
+    return 4
+  }
+
+  async function craftMany (outName, tableBlock, amount) {
     const mcData = ensureMcData()
     const def = mcData?.itemsByName?.[outName]
     if (!def) return false
     const recipes = bot.recipesFor(def.id, null, 1, tableBlock) || []
     if (!recipes.length) return false
-    try { await bot.craft(recipes[0], 1, tableBlock); return true } catch { return false }
+    try { await bot.craft(recipes[0], Math.max(1, amount || 1), tableBlock); return true } catch { return false }
   }
 
   // Compress pairs: from many small items to a compact result
@@ -66,10 +73,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (rule.table && !table) continue
       // At least enough to craft once?
       const needCnt = countItem(rule.need)
-      if (needCnt <= 8 && rule.table) continue
-      if (needCnt <= 3 && !rule.table) continue
-      const ok = await craftOne(rule.out, rule.table ? table : null)
-      if (ok) { L && L.info && L.info('compressed ->', rule.out); await new Promise(r => setTimeout(r, 150)); break }
+      const unit = unitPerOutput(rule)
+      const max = Math.floor(needCnt / unit)
+      if (max <= 0) continue
+      const ok = await craftMany(rule.out, rule.table ? table : null, max)
+      if (ok) { L && L.info && L.info('compressed ->', rule.out, 'x', max); await new Promise(r => setTimeout(r, 150)); break }
     }
   }
 
@@ -84,4 +92,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-
