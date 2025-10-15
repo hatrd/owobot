@@ -1,0 +1,26 @@
+[2025-10-15T16:26:24.222Z][INFO] File logger attached
+[2025-10-15T16:26:24.223Z][INFO] [LOGFILE] Writing logs to /home/oyxy/src/mcbot/logs/bot-2025-10-15.log
+[2025-10-15T16:26:24.224Z][INFO] Starting bot with config: {
+  host: 'shiki.cafe',
+  port: 418,
+  username: 'owkowk',
+  auth: 'offline',
+  version: '1.21.8',
+  hasPassword: true,
+  debug: true,
+  greet: true
+}
+[2025-10-15T16:26:24.355Z][INFO] [2025-10-15T16:26:24.355Z] Starting (re)connection...
+[2025-10-15T16:26:24.374Z][INFO] [INFO][skill] [skill] runner ready
+[2025-10-15T16:26:24.379Z][INFO] Loaded bot implementation from bot_impl
+[2025-10-15T16:26:24.381Z][INFO] Hot reload watching directory bot_impl
+[2025-10-15T16:26:24.381Z][INFO] Hot reload gate enabled at /home/oyxy/src/mcbot/open_fire (touch to reload)
+[2025-10-15T16:26:25.048Z][INFO] [0m[38;2;255;215;0m用[38;2;255;211;0m法[38;2;255;208;0m:[38;2;255;204;0m [38;2;255;201;0m/[38;2;255;197;0ml[38;2;255;194;0mo[38;2;255;190;0mg[38;2;255;186;0mi[38;2;255;183;0mn[38;2;255;179;0m [38;2;255;176;0m<[38;2;255;172;0m密[38;2;255;169;0m码[38;2;255;165;0m>[0m
+[2025-10-15T16:26:25.051Z][INFO] [2025-10-15T16:26:25.051Z] Sent /login due to server prompt
+[2025-10-15T16:26:25.054Z][INFO] [0m[38;2;255;215;0m用[38;2;255;211;0m法[38;2;255;208;0m:[38;2;255;204;0m [38;2;255;201;0m/[38;2;255;197;0ml[38;2;255;194;0mo[38;2;255;190;0mg[38;2;255;186;0mi[38;2;255;183;0mn[38;2;255;179;0m [38;2;255;176;0m<[38;2;255;172;0m密[38;2;255;169;0m码[38;2;255;165;0m>[0m
+[2025-10-15T16:26:25.055Z][INFO] [0m[93m[1m(!) [93m您当前的最大视距设置为 12 区块[0m
+[2025-10-15T16:26:25.056Z][INFO] [0m[93m[93mowkowk[0m[93m joined the game[0m
+[2025-10-15T16:26:25.077Z][INFO] [INFO][sleep] sleep: watcher started
+[2025-10-15T16:26:25.077Z][INFO] [2025-10-15T16:26:25.077Z] Connected to server: as owkowk
+[2025-10-15T16:26:25.078Z][INFO] Type chat messages or commands here (e.g. /login <password>)
+[2025-10-15T16:26:25.141Z][INFO] [0m[38;2;0;255;0m登[38;2;0;216;0m录[38;2;0;178;0m成[38;2;0;139;0m功[38;2;0;100;0m！[0m
