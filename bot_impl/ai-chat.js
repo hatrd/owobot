@@ -401,7 +401,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const fallback = [
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
-      '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
+      '如需执行动作，可先说一句话，再单独输出一行：TOOL {"tool":"<名字>","args":{...}}；若无需动作，仅回复文本。',
       '可用工具: observe_detail{what,radius?,max?}, observe_players{names?,world?|dim?,armor_(lt|lte|gt|gte|eq)?,health_(lt|lte|gt|gte|eq)?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, say{text}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, pickup{names?|match?,radius?,max?,until?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, write_text{text,item?,spacing?,size?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}, iterate_feedback{reason?,force?}.',
       '回答优先使用已提供的“游戏上下文”；若是统计/查询上下文类问题，直接回答。上下文不足可用 observe_detail 查询信息。',
       '关于全服玩家坐标等信息（如“盔甲=0/≤10、在末地/下界/主世界、多人名单”），调用 observe_players{...}.',
@@ -736,11 +736,44 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       const data = await res.json()
       const reply = data?.choices?.[0]?.message?.content || ''
-      // Tool-call protocol: reply can be like \nTOOL {"tool":"attack_player","args":{"name":"Ameyaku"}}\n
-      const toolMatch = reply.match(/^[^\S\n]*TOOL\s*(\{[\s\S]*\})/)
+      function extractJsonObject (raw) {
+        if (!raw) return null
+        let i = 0
+        while (i < raw.length && /\s/.test(raw[i])) i++
+        if (raw[i] !== '{') return null
+        let depth = 0
+        let inString = false
+        let prev = ''
+        for (let j = i; j < raw.length; j++) {
+          const ch = raw[j]
+          if (inString) {
+            if (ch === '"' && prev !== '\\') inString = false
+          } else {
+            if (ch === '"') {
+              inString = true
+            } else if (ch === '{') {
+              depth++
+            } else if (ch === '}') {
+              depth--
+              if (depth === 0) return raw.slice(i, j + 1)
+            }
+          }
+          prev = ch
+        }
+        return null
+      }
+      // Tool-call protocol: reply may contain text then a TOOL {...} block
+      const toolMatch = /\bTOOL\b/.exec(reply)
       if (toolMatch) {
+        const beforeTool = reply.slice(0, toolMatch.index)
+        const afterToolRaw = reply.slice(toolMatch.index + toolMatch[0].length)
+        const jsonStr = extractJsonObject(afterToolRaw)
+        if (!jsonStr) {
+          return H.trimReply(beforeTool || reply, maxReplyLen || 120)
+        }
+        const speech = beforeTool ? H.trimReply(beforeTool, maxReplyLen || 120) : ''
         let payload = null
-        try { payload = JSON.parse(toolMatch[1]) } catch {}
+        try { payload = JSON.parse(jsonStr) } catch {}
         if (payload && payload.tool) {
           // Heuristic arg completion for some tools
           try {
@@ -786,6 +819,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (!allow.has(String(payload.tool))) {
             return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
           }
+          if (speech) {
+            try { bot.chat(speech) } catch {}
+          }
           // Mark external-busy and current task for context; emit begin/end for tracker
           try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
           let res
@@ -796,7 +832,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           }
           if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
           // Acknowledge in chat succinctly
-          return H.trimReply(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), maxReplyLen || 120)
+          if (res && res.ok) {
+            if (speech) return ''
+            return H.trimReply(res.msg || '好的', maxReplyLen || 120)
+          }
+          const failMsg = H.trimReply(`失败: ${res?.msg || '未知'}`, maxReplyLen || 120)
+          if (speech) {
+            try { bot.chat(failMsg) } catch {}
+            return ''
+          }
+          return failMsg
         }
       }
       // Usage accounting (if provided), otherwise rough estimate
