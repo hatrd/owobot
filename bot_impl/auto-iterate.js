@@ -217,7 +217,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       : '- 暂无记录'
     return [
       `# 角色
-你是Minecraft机器人项目的协作者，负责根据运行日志提出改进，并在需要时直接给出代码补丁。`,
+你是Minecraft机器人项目的协作者，负责根据运行日志提出改进，并在需要时直接给出代码补丁。改进包括不限于修复代码错误、优化玩家体验、增加有趣的功能等`,
       `# 触发信息
 ${summary}
 触发原因：${reason}`,
@@ -239,7 +239,8 @@ ${logs}`,
 - 无需额外文本，仅输出JSON。
 - 当没有修改时，actions 为空数组，并在 summary 说明原因。
 - 所有补丁必须是标准 unified diff，可直接用于 \`git apply\`，且仅包含当前仓库内变更。
-- 如有多处修改，可提供多个 patch 项。`
+- 如有多处修改，可提供多个 patch 项。
+- 你可以通过 git 命令确定仓库历史、当前状态等。`
     ].join('\n\n')
   }
 
