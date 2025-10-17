@@ -19,6 +19,7 @@ Mineflayer bot with hot reload and optional AI chat.
 - Reduce logs: `MC_DEBUG=0 npm start`
 - Adjust auto-iteration cadence: `AUTO_ITERATE_INTERVAL_MS=300000 npm start` or `npm start -- --iterate-interval 5m`
 - Allow Codex more time: `CODEX_EXEC_TIMEOUT_MS=180000 npm start` (omit or ≤0 for no limit)
+- Customize AI prompts: edit files under `bot_impl/prompts/` (hot reload via `touch open_fire`)
 
 ### File Logging
 - Default path: `logs/bot-YYYY-MM-DD.log` (created automatically).
@@ -103,6 +104,7 @@ Default digging policy (simplified)
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...` — configure AI key/model/base/path; list tools
 - `.iterate status|interval <duration>|run|cooldown <duration>|reset` — manage the automation (duration accepts ms/s/m/h; `reset` moves the log cursor to current end)
+- `.pulse status|on|off|now` — control automatic DeepSeek chat pulses (flush recent player chats and produce a proactive reply)
 
 ## Farming
 - Harvest and replant crops: `harvest{only?, radius?, replant?}`

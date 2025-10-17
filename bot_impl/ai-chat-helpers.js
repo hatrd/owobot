@@ -38,7 +38,7 @@ function buildContextPrompt (username, recent, recentTrig, options = {}) {
   const chatLines = recentKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
   const trigLines = trigKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
   const parts = [
-    `环境: 你在Minecraft服务器中操控一个bot, 玩家会随意聊天或询问与MC相关的问题; 你的回答要极其简短.`,
+    //`环境: 你在Minecraft服务器中操控一个bot, 玩家会随意聊天或询问与MC相关的问题; 你的回答要极其简短.`,
     `当前对话玩家: ${username}.`,
     `最近聊天: ${chatLines || '无'}.`,
     ctx.includeOwk ? `含 ${trig} 的历史: ${trigLines || '无'}.` : ''

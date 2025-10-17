@@ -19,6 +19,7 @@
 - 降低日志：`MC_DEBUG=0 npm start`
 - 调整自动迭代频率：`AUTO_ITERATE_INTERVAL_MS=300000 npm start` 或 `npm start -- --iterate-interval 5m`
 - 放宽 Codex 超时：`CODEX_EXEC_TIMEOUT_MS=180000 npm start`（≤0 表示无限制）
+- 自定义提示词：编辑 `bot_impl/prompts/` 下的文件（改动后 `touch open_fire` 热重载）
 
 ### 文件日志
 - 默认日志文件：`logs/bot-YYYY-MM-DD.log`（自动创建目录）。
@@ -99,6 +100,7 @@
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
 - `.iterate status|interval <时长>|run|cooldown <时长>|reset` — 在线调整自动 Codex 迭代周期（时长支持 ms/s/m/h 后缀；`reset` 将日志游标移动到当前末尾）
+- `.pulse status|on|off|now` — 控制自动 DeepSeek 聊天脉冲（定期汇总玩家聊天并主动发言）
 
 ## 种植
 - 收割并重种：`harvest{only?, radius?, replant?}`
