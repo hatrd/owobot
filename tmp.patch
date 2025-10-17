@@ -1,0 +1,45 @@
+diff --git a/bot_impl/index.js b/bot_impl/index.js
+--- a/bot_impl/index.js
++++ b/bot_impl/index.js
+@@
+-function clearAllPendingGreets() {
+- for (const timeout of state.pendingGreets.values()) {
+- clearTimeout(timeout)
+- }
+- state.pendingGreets.clear()
+-}
++function clearAllPendingGreets() {
++ if (!state?.pendingGreets || typeof state.pendingGreets.clear !== function) {
++ state.pendingGreets = new Map()
++ return
++ }
++ for (const timeout of state.pendingGreets.values()) {
++ clearTimeout(timeout)
++ }
++ state.pendingGreets.clear()
++}
+@@
+-function initAfterSpawn() {
+- // Reset greeting bookkeeping
+- state.greetedPlayers.clear()
+- clearAllPendingGreets()
+-
+- for (const username of Object.keys(bot.players)) {
++function initAfterSpawn() {
++ // Reset greeting bookkeeping
++ if (!state?.greetedPlayers || typeof state.greetedPlayers.clear !== function) {
++ state.greetedPlayers = new Set()
++ }
++ state.greetedPlayers.clear()
++ if (!state?.pendingGreets || !(state.pendingGreets instanceof Map)) state.pendingGreets = new Map()
++ clearAllPendingGreets()
++
++ const players = bot && bot.players ? bot.players : {}
++ for (const username of Object.keys(players)) {
+ if (username && username !== bot.username) {
+ state.greetedPlayers.add(username)
+ }
+ }
+@@
+- dlog(Init after spawn. Player snapshot:, Object.keys(bot.players))
++ dlog(Init after spawn. Player snapshot:, Object.keys(players))

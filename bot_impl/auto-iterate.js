@@ -365,7 +365,48 @@ ${logs}`,
     })
   }
 
+  function normalizeUnifiedDiff (input) {
+    if (!input) return input
+    const raw = input.replace(/\r\n/g, '\n')
+    const lines = raw.split('\n')
+    let mutated = false
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (!line.startsWith('@@')) continue
+      const trimmed = line.trim()
+      if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(trimmed)) continue
+      let removed = 0
+      let added = 0
+      let context = 0
+      for (let j = i + 1; j < lines.length; j++) {
+        const hunkLine = lines[j]
+        if (!hunkLine) break
+        const prefix = hunkLine[0]
+        if (prefix === 'd' && hunkLine.startsWith('diff --git ')) break
+        if (prefix === '@' && hunkLine.startsWith('@@')) break
+        if (prefix === ' ') { context++; continue }
+        if (prefix === '+') { added++; continue }
+        if (prefix === '-') { removed++; continue }
+        if (prefix === '\\') continue
+        break
+      }
+      const oldCount = context + removed
+      const newCount = context + added
+      const oldStart = oldCount > 0 ? 1 : 0
+      const newStart = newCount > 0 ? 1 : 0
+      lines[i] = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`
+      mutated = true
+    }
+    const result = lines.join('\n')
+    const normalized = result.endsWith('\n') ? result : result + '\n'
+    return mutated ? normalized : input
+  }
+
   async function applyPatch (patchText) {
+    const normalized = normalizeUnifiedDiff(patchText)
+    if (normalized !== patchText) {
+      logger.warn('Normalized diff with missing hunk metadata before apply')
+    }
     return new Promise((resolve) => {
       try {
         const proc = spawn('git', ['apply', '--whitespace=nowarn'], { cwd: process.cwd() })
@@ -383,7 +424,7 @@ ${logs}`,
             resolve({ ok: false, error: stderr || `exit ${code}` })
           }
         })
-        proc.stdin.end(patchText)
+        proc.stdin.end(normalized)
       } catch (e) {
         logger.error('applyPatch exception:', e?.message || e)
         resolve({ ok: false, error: e?.message || String(e) })
