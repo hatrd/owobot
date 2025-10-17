@@ -5,9 +5,26 @@
 const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
 const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
+
+const PULSE_MAX_MESSAGES = 20
+const PULSE_INTERVAL_MS = 8 * 60 * 1000
+const PULSE_CHECK_MS = 60 * 1000
+
+const fs = require('fs')
+const path = require('path')
 const H = require('./ai-chat-helpers')
 const actionsMod = require('./actions')
 const observer = require('./agent/observer')
+const PROMPT_DIR = path.join(__dirname, 'prompts')
+
+function loadPrompt (filename, fallback) {
+  try {
+    const full = path.join(PROMPT_DIR, filename)
+    const text = fs.readFileSync(full, 'utf8')
+    if (text && text.trim()) return text
+  } catch {}
+  return fallback
+}
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
@@ -52,6 +69,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     game: { ...DEF_CTX.game, ...(state.ai.context.game || {}) }
   }
 
+  state.aiPulse = state.aiPulse || { enabled: true, buffer: [], lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
+  if (!Array.isArray(state.aiPulse.buffer)) state.aiPulse.buffer = []
+  if (!Number.isFinite(state.aiPulse.lastFlushAt)) state.aiPulse.lastFlushAt = Date.now()
+
   // global recent chat logs
   state.aiRecent = state.aiRecent || [] // [{t, user, text}]
   state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
@@ -60,6 +81,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   state.aiSpend = state.aiSpend || { day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }, month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }, total: { inTok: 0, outTok: 0, cost: 0 } }
 
   const ctrl = { busy: false, abort: null }
+  const pulseCtrl = { running: false, abort: null }
+  let pulseTimer = null
 
   function now () { return Date.now() }
   function trimWindow (arr, windowMs) { const t = now(); return arr.filter(ts => t - ts <= windowMs) }
@@ -161,9 +184,219 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     state.aiStats.perUser.set(username, recent)
   }
 
+  function pulseEnabled () {
+    return Boolean(state.aiPulse?.enabled && state.ai.enabled && state.ai.key)
+  }
+
+  function enqueuePulse (username, text) {
+    try {
+      if (!state.aiPulse || !state.aiPulse.enabled) return
+      if (!state.ai.enabled) return
+      if (!username || username === bot.username) return
+      const trimmed = String(text || '').trim()
+      if (!trimmed) return
+      const buf = state.aiPulse.buffer ||= []
+      buf.push({ t: now(), user: username, text: trimmed })
+      if (buf.length > 80) buf.splice(0, buf.length - 80)
+      maybeFlush('count')
+    } catch (e) {
+      if (log?.warn) log.warn('pulse enqueue error:', e?.message || e)
+    }
+  }
+
+  function maybeFlush (reason) {
+    try {
+      if (!state.aiPulse || !state.aiPulse.enabled) return
+      if (!state.ai.enabled) return
+      if (pulseCtrl.running) return
+      const buf = state.aiPulse.buffer || []
+      if (!buf.length) return
+      const nowTs = now()
+      const elapsed = nowTs - (state.aiPulse.lastFlushAt || 0)
+      if (reason === 'count' && buf.length >= PULSE_MAX_MESSAGES) {
+        flushPulse('count').catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+        return
+      }
+      if (reason === 'manual') {
+        flushPulse('manual').catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+        return
+      }
+      if (elapsed >= PULSE_INTERVAL_MS) {
+        flushPulse(reason === 'timer' ? 'timer' : 'interval').catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+      }
+    } catch (e) {
+      if (log?.warn) log.warn('pulse maybeFlush error:', e?.message || e)
+    }
+  }
+
+  async function flushPulse (trigger) {
+    if (pulseCtrl.running) return
+    const buf = state.aiPulse.buffer || []
+    if (!buf.length) {
+      state.aiPulse.lastFlushAt = now()
+      return
+    }
+    const prevFlushAt = state.aiPulse.lastFlushAt || 0
+    const batch = buf.slice()
+    state.aiPulse.buffer = []
+    state.aiPulse.lastFlushAt = now()
+    state.aiPulse.lastReason = trigger
+    let revert = true
+    if (!pulseEnabled()) {
+      // feature disabled or no key — drop silently but keep last flush time
+      revert = false
+      state.aiPulse.lastMessage = null
+      return
+    }
+    const { key, baseUrl, path, model, maxReplyLen } = state.ai
+    if (!key) {
+      revert = false
+      state.aiPulse.lastMessage = null
+      return
+    }
+    const transcript = batch.map(it => {
+      const ts = it?.t ? new Date(it.t).toISOString().slice(11, 19) : ''
+      return `${ts ? '[' + ts + '] ' : ''}${it.user || '??'}: ${it.text || ''}`
+    }).join('\n')
+    if (!transcript.trim()) {
+      revert = false
+      state.aiPulse.lastMessage = null
+      return
+    }
+    const instructions = loadPrompt('pulse-system.txt', [
+      '你是Minecraft服务器里的友好机器人。',
+      '阅读最近玩家的聊天摘录，判断是否需要你主动回应。',
+      '目标：让所有玩家觉得可爱、有趣，并感到被关注，增强参与感。',
+      '请用中文，口吻俏皮亲切、简短自然，像平时一起玩的伙伴。',
+      '限制：单句或两句，总长度不超过60字；不要暴露这是自动总结。',
+      '如果无需回应，请输出单词 SKIP。'
+    ].join('\n'))
+    const gameCtx = buildGameContext()
+    const messages = [
+      { role: 'system', content: instructions },
+      gameCtx ? { role: 'system', content: gameCtx } : null,
+      { role: 'user', content: `以下是最近的玩家聊天（时间顺序）：\n${transcript}\n\n请给出是否需要回应。` }
+    ].filter(Boolean)
+    const estIn = estTokensFromText(messages.map(m => m.content).join(' '))
+    const afford = canAfford(estIn)
+    if (!afford.ok) {
+      revert = false
+      state.aiPulse.lastMessage = null
+      if (log?.info) log.info('pulse skipped: budget exceeded')
+      return
+    }
+    const url = (state.ai.baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (state.ai.path || DEFAULT_PATH)
+    const body = {
+      model: model || DEFAULT_MODEL,
+      messages,
+      temperature: 0.5,
+      max_tokens: Math.max(80, Math.min(180, state.ai.maxTokensPerCall || 200)),
+      stream: false
+    }
+    pulseCtrl.running = true
+    const ac = new AbortController()
+    pulseCtrl.abort = ac
+    const timeout = setTimeout(() => ac.abort('timeout'), state.ai?.limits?.pulseTimeoutMs || 20000)
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${key}`
+        },
+        body: JSON.stringify(body),
+        signal: ac.signal
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => String(res.status))
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      const reply = data?.choices?.[0]?.message?.content || ''
+      const trimmed = H.trimReply(reply, Math.min(maxReplyLen || 240, 200)).trim()
+      const u = data?.usage || {}
+      const inTok = Number.isFinite(u.prompt_tokens) ? u.prompt_tokens : estIn
+      const outTok = Number.isFinite(u.completion_tokens) ? u.completion_tokens : estTokensFromText(reply)
+      applyUsage(inTok, outTok)
+      if (!trimmed || /^skip$/i.test(trimmed)) {
+        state.aiPulse.lastMessage = null
+        revert = false
+        return
+      }
+      state.aiPulse.lastMessage = trimmed
+      revert = false
+      if (log?.info) log.info('pulse reply ->', trimmed)
+      try { bot.chat(trimmed) } catch (e) { if (log?.warn) log.warn('pulse chat error:', e?.message || e) }
+    } finally {
+      clearTimeout(timeout)
+      pulseCtrl.running = false
+      pulseCtrl.abort = null
+      if (revert) {
+        state.aiPulse.lastFlushAt = prevFlushAt
+        state.aiPulse.buffer = batch.concat(state.aiPulse.buffer || []).slice(-80)
+        if (log?.warn) log.warn('pulse flush failed; batch restored')
+      }
+    }
+  }
+
+  function fmtDuration (ms) {
+    if (!Number.isFinite(ms) || ms < 0) return '未知'
+    if (ms >= 60 * 1000) return `${Math.round(ms / 60000)}分钟`
+    if (ms >= 1000) return `${Math.round(ms / 1000)}秒`
+    return `${ms}毫秒`
+  }
+
+  function pulseStatus () {
+    const info = state.aiPulse || {}
+    const enabled = info.enabled !== false
+    const buffer = info.buffer ? info.buffer.length : 0
+    const lastAt = info.lastFlushAt ? new Date(info.lastFlushAt).toLocaleTimeString() : '无'
+    const since = info.lastFlushAt ? now() - info.lastFlushAt : Infinity
+    const nextIn = buffer > 0 ? Math.max(0, PULSE_INTERVAL_MS - since) : null
+    console.log('[PULSE]', `enabled=${enabled}`, 'running=', pulseCtrl.running, 'buffer=', buffer, 'last=', lastAt, 'lastReason=', info.lastReason || '无', 'next≈', nextIn == null ? '待消息' : fmtDuration(nextIn), 'lastMsg=', info.lastMessage || '(none)')
+  }
+
+  function onPulseCli (payload) {
+    try {
+      if (!payload || payload.cmd !== 'pulse') return
+      const [sub, ...rest] = payload.args || []
+      const cmd = (sub || '').toLowerCase()
+      if (!cmd || cmd === 'status') { pulseStatus(); return }
+      if (cmd === 'on') {
+        state.aiPulse.enabled = true
+        console.log('[PULSE]', '已开启主动发言')
+        maybeFlush('manual')
+        return
+      }
+      if (cmd === 'off') {
+        state.aiPulse.enabled = false
+        state.aiPulse.buffer = []
+        console.log('[PULSE]', '已关闭主动发言')
+        return
+      }
+      if (cmd === 'now' || cmd === 'run' || cmd === 'flush') {
+        maybeFlush('manual')
+        return
+      }
+      console.log('[PULSE]', '未知子命令，支持: status|on|off|now')
+    } catch (e) {
+      if (log?.warn) log.warn('pulse cli error:', e?.message || e)
+    }
+  }
+
+  if (state.aiPulse._timer) {
+    try { clearInterval(state.aiPulse._timer) } catch {}
+    state.aiPulse._timer = null
+  }
+  pulseTimer = setInterval(() => { maybeFlush('timer') }, PULSE_CHECK_MS)
+  state.aiPulse._timer = pulseTimer
+  maybeFlush('timer')
+
   // no per-user memory helpers
 
   function systemPrompt () {
+    const external = loadPrompt('ai-system.txt', null)
+    if (external) return external
     return [
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
@@ -620,6 +853,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       return
     }
+    try {
+      state.aiPulse.lastFlushAt = now()
+    } catch {}
 
     // Quick answers for info questions to avoid unnecessary tools
     const intent = classifyIntent(content)
@@ -717,6 +953,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const owkMax = Math.max(10, cs.owkStoreMax || 100)
         if (state.aiOwk.length > owkMax) state.aiOwk.splice(0, state.aiOwk.length - owkMax)
       }
+      enqueuePulse(username, text)
     } catch {}
   }
   on('chat', onChatCapture)
@@ -854,8 +1091,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
     } catch (e) { dlog('ai cli error:', e?.message || e) }
   }
+  on('cli', onPulseCli)
   on('cli', onCli)
-  registerCleanup && registerCleanup(() => { try { bot.off('cli', onCli) } catch {} })
+  registerCleanup && registerCleanup(() => {
+    try { bot.off('cli', onPulseCli) } catch {}
+    try { bot.off('cli', onCli) } catch {}
+    if (state.aiPulse?._timer) {
+      try { clearInterval(state.aiPulse._timer) } catch {}
+      state.aiPulse._timer = null
+    }
+    pulseTimer = null
+    if (pulseCtrl.abort && typeof pulseCtrl.abort.abort === 'function') {
+      try { pulseCtrl.abort.abort('cleanup') } catch {}
+    }
+  })
 }
 
 module.exports = { install }
