@@ -18,10 +18,15 @@ let playerWatcher = null
 let explosionCooldownUntil = 0
 function initAfterSpawn() {
   // Reset greeting bookkeeping
+  if (!state?.greetedPlayers || typeof state.greetedPlayers.clear !== 'function') {
+    state.greetedPlayers = new Set()
+  }
   state.greetedPlayers.clear()
+  if (!state?.pendingGreets || !(state.pendingGreets instanceof Map)) state.pendingGreets = new Map()
   clearAllPendingGreets()
 
-  for (const username of Object.keys(bot.players)) {
+  const players = bot && bot.players ? bot.players : {}
+  for (const username of Object.keys(players)) {
     if (username && username !== bot.username) {
       state.greetedPlayers.add(username)
     }
@@ -30,7 +35,7 @@ function initAfterSpawn() {
   state.readyForGreeting = true
   state.hasSpawned = true
 
-  dlog('Init after spawn. Player snapshot:', Object.keys(bot.players))
+  dlog('Init after spawn. Player snapshot:', Object.keys(players))
   dlog('Greeted set primed with currently online players count =', state.greetedPlayers.size)
 
   if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
@@ -185,6 +190,10 @@ function offAll() {
 }
 
 function clearAllPendingGreets() {
+  if (!state?.pendingGreets || typeof state.pendingGreets.clear !== 'function') {
+    state.pendingGreets = new Map()
+    return
+  }
   for (const timeout of state.pendingGreets.values()) {
     clearTimeout(timeout)
   }
