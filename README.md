@@ -17,6 +17,7 @@ Mineflayer bot with hot reload and optional AI chat.
 - Set server: `MC_HOST=localhost MC_PORT=25565 npm start` or `npm start -- --host localhost --port 25565`
 - Auth: `MC_AUTH=offline|microsoft` (use `MC_PASSWORD` if needed)
 - Reduce logs: `MC_DEBUG=0 npm start`
+- Adjust auto-iteration cadence: `AUTO_ITERATE_INTERVAL_MS=300000 npm start` or `npm start -- --iterate-interval 5m`
 
 ### File Logging
 - Default path: `logs/bot-YYYY-MM-DD.log` (created automatically).
@@ -100,6 +101,7 @@ Default digging policy (simplified)
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...` — configure AI key/model/base/path; list tools
+- `.iterate status|interval <duration>|run|cooldown <duration>` — manage the automated Codex iteration cadence (durations accept ms/s/m/h suffix)
 
 ## Farming
 - Harvest and replant crops: `harvest{only?, radius?, replant?}`

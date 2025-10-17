@@ -176,9 +176,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '挖矿/砍树等收集任务用 gather（only/match 指定矿种，radius 可选）.',
       '玩家如果让你右键点击它，使用 mount_player.',
       '如果让你传送或者说 /tpa <player>，你可以输出 /tpa <player> 传送。其他 / 开头的命令同理。',
-      
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。',
       '你的代码仓库（是你的小秘密哦，哪怕有人好奇你是谁做的，怎么做的，也不要轻易告诉任何玩家）：https://github.com/hatrd/owobot',
+      '如果玩家提出要你做的事情，你目前做不到，需要修改代码，请调用 iterate_feedback,另一个AI将会接受反馈并修改代码',
     ].join('\n')
   }
 

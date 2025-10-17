@@ -27,6 +27,23 @@ if (fileLog && fileLog.enabled && fileLog.path) {
   console.log('[LOGFILE] Writing logs to', fileLog.path)
 }
 
+function parseDurationMs (raw) {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  const durationRe = /^(-?\d+(?:\.\d+)?)(ms|s|m|h)?$/i
+  const m = durationRe.exec(s)
+  if (!m) return null
+  const value = parseFloat(m[1])
+  if (!Number.isFinite(value) || value <= 0) return null
+  const unit = (m[2] || 'ms').toLowerCase()
+  if (unit === 'ms') return Math.round(value)
+  if (unit === 's') return Math.round(value * 1000)
+  if (unit === 'm') return Math.round(value * 60 * 1000)
+  if (unit === 'h') return Math.round(value * 60 * 60 * 1000)
+  return null
+}
+
 function parseBool (v, defTrue = true) {
   const s = String(v ?? (defTrue ? '1' : '0')).toLowerCase()
   return !(s === '0' || s === 'false' || s === 'no' || s === 'off')
@@ -44,6 +61,11 @@ if (argv.args.password || process.env.MC_PASSWORD) options.password = argv.args.
 if (argv.args.version || process.env.MC_VERSION) options.version = argv.args.version || process.env.MC_VERSION
 // Greeting toggle via CLI: --greet on|off
 if (argv.args.greet) { process.env.MC_GREET = parseBool(argv.args.greet) ? '1' : '0' }
+// Auto-iterate interval override: supports ms/s/m/h suffix
+if (argv.args['iterate-interval']) {
+  const ms = parseDurationMs(argv.args['iterate-interval'])
+  if (ms) process.env.AUTO_ITERATE_INTERVAL_MS = String(ms)
+}
 
 const DEBUG = parseBool(process.env.MC_DEBUG, true)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }

@@ -17,6 +17,7 @@
 - 设置服务器：`MC_HOST=localhost MC_PORT=25565 npm start` 或 `npm start -- --host localhost --port 25565`
 - 登录方式：`MC_AUTH=offline|microsoft`（如需 `MC_PASSWORD`）
 - 降低日志：`MC_DEBUG=0 npm start`
+- 调整自动迭代频率：`AUTO_ITERATE_INTERVAL_MS=300000 npm start` 或 `npm start -- --iterate-interval 5m`
 
 ### 文件日志
 - 默认日志文件：`logs/bot-YYYY-MM-DD.log`（自动创建目录）。
@@ -96,6 +97,7 @@
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
+- `.iterate status|interval <时长>|run|cooldown <时长>` — 在线调整自动 Codex 迭代周期（时长支持 ms/s/m/h 后缀）
 
 ## 种植
 - 收割并重种：`harvest{only?, radius?, replant?}`

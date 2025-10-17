@@ -2949,7 +2949,25 @@ function install (bot, { log, on, registerCleanup }) {
     if (!iter || typeof iter.trigger !== 'function') return fail('未启用迭代模块')
     const force = args.force === true || String(args.force || '').toLowerCase() === 'true'
     const reason = args.reason ? String(args.reason) : 'deepseek'
-    const res = await iter.trigger('deepseek', { force, reason })
+    let announced = false
+    const canListen = bot && typeof bot.on === 'function' && typeof bot.off === 'function'
+    const onStart = (ev) => {
+      try {
+        if (announced) return
+        const src = String(ev?.source || '')
+        if (!src.startsWith('deepseek')) return
+        if (bot && typeof bot.chat === 'function') bot.chat('已严肃学习')
+        announced = true
+        if (canListen) { try { bot.off('autoIter:start', onStart) } catch {} }
+      } catch {}
+    }
+    let res
+    try {
+      if (canListen) { try { bot.on('autoIter:start', onStart) } catch {} }
+      res = await iter.trigger('deepseek', { force, reason })
+    } finally {
+      if (canListen) { try { bot.off('autoIter:start', onStart) } catch {} }
+    }
     if (!res || !res.ok) {
       if (res && res.reason === 'cooldown' && res.until) {
         const waitMs = Math.max(0, res.until - Date.now())
