@@ -511,20 +511,43 @@ ${logs}`,
     return `${ms}毫秒`
   }
 
-  function announceTick () {
+  async function fetchOnlineCount () {
+    const url = String(process.env.MAP_API_URL || '').trim()
+    if (!url) return null
+    try {
+      const ac = new AbortController()
+      const timeout = setTimeout(() => { try { ac.abort('timeout') } catch {} }, 4000)
+      const res = await fetch(url, { method: 'GET', signal: ac.signal })
+      clearTimeout(timeout)
+      if (!res.ok) return null
+      const data = await res.json().catch(() => null)
+      if (Array.isArray(data)) return data.length
+      if (Array.isArray(data?.players)) return data.players.length
+      return null
+    } catch (e) {
+      logger.warn('[iterate] online count fetch error:', e?.message || e)
+      return null
+    }
+  }
+
+  async function announceTick () {
     try {
       if (!bot || typeof bot.chat !== 'function') return
       if (!state.hasSpawned) return
       const now = new Date()
       const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-      const intervalStr = formatInterval(ctrl.intervalMs || DEFAULT_INTERVAL_MS)
-      bot.chat(`【例行播报】${timeStr} 的自检开始啦（间隔：${intervalStr}）`)
+      let message = `现在是 ${timeStr}，祝大家玩得开心~`
+      const count = await fetchOnlineCount()
+      if (Number.isInteger(count) && count >= 0) {
+        message = `现在是 ${timeStr}，线上有 ${count} 位伙伴~`
+      }
+      bot.chat(message)
     } catch {}
   }
 
   async function hourlyTick () {
     hourlyTimer = null
-    announceTick()
+    await announceTick()
     await runIteration('hourly')
     scheduleNextTick()
   }
