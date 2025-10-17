@@ -73,6 +73,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (!Array.isArray(state.aiPulse.buffer)) state.aiPulse.buffer = []
   if (!Number.isFinite(state.aiPulse.lastFlushAt)) state.aiPulse.lastFlushAt = Date.now()
 
+  state.aiExtras = state.aiExtras || { events: [] }
+  if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
+
   // global recent chat logs
   state.aiRecent = state.aiRecent || [] // [{t, user, text}]
   state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
@@ -656,6 +659,52 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return H.buildContextPrompt(username, state.aiRecent, state.aiOwk, { ...ctx, trigger: triggerWord() })
   }
 
+  function recordEvent (type, text) {
+    try {
+      const entry = { t: now(), type, text: String(text || '').trim() }
+      if (!entry.text) return
+      const events = state.aiExtras.events
+      const last = events[events.length - 1]
+      if (last && last.type === entry.type && last.text === entry.text) {
+        last.t = entry.t
+        return
+      }
+      events.push(entry)
+      const max = 12
+      if (events.length > max) events.splice(0, events.length - max)
+    } catch {}
+  }
+
+  function extractPlainText (message) {
+    if (!message) return ''
+    try {
+      if (typeof message.getText === 'function') return message.getText()
+    } catch {}
+    try {
+      if (typeof message.toString === 'function') return message.toString()
+    } catch {}
+    try { return String(message) } catch { return '' }
+  }
+
+  function handleSystemMessage (message) {
+    try {
+      const plain = extractPlainText(message).trim()
+      if (!plain) return
+      const lower = plain.toLowerCase()
+      const selfName = String(bot.username || '')
+      if (!selfName) return
+      const selfLower = selfName.toLowerCase()
+      const isSelf = lower.includes(selfLower)
+      if (isSelf) {
+        const deathPatterns = [' was slain ', ' was shot ', ' was blown up ', ' was killed ', ' was pricked ', ' hit the ground ', ' fell ', ' drowned', ' burned', ' blew up', ' suffocated', ' starved', ' tried to swim', ' died', ' went up in flames', ' experienced kinetic energy', ' was doomed to fall']
+        if (deathPatterns.some(p => lower.includes(p))) recordEvent('death', plain)
+        const achievementPatterns = [' has made the advancement ', ' has completed the challenge ', ' has reached the goal ', ' completed the challenge ', ' advancement '] // advancement fallback
+        if (achievementPatterns.some(p => lower.includes(p))) recordEvent('achievement', plain)
+      }
+      if (lower.startsWith('[deathchest]') && lower.includes('deathchest')) recordEvent('death_info', plain)
+    } catch {}
+  }
+
   // --- Game context via observer ---
   function buildGameContext () {
     try {
@@ -676,6 +725,32 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return H.selectMemory(getMemory(username), budgetTok)
   }
 
+  function buildExtrasContext () {
+    try {
+      const events = state.aiExtras.events || []
+      if (!events.length) return ''
+      const nowTs = now()
+      const keep = events.filter(ev => nowTs - (ev.t || 0) <= 15 * 60 * 1000)
+      if (!keep.length) return ''
+      const MAX_LINES = 5
+      const slice = keep.slice(-MAX_LINES)
+      const label = (type) => {
+        if (type === 'death') return '死亡'
+        if (type === 'death_info') return '死亡信息'
+        if (type === 'achievement') return '成就'
+        return type || '事件'
+      }
+      const clock = (ts) => {
+        const date = new Date(ts)
+        const hh = String(date.getHours()).padStart(2, '0')
+        const mm = String(date.getMinutes()).padStart(2, '0')
+        return `${hh}:${mm}`
+      }
+      const parts = slice.map(ev => `${clock(ev.t)} ${label(ev.type)}: ${ev.text}`)
+      return `近期事件: ${parts.join(' | ')}`
+    } catch { return '' }
+  }
+
   async function callAI (username, content, intent) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
@@ -685,8 +760,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     // Build context from global recent chat (including owk lines) and game state
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
+    const extrasCtx = buildExtrasContext()
     const messages = [
       { role: 'system', content: systemPrompt() },
+      extrasCtx ? { role: 'system', content: extrasCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       { role: 'system', content: contextPrompt },
       { role: 'user', content }
@@ -952,6 +1029,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const onChat = (username, message) => { handleChat(username, message).catch(() => {}) }
   on('chat', onChat)
+  const onMessage = (message) => { handleSystemMessage(message) }
+  on('message', onMessage)
   // capture recent chats for context (store even if not starting with trigger)
   const onChatCapture = (username, message) => {
     try {
@@ -1008,6 +1087,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('chat', onChatCapture)
   registerCleanup && registerCleanup(() => { try { bot.off('chat', onChat) } catch {} ; if (ctrl.abort) { try { ctrl.abort.abort() } catch {} } })
   registerCleanup && registerCleanup(() => { try { bot.off('chat', onChatCapture) } catch {} })
+  registerCleanup && registerCleanup(() => { try { bot.off('message', onMessage) } catch {} })
 
   // Terminal controls: .ai ...
   function onCli (payload) {
