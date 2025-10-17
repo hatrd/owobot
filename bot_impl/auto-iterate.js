@@ -8,6 +8,7 @@ const fileLogger = require('./file-logger')
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
 const MAX_LOG_BYTES = 200 * 1024
 const DEFAULT_DEEPSEEK_COOLDOWN_MS = 30 * 60 * 1000
+const DEFAULT_CODEX_TIMEOUT_MS = 0
 
 let hourlyTimer = null
 
@@ -26,12 +27,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       failureCount: 0,
       currentRun: null,
       nextTickAt: null,
-      intervalMs: null
+      intervalMs: null,
+      phase: 'idle'
     }
   }
   const ctrl = state.autoIter
   if (typeof ctrl.currentRun === 'undefined') ctrl.currentRun = null
   if (typeof ctrl.nextTickAt === 'undefined') ctrl.nextTickAt = null
+  if (typeof ctrl.phase !== 'string') ctrl.phase = 'idle'
   function parseDurationMs (raw) {
     if (raw == null) return null
     const s = String(raw).trim()
@@ -64,6 +67,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const codexModel = process.env.CODEX_EXEC_MODEL || process.env.CODEX_MODEL || ''
   const codexExtraArgs = String(process.env.CODEX_EXEC_ARGS || '').split(/\s+/).filter(Boolean)
+  const codexTimeoutMs = (() => {
+    const raw = process.env.CODEX_EXEC_TIMEOUT_MS
+    const parsed = raw ? parseInt(raw, 10) : DEFAULT_CODEX_TIMEOUT_MS
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+    return DEFAULT_CODEX_TIMEOUT_MS
+  })()
   const codexHome = (() => {
     const envHome = process.env.CODEX_HOME_DIR || process.env.CODEX_EXEC_HOME
     if (envHome && envHome.trim()) return path.resolve(process.cwd(), envHome.trim())
@@ -200,8 +209,11 @@ ${logs}`,
 
     return await new Promise((resolve) => {
       let resolved = false
+      let timedOut = false
+      let timer = null
       function finish (res) {
         if (!resolved) {
+          if (timer) clearTimeout(timer)
           resolved = true
           resolve(res)
         }
@@ -216,8 +228,28 @@ ${logs}`,
         finish({ ok: false, reason: 'codex_spawn_failed', detail: e?.message || String(e) })
         return
       }
-      proc.stdout.on('data', (d) => { stdout += d.toString() })
-      proc.stderr.on('data', (d) => { stderr += d.toString() })
+      if (codexTimeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (!resolved) {
+            timedOut = true
+            logger.warn('codex exec timeout; terminating process')
+            try { proc.kill('SIGTERM') } catch {}
+            setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 2000)
+          }
+        }, codexTimeoutMs)
+      }
+      proc.stdout.on('data', (d) => {
+        const text = d.toString()
+        stdout += text
+        const chunk = text.trim()
+        if (chunk) logger.info('[iterate] codex stdout:', chunk)
+      })
+      proc.stderr.on('data', (d) => {
+        const text = d.toString()
+        stderr += text
+        const chunk = text.trim()
+        if (chunk) logger.warn('[iterate] codex stderr:', chunk)
+      })
       proc.on('error', (err) => {
         logger.error('codex exec error:', err?.message || err)
         const reason = err && err.code === 'ENOENT' ? 'codex_missing' : 'codex_spawn_error'
@@ -225,6 +257,10 @@ ${logs}`,
       })
       proc.on('close', (code) => {
         (async () => {
+          if (timedOut) {
+            finish({ ok: false, reason: 'codex_timeout', detail: 'codex exec timed out after ' + codexTimeoutMs + 'ms' })
+            return
+          }
           if (code !== 0) {
             logger.warn('codex exec exited with code', code, stderr || stdout)
             finish({ ok: false, reason: 'codex_exit', detail: stderr || stdout || `exit ${code}` })
@@ -312,16 +348,23 @@ ${logs}`,
     }
     const reasonLabel = opts.reason ? `${source}:${opts.reason}` : source
     ctrl.running = true
+    ctrl.phase = 'starting'
     const startedAt = Date.now()
+    logger.info('[iterate] run begin:', reasonLabel)
     try { bot.emit && bot.emit('autoIter:start', { source: reasonLabel, startedAt }) } catch {}
 
     const corePromise = (async () => {
+      ctrl.phase = 'collect_logs'
+      logger.info('[iterate] collecting logs…')
       const { text: logChunk } = await readLogSegment()
+      ctrl.phase = 'codex'
+      logger.info('[iterate] contacting codex…')
       const codexRes = await runCodex({ logChunk, reason: reasonLabel })
       if (!codexRes.ok) {
         ctrl.failureCount = (ctrl.failureCount || 0) + 1
         ctrl.lastRunAt = now
         ctrl.lastReason = `${reasonLabel}:${codexRes.reason}`
+        ctrl.phase = 'error'
         logger.warn('Iteration stopped:', codexRes.reason)
         return { ok: false, reason: codexRes.reason }
       }
@@ -332,15 +375,19 @@ ${logs}`,
       let changed = false
       let broadcastMsg = null
       for (const item of patches) {
+        ctrl.phase = 'apply_patch'
+        logger.info('[iterate] applying patch:', item.detail || '(no detail)')
         const res = await applyPatch(item.patch)
         if (!res.ok) {
           ctrl.failureCount = (ctrl.failureCount || 0) + 1
           ctrl.lastRunAt = Date.now()
           ctrl.lastReason = `${reasonLabel}:patch_failed`
+          ctrl.phase = 'error'
           return { ok: false, reason: 'patch_failed', detail: res.error }
         }
         changed = true
       }
+      ctrl.phase = 'post'
       if (source === 'deepseek') ctrl.deepseekCooldownUntil = Date.now() + ctrl.cooldownMs
       if (changed) await touchReloadGate()
       if (codexRes.broadcast && codexRes.broadcast.length) {
@@ -352,18 +399,22 @@ ${logs}`,
       }
       ctrl.lastBroadcast = broadcastMsg || null
       ctrl.failureCount = 0
+      if (codexRes.summary) logger.info('[iterate] summary:', codexRes.summary)
       return { ok: true, changed, summary: ctrl.lastSummary, broadcast: broadcastMsg }
     })().catch((e) => {
       ctrl.failureCount = (ctrl.failureCount || 0) + 1
       logger.error('Iteration run error:', e?.message || e)
+      ctrl.phase = 'error'
       return { ok: false, reason: 'exception', detail: e?.message || String(e) }
     })
 
     const wrapped = corePromise.then((result) => {
+      logger.info('[iterate] run end:', reasonLabel, 'result=', result?.ok ? 'ok' : (result?.reason || 'fail'))
       try { bot.emit && bot.emit('autoIter:end', { source: reasonLabel, result, duration: Date.now() - startedAt }) } catch {}
       return result
     }).finally(() => {
       ctrl.running = false
+      if (!ctrl.running) ctrl.phase = 'idle'
       ctrl.currentRun = null
     })
     ctrl.currentRun = wrapped
@@ -415,6 +466,7 @@ ${logs}`,
     ctrl.intervalMs = resolveIntervalMs()
     const wait = msUntilNextInterval()
     ctrl.nextTickAt = Date.now() + wait
+    ctrl.phase = 'waiting'
     hourlyTimer = setTimeout(() => {
       hourlyTimer = null
       ctrl.nextTickAt = null
@@ -432,7 +484,8 @@ ${logs}`,
       deepseekCooldownUntil: ctrl.deepseekCooldownUntil,
       cooldownMs: ctrl.cooldownMs,
       intervalMs: ctrl.intervalMs,
-      nextTickAt: ctrl.nextTickAt
+      nextTickAt: ctrl.nextTickAt,
+      phase: ctrl.phase
     }
   }
 
@@ -456,7 +509,7 @@ ${logs}`,
     const s = status()
     const nextIn = s.nextTickAt ? Math.max(0, s.nextTickAt - Date.now()) : null
     const nextStr = nextIn != null ? `${fmtMs(nextIn)} 后` : '未计划'
-    console.log('[ITERATE]', `状态: ${s.running ? '运行中' : '空闲'}`, '| 上次原因:', s.lastReason || '无', '| 当前周期:', fmtMs(s.intervalMs || DEFAULT_INTERVAL_MS), '| 下次:', nextStr)
+    console.log('[ITERATE]', `状态: ${s.running ? '运行中' : '空闲'}`, '| 阶段:', s.phase || '未知', '| 上次原因:', s.lastReason || '无', '| 当前周期:', fmtMs(s.intervalMs || DEFAULT_INTERVAL_MS), '| 下次:', nextStr)
     if (s.lastSummary) console.log('[ITERATE]', '上次摘要:', s.lastSummary)
     if (s.lastBroadcast) console.log('[ITERATE]', '上次播报:', s.lastBroadcast)
   }

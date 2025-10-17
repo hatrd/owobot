@@ -18,6 +18,7 @@
 - 登录方式：`MC_AUTH=offline|microsoft`（如需 `MC_PASSWORD`）
 - 降低日志：`MC_DEBUG=0 npm start`
 - 调整自动迭代频率：`AUTO_ITERATE_INTERVAL_MS=300000 npm start` 或 `npm start -- --iterate-interval 5m`
+- 放宽 Codex 超时：`CODEX_EXEC_TIMEOUT_MS=180000 npm start`（≤0 表示无限制）
 
 ### 文件日志
 - 默认日志文件：`logs/bot-YYYY-MM-DD.log`（自动创建目录）。
