@@ -277,8 +277,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     ].join('\n')).replace(/\{\{BOT_NAME\}\}/g, botName)
     const gameCtx = buildGameContext()
     const sharedCtx = buildContextPrompt(botName)
+    const extrasCtx = buildExtrasContext()
     const messages = [
       { role: 'system', content: instructions },
+      extrasCtx ? { role: 'system', content: extrasCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       sharedCtx ? { role: 'system', content: sharedCtx } : null,
       { role: 'user', content: `机器人昵称：${botName}\n以下是最近的玩家聊天（时间顺序）：\n${transcript}\n\n请给出是否需要回应。` }
