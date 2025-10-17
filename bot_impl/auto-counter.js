@@ -15,6 +15,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function stopCounter () {
     if (counterIv) { try { clearInterval(counterIv) } catch {} ; counterIv = null }
     targetId = null
+    counterUntil = 0
+    counterCtx = {}
     try { require('./pvp').stopMoveOverrides(bot) } catch {}
   }
 
@@ -117,18 +119,24 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   function triggerCounter () {
-    // Yield completely during external actions or when main-hand is locked (e.g., mining)
-    try { if (state?.externalBusy || state?.holdItemLock) return } catch {}
+    // Respect externalBusy to avoid clashing with user-triggered tools
+    let externalBusy = false
+    let holdLocked = false
+    try {
+      externalBusy = !!state?.externalBusy
+      holdLocked = !!state?.holdItemLock
+    } catch {}
+    if (externalBusy) return
     const pvp = require('./pvp')
     const first = findLikelyAttacker()
     if (!first) return
     // Only send cute chat when fully idle; chatting can poke some servers/plugins
-    try { if (!(state?.externalBusy || state?.holdItemLock)) maybeCuteChat() } catch {}
+    try { if (!externalBusy && !holdLocked) maybeCuteChat() } catch {}
 
     // If attacker is a player, do a single quick counter hit and stop.
     if (first.type === 'player') {
       // If busy/locked (mining), skip even the quick counter branch
-      try { if (state?.externalBusy || state?.holdItemLock) return } catch {}
+      if (holdLocked) return
       ;(async () => {
         try { await pvp.ensureBestWeapon(bot) } catch {}
         try { await pvp.ensureShieldEquipped(bot) } catch {}
@@ -157,20 +165,30 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
     // For mobs or unknown, short auto-counter window with smart blocking
     // If busy/locked (mining), skip setting up the counter loop
-    try { if (state?.externalBusy || state?.holdItemLock) return } catch {}
+    if (externalBusy) return
     targetId = first.id
     counterCtx = counterCtx || {}
-    counterUntil = now() + 3500
+    counterCtx.targetId = first.id
+    counterUntil = now() + 5000
     if (counterIv) return // already running; timers refreshed
     counterIv = setInterval(() => {
       try {
         const me = bot.entity
         if (!me) { stopCounter(); return }
         let t = bot.entities?.[targetId]
-        if (!t) { t = findLikelyAttacker() ; if (t) targetId = t.id }
-        if (!t) { stopCounter(); return }
+        if (!t) {
+          t = findLikelyAttacker()
+          if (t) {
+            targetId = t.id
+            counterCtx = {}
+            counterCtx.targetId = t.id
+          }
+        }
+        if (!t || t === me) { stopCounter(); return }
         const d = entityDistance(me, t)
         if (!Number.isFinite(d) || d > 8.0) { stopCounter(); return }
+        // Keep window alive while the threat stays nearby
+        if (d <= 6.5) counterUntil = Math.max(counterUntil, now() + 1600)
         try { pvp.pvpTick(bot, t, counterCtx) } catch {}
         if (now() > counterUntil) { stopCounter(); return }
       } catch { /* ignore */ }
@@ -185,6 +203,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       if (entity !== bot.entity) return
       try { lastDamage = { id: (source && source.id) || null, at: now() } } catch { lastDamage = { id: null, at: now() } }
+      counterUntil = now() + 5000
       triggerCounter()
     } catch {}
   }

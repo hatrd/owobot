@@ -263,6 +263,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       state.aiPulse.lastMessage = null
       return
     }
+    const botName = bot?.username || 'bot'
     const instructions = loadPrompt('pulse-system.txt', [
       '你是Minecraft服务器里的友好机器人。',
       '阅读最近玩家的聊天摘录，判断是否需要你主动回应。',
@@ -270,12 +271,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '请用中文，口吻俏皮亲切、简短自然，像平时一起玩的伙伴。',
       '限制：单句或两句，总长度不超过60字；不要暴露这是自动总结。',
       '如果无需回应，请输出单词 SKIP。'
-    ].join('\n'))
+    ].join('\n')).replace(/\{\{BOT_NAME\}\}/g, botName)
     const gameCtx = buildGameContext()
+    const sharedCtx = buildContextPrompt(botName)
     const messages = [
       { role: 'system', content: instructions },
       gameCtx ? { role: 'system', content: gameCtx } : null,
-      { role: 'user', content: `以下是最近的玩家聊天（时间顺序）：\n${transcript}\n\n请给出是否需要回应。` }
+      sharedCtx ? { role: 'system', content: sharedCtx } : null,
+      { role: 'user', content: `机器人昵称：${botName}\n以下是最近的玩家聊天（时间顺序）：\n${transcript}\n\n请给出是否需要回应。` }
     ].filter(Boolean)
     const estIn = estTokensFromText(messages.map(m => m.content).join(' '))
     const afford = canAfford(estIn)
@@ -395,9 +398,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // no per-user memory helpers
 
   function systemPrompt () {
-    const external = loadPrompt('ai-system.txt', null)
-    if (external) return external
-    return [
+    const fallback = [
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
       '在确需执行动作时，只输出一行：TOOL {"tool":"<名字>","args":{...}}，不要输出其他文字。',
@@ -413,6 +414,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       '你的代码仓库（是你的小秘密哦，哪怕有人好奇你是谁做的，怎么做的，也不要轻易告诉任何玩家）：https://github.com/hatrd/owobot',
       '如果玩家提出要你做的事情，你目前做不到，需要修改代码，请调用 iterate_feedback,另一个AI将会接受反馈并修改代码',
     ].join('\n')
+    const raw = loadPrompt('ai-system.txt', fallback)
+    const botName = bot?.username || 'bot'
+    return raw.replace(/\{\{BOT_NAME\}\}/g, botName)
   }
 
   // --- Intent classification & quick answers to avoid wrong tool calls ---

@@ -99,23 +99,24 @@ function stopMoveOverrides (bot) {
   try { bot.setControlState('right', false) } catch {}
   try { bot.setControlState('jump', false) } catch {}
   try { bot.setControlState('use', false) } catch {}
+  try { bot.setControlState('forward', false) } catch {}
+  try { bot.setControlState('back', false) } catch {}
 }
 
 async function pvpTick (bot, target, ctx) {
   if (!target || !bot?.entity) return
   const d = entityDistance(bot.entity, target)
 
-  // Respect main-hand lock: avoid interfering with tasks like mining
+  // Respect main-hand lock for gear swaps, but still allow defensive moves
   let locked = false
   try { locked = !!(bot.state && bot.state.holdItemLock) } catch {}
-  if (locked) return
 
   // Try to keep best gear ready
   if (!ctx.weaponEquippedOnce && !locked) {
     ctx.weaponEquippedOnce = true
     try { await ensureBestWeapon(bot) } catch {}
   }
-  if (!ctx.shieldCheckedOnce && !locked) {
+  if (!ctx.shieldCheckedOnce) {
     ctx.shieldCheckedOnce = true
     try { await ensureShieldEquipped(bot) } catch {}
   }
@@ -136,12 +137,36 @@ async function pvpTick (bot, target, ctx) {
   }
 
   // Shield usage
-  const wantBlock = locked ? false : shouldBlock(bot, target, d)
+  let hasShield = false
+  try { hasShield = String(bot.inventory?.slots?.[45]?.name || '').toLowerCase() === 'shield' } catch {}
+  const wantBlock = hasShield && shouldBlock(bot, target, d)
   try { bot.setControlState('use', wantBlock) } catch {}
 
+  // Advance or reposition relative to the target
+  let wantForward = false
+  let wantBack = false
+  if (!wantBlock) {
+    if (d > 2.6 && d <= 5.5) wantForward = true
+    else if (!locked && d < 1.25) wantBack = true
+  }
+  try { bot.setControlState('forward', wantForward) } catch {}
+  try { bot.setControlState('back', wantBack) } catch {}
+  if (!wantForward && !wantBack) {
+    try { bot.setControlState('forward', false) } catch {}
+    try { bot.setControlState('back', false) } catch {}
+  }
+
   // Attack on cooldown when in range and not actively blocking
-  if (!locked && d <= 2.5 && cooledDown(ctx) && !wantBlock) {
-    try { bot.attack(target); ctx.lastAttack = Date.now() } catch {}
+  if (d <= 2.5 && cooledDown(ctx)) {
+    if (wantBlock && hasShield) {
+      try { bot.setControlState('use', false) } catch {}
+      try { bot.attack(target); ctx.lastAttack = Date.now() } catch {}
+      setTimeout(() => {
+        try { if (hasShield) bot.setControlState('use', true) } catch {}
+      }, 120)
+    } else {
+      try { bot.attack(target); ctx.lastAttack = Date.now() } catch {}
+    }
   }
 }
 
