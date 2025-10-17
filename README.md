@@ -102,7 +102,7 @@ Default digging policy (simplified)
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...` — configure AI key/model/base/path; list tools
-- `.iterate status|interval <duration>|run|cooldown <duration>` — manage the automated Codex iteration cadence (durations accept ms/s/m/h suffix)
+- `.iterate status|interval <duration>|run|cooldown <duration>|reset` — manage the automation (duration accepts ms/s/m/h; `reset` moves the log cursor to current end)
 
 ## Farming
 - Harvest and replant crops: `harvest{only?, radius?, replant?}`

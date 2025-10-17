@@ -5,6 +5,8 @@ const { spawn } = require('child_process')
 const logging = require('./logging')
 const fileLogger = require('./file-logger')
 
+const DATA_DIR = path.join(process.cwd(), 'data')
+
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
 const MAX_LOG_BYTES = 200 * 1024
 const DEFAULT_DEEPSEEK_COOLDOWN_MS = 30 * 60 * 1000
@@ -14,6 +16,37 @@ let hourlyTimer = null
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const logger = log || logging.getLogger('iterate')
+  const persistPath = path.join(DATA_DIR, 'auto-iterate.json')
+
+  function loadPersistent () {
+    try {
+      const raw = fs.readFileSync(persistPath, 'utf8')
+      const data = JSON.parse(raw)
+      if (data && typeof data === 'object') {
+        if (typeof data.lastLogFile === 'string') ctrl.lastLogFile = data.lastLogFile
+        if (Number.isFinite(data.lastLogOffset)) ctrl.lastLogOffset = data.lastLogOffset
+        if (Array.isArray(data.history)) ctrl.history = data.history.slice(-10)
+      }
+    } catch {}
+  }
+
+  function savePersistent () {
+    try {
+      if (!ctrl.persistDirty) return
+      ctrl.persistDirty = false
+      fs.mkdirSync(DATA_DIR, { recursive: true })
+      const payload = {
+        version: 1,
+        lastLogFile: ctrl.lastLogFile || null,
+        lastLogOffset: ctrl.lastLogOffset || 0,
+        history: Array.isArray(ctrl.history) ? ctrl.history.slice(-20) : []
+      }
+      fs.writeFileSync(persistPath, JSON.stringify(payload, null, 2))
+    } catch (e) {
+      logger.warn('Failed to persist iterate state:', e?.message || e)
+    }
+  }
+
   if (!state.autoIter) {
     state.autoIter = {
       lastRunAt: 0,
@@ -28,13 +61,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       currentRun: null,
       nextTickAt: null,
       intervalMs: null,
-      phase: 'idle'
+      phase: 'idle',
+      history: [],
+      persistDirty: false
     }
   }
   const ctrl = state.autoIter
   if (typeof ctrl.currentRun === 'undefined') ctrl.currentRun = null
   if (typeof ctrl.nextTickAt === 'undefined') ctrl.nextTickAt = null
   if (typeof ctrl.phase !== 'string') ctrl.phase = 'idle'
+  if (!Array.isArray(ctrl.history)) ctrl.history = []
+  if (typeof ctrl.persistDirty !== 'boolean') ctrl.persistDirty = false
+
+  loadPersistent()
   function parseDurationMs (raw) {
     if (raw == null) return null
     const s = String(raw).trim()
@@ -132,9 +171,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       let start = 0
       if (ctrl.lastLogFile === file) {
         start = Math.max(0, Math.min(ctrl.lastLogOffset || 0, size))
+        if (start > size) start = Math.max(0, size - MAX_LOG_BYTES)
       } else {
         ctrl.lastLogFile = file
-        ctrl.lastLogOffset = 0
+        start = Math.max(0, size - MAX_LOG_BYTES)
       }
       let length = size - start
       if (length > MAX_LOG_BYTES) {
@@ -143,6 +183,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       if (length <= 0) {
         ctrl.lastLogOffset = size
+        ctrl.persistDirty = true
         return { text: '', file, size }
       }
       const fh = await fs.promises.open(file, 'r')
@@ -150,6 +191,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const buffer = Buffer.alloc(length)
         await fh.read(buffer, 0, length, start)
         ctrl.lastLogOffset = size
+        ctrl.persistDirty = true
         return { text: buffer.toString('utf8'), file, size }
       } finally {
         await fh.close()
@@ -163,12 +205,24 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function buildPrompt ({ logChunk, reason }) {
     const summary = ctrl.lastSummary ? `上次总结：${ctrl.lastSummary}` : '暂无历史总结'
     const logs = logChunk && logChunk.trim() ? logChunk.trim() : '(无新日志)'
+    const recentHistory = Array.isArray(ctrl.history) ? ctrl.history.slice(-5) : []
+    const historyText = recentHistory.length
+      ? recentHistory.map((h) => {
+        const when = h && h.at ? new Date(h.at).toISOString() : '未知时间'
+        const status = h?.status || 'unknown'
+        const reasonTag = h?.reason ? `[${h.reason}]` : ''
+        const sum = h?.summary ? String(h.summary).slice(0, 160) : ''
+        return `- ${when} ${reasonTag} ${status} ${sum}`.trim()
+      }).join('\n')
+      : '- 暂无记录'
     return [
       `# 角色
 你是Minecraft机器人项目的协作者，负责根据运行日志提出改进，并在需要时直接给出代码补丁。`,
       `# 触发信息
 ${summary}
 触发原因：${reason}`,
+      `# 最近迭代记录
+${historyText}`,
       `# 输入日志
 ${logs}`,
       `# 输出格式
@@ -366,6 +420,10 @@ ${logs}`,
         ctrl.lastReason = `${reasonLabel}:${codexRes.reason}`
         ctrl.phase = 'error'
         logger.warn('Iteration stopped:', codexRes.reason)
+        ctrl.history = ctrl.history || []
+        ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'fail', summary: String(codexRes.reason || ''), broadcast: null })
+        if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+        ctrl.persistDirty = true
         return { ok: false, reason: codexRes.reason }
       }
       ctrl.lastSummary = codexRes.summary || ''
@@ -383,6 +441,10 @@ ${logs}`,
           ctrl.lastRunAt = Date.now()
           ctrl.lastReason = `${reasonLabel}:patch_failed`
           ctrl.phase = 'error'
+          ctrl.history = ctrl.history || []
+          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'patch_failed', summary: String(res.error || ''), broadcast: null })
+          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+          ctrl.persistDirty = true
           return { ok: false, reason: 'patch_failed', detail: res.error }
         }
         changed = true
@@ -400,11 +462,19 @@ ${logs}`,
       ctrl.lastBroadcast = broadcastMsg || null
       ctrl.failureCount = 0
       if (codexRes.summary) logger.info('[iterate] summary:', codexRes.summary)
+      ctrl.history = ctrl.history || []
+      ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: changed ? 'changed' : 'noop', summary: ctrl.lastSummary || '', broadcast: broadcastMsg || null })
+      if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+      ctrl.persistDirty = true
       return { ok: true, changed, summary: ctrl.lastSummary, broadcast: broadcastMsg }
     })().catch((e) => {
       ctrl.failureCount = (ctrl.failureCount || 0) + 1
       logger.error('Iteration run error:', e?.message || e)
       ctrl.phase = 'error'
+      ctrl.history = ctrl.history || []
+      ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'error', summary: String(e?.message || e), broadcast: null })
+      if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+      ctrl.persistDirty = true
       return { ok: false, reason: 'exception', detail: e?.message || String(e) }
     })
 
@@ -416,6 +486,7 @@ ${logs}`,
       ctrl.running = false
       if (!ctrl.running) ctrl.phase = 'idle'
       ctrl.currentRun = null
+      savePersistent()
     })
     ctrl.currentRun = wrapped
     return wrapped
@@ -538,6 +609,24 @@ ${logs}`,
     }).catch((e) => console.log('[ITERATE]', '触发异常:', e?.message || e))
   }
 
+  async function resetLogCursor () {
+    const file = currentLogPath()
+    if (!file) {
+      console.log('[ITERATE]', '没有找到日志文件，无法重置光标')
+      return
+    }
+    try {
+      const stat = await fs.promises.stat(file)
+      ctrl.lastLogFile = file
+      ctrl.lastLogOffset = stat.size
+      ctrl.persistDirty = true
+      savePersistent()
+      console.log('[ITERATE]', '日志游标已移动到当前末尾:', path.basename(file), 'size=', stat.size)
+    } catch (e) {
+      console.log('[ITERATE]', '重置游标失败:', e?.message || e)
+    }
+  }
+
   function handleCli (payload) {
     try {
       if (!payload || payload.cmd !== 'iterate') return
@@ -568,6 +657,10 @@ ${logs}`,
         console.log('[ITERATE]', '已设置新的冷却 =', fmtMs(val))
         return
       }
+      if (cmd === 'reset') {
+        resetLogCursor().catch((e) => console.log('[ITERATE]', '重置异常:', e?.message || e))
+        return
+      }
       console.log('[ITERATE]', '未知子命令，支持: status|interval <值>|run|cooldown <值>')
     } catch (e) {
       console.log('[ITERATE]', '命令处理异常:', e?.message || e)
@@ -575,7 +668,10 @@ ${logs}`,
   }
 
   on && on('cli', handleCli)
-  registerCleanup && registerCleanup(() => { try { bot.off('cli', handleCli) } catch {} })
+  registerCleanup && registerCleanup(() => {
+    try { bot.off('cli', handleCli) } catch {}
+    try { savePersistent() } catch {}
+  })
 
   registerCleanup && registerCleanup(() => {
     if (hourlyTimer) clearTimeout(hourlyTimer)
@@ -585,6 +681,7 @@ ${logs}`,
   on && on('end', () => {
     if (hourlyTimer) clearTimeout(hourlyTimer)
     hourlyTimer = null
+    try { savePersistent() } catch {}
   })
 }
 
