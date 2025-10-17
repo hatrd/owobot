@@ -384,6 +384,9 @@ function activate (botInstance, options = {}) {
   // Feature: runtime log control via chat
   try { require('./log-control').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('log') }) } catch (e) { coreLog.warn('log-control install error:', e?.message || e) }
 
+  // Feature: automated log analysis + iteration
+  try { require('./auto-iterate').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('iterate') }) } catch (e) { coreLog.warn('auto-iterate install error:', e?.message || e) }
+
   // Feature: auto-counterattack with cute chat on getting hurt
   try { require('./auto-counter').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('pvp') }) } catch (e) { coreLog.warn('auto-counter install error:', e?.message || e) }
 

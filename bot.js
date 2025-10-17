@@ -2,6 +2,7 @@ const mineflayer = require('mineflayer')
 const readline = require('readline')
 const fs = require('fs')
 const path = require('path')
+const fileLogger = require('./bot_impl/file-logger')
 
 // Simple argv parser
 function parseArgv () {
@@ -20,6 +21,11 @@ function parseArgv () {
 }
 
 const argv = parseArgv()
+
+const fileLog = fileLogger.install()
+if (fileLog && fileLog.enabled && fileLog.path) {
+  console.log('[LOGFILE] Writing logs to', fileLog.path)
+}
 
 function parseBool (v, defTrue = true) {
   const s = String(v ?? (defTrue ? '1' : '0')).toLowerCase()

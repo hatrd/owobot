@@ -4,7 +4,7 @@ Mineflayer bot with hot reload and optional AI chat.
 
 ## Setup
 - Install: `npm install`
-- Server env (optional): `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD`, `MC_DEBUG` (default 1), `MC_GREET` (default 1)
+- Server env (optional): `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD`, `MC_DEBUG` (default 1), `MC_GREET` (default 1), `MC_LOG_DIR` (default `./logs`), `MC_LOG_FILE` (custom path or `off`)
 - AI env (optional): `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_PATH`, `DEEPSEEK_MODEL`
 
 ## Run
@@ -17,6 +17,11 @@ Mineflayer bot with hot reload and optional AI chat.
 - Set server: `MC_HOST=localhost MC_PORT=25565 npm start` or `npm start -- --host localhost --port 25565`
 - Auth: `MC_AUTH=offline|microsoft` (use `MC_PASSWORD` if needed)
 - Reduce logs: `MC_DEBUG=0 npm start`
+
+### File Logging
+- Default path: `logs/bot-YYYY-MM-DD.log` (created automatically).
+- Configure directory: set `MC_LOG_DIR=/path/to/dir`.
+- Override filename or disable: set `MC_LOG_FILE=/path/to/file.log` or `MC_LOG_FILE=off`.
 
 ### AI Reply Size
 - Increase model output tokens: `.ai budget maxtokens 512`

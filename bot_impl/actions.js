@@ -922,7 +922,19 @@ function install (bot, { log, on, registerCleanup }) {
     })()
     // Special: drop all inventory items when all=true (consistent interface, still one tool)
     if ((!arr || !arr.length) && (args.all === true || String(args.all).toLowerCase() === 'true')) {
+      const equipSlots = [45, 5, 6, 7, 8]
+      const slots = bot.inventory?.slots || []
+      for (const idx of equipSlots) {
+        const it = slots[idx]
+        if (it) {
+          const count = it.count != null ? it.count : 1
+          await dropItemObject(it, count)
+        }
+      }
       const inv = bot.inventory?.items() || []
+      if (bot.heldItem) inv.push(bot.heldItem)
+      const off = bot.inventory?.slots?.[45]
+      if (off) inv.push(off)
       const uniq = new Map()
       for (const it of inv) { if (it && it.name) uniq.set(it.name, true) }
       const exclude = new Set((Array.isArray(args.exclude) ? args.exclude : []).map(n => String(n).toLowerCase()))
@@ -940,6 +952,15 @@ function install (bot, { log, on, registerCleanup }) {
       const key = String(slot).toLowerCase()
       if (key === 'hand' || key === 'main' || key === 'mainhand') return bot.heldItem || null
       if (key === 'offhand' || key === 'off-hand' || key === 'off_hand') return bot.inventory?.slots?.[45] || null
+      const equipAlias = {
+        head: 5, helmet: 5,
+        chest: 6, torso: 6, body: 6,
+        legs: 7, pants: 7,
+        feet: 8, boots: 8
+      }
+      if (equipAlias[key] != null) {
+        return bot.inventory?.slots?.[equipAlias[key]] || null
+      }
       const idx = parseInt(String(slot), 10)
       if (Number.isFinite(idx) && bot.inventory?.slots) return bot.inventory.slots[idx] || null
       return null
@@ -983,8 +1004,9 @@ function install (bot, { log, on, registerCleanup }) {
         const it = itemFromSlot(spec.slot)
         if (!it) { summary.push(`${spec.slot}:x0`); continue }
         const n = cnt != null ? Math.min(cnt, it.count || 0) : (it.count || 0)
-        if (n > 0) await bot.toss(it.type, null, n)
-        summary.push(`${it.name}x${n}`)
+        const dropped = await dropItemObject(it, n)
+        const label = it.name ? normalizeName(it.name) : String(spec.slot)
+        summary.push(`${label}x${dropped}`)
         continue
       }
       const nm = spec?.name
@@ -2922,7 +2944,27 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel }
+  async function iterate_feedback (args = {}) {
+    const iter = bot.autoIter
+    if (!iter || typeof iter.trigger !== 'function') return fail('未启用迭代模块')
+    const force = args.force === true || String(args.force || '').toLowerCase() === 'true'
+    const reason = args.reason ? String(args.reason) : 'deepseek'
+    const res = await iter.trigger('deepseek', { force, reason })
+    if (!res || !res.ok) {
+      if (res && res.reason === 'cooldown' && res.until) {
+        const waitMs = Math.max(0, res.until - Date.now())
+        const waitMin = Math.ceil(waitMs / 60000)
+        return fail(`冷却中，再等${waitMin}分钟哦`)
+      }
+      if (res?.reason === 'codex_missing') return fail('未找到 codex 命令，无法自动迭代')
+      if (res?.reason === 'codex_home_unwritable') return fail('无法创建 codex 工作目录')
+      return fail(res?.detail || res?.reason || '触发失败')
+    }
+    const msg = res.changed ? '已触发代码迭代（有更新）' : '已触发代码迭代（无更新）'
+    return ok(msg, { summary: res.summary || '', broadcast: res.broadcast || null })
+  }
+
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, iterate_feedback }
 
   async function run (tool, args) {
     const fn = registry[tool]

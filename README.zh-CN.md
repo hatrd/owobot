@@ -4,7 +4,7 @@
 
 ## 安装
 - 安装依赖：`npm install`
-- 服务器环境变量（可选）：`MC_HOST`、`MC_PORT`、`MC_USERNAME`、`MC_AUTH`、`MC_PASSWORD`、`MC_DEBUG(默认1)`、`MC_GREET(默认1)`
+- 服务器环境变量（可选）：`MC_HOST`、`MC_PORT`、`MC_USERNAME`、`MC_AUTH`、`MC_PASSWORD`、`MC_DEBUG(默认1)`、`MC_GREET(默认1)`、`MC_LOG_DIR`(默认 `./logs`)、`MC_LOG_FILE`（自定义路径或 `off`）
 - AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`、`DEEPSEEK_MODEL`
 
 ## 运行
@@ -17,6 +17,11 @@
 - 设置服务器：`MC_HOST=localhost MC_PORT=25565 npm start` 或 `npm start -- --host localhost --port 25565`
 - 登录方式：`MC_AUTH=offline|microsoft`（如需 `MC_PASSWORD`）
 - 降低日志：`MC_DEBUG=0 npm start`
+
+### 文件日志
+- 默认日志文件：`logs/bot-YYYY-MM-DD.log`（自动创建目录）。
+- 自定义目录：设置 `MC_LOG_DIR=/path/to/dir`。
+- 自定义文件名或关闭：设置 `MC_LOG_FILE=/path/to/file.log`，或 `MC_LOG_FILE=off` 关闭文件日志。
 
 ### AI 回复长度
 - 增大模型输出 token：`.ai budget maxtokens 512`
