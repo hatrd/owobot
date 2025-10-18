@@ -43,7 +43,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   state.sleepingInProgress = state.sleepingInProgress || false
   state.sleepNoBedLastNotified = state.sleepNoBedLastNotified || 0
   state.sleepLastStart = state.sleepLastStart || 0
-  state.sleepCooldownUntil = state.sleepCooldownUntil || 0
+  const rawCooldown = Number(state.sleepCooldownUntil)
+  state.sleepCooldownUntil = Number.isFinite(rawCooldown) && rawCooldown > 0 ? rawCooldown : 0
   let timer = null
   let lastAttemptAt = 0
   const COOLDOWN_MS = 3000
@@ -62,9 +63,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function trySleepNearby () {
     try { if (state?.backInProgress || state?.externalBusy) return } catch {}
+    const dimension = String(bot?.game?.dimension || '')
+    if (dimension && dimension !== 'minecraft:overworld' && dimension !== 'overworld') {
+      if (state.sleepCooldownUntil) state.sleepCooldownUntil = 0
+      return
+    }
     const tod = bot.time?.timeOfDay
     const night = isNight(bot)
     const now = Date.now()
+    if (!Number.isFinite(state.sleepCooldownUntil)) state.sleepCooldownUntil = 0
     dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)
     if (!night) {
       if (state.sleepCooldownUntil && state.sleepCooldownUntil < now) state.sleepCooldownUntil = 0
