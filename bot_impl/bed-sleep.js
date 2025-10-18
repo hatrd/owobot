@@ -45,6 +45,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   state.sleepLastStart = state.sleepLastStart || 0
   const rawCooldown = Number(state.sleepCooldownUntil)
   state.sleepCooldownUntil = Number.isFinite(rawCooldown) && rawCooldown > 0 ? rawCooldown : 0
+  state.sleepFailure = state.sleepFailure || { reason: null, count: 0, lastAt: 0 }
   let timer = null
   let lastAttemptAt = 0
   let inFlight = false
@@ -53,6 +54,28 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const DISTURBED_RETRY_COOLDOWN_MS = 15000
   const MIN_SLEEP_DURATION_MS = 4000
   const POST_WAKE_COOLDOWN_MS = 5000
+  const FAILURE_DECAY_MS = 5 * 60 * 1000
+  const FAILURE_BASE = {
+    occupied: 10000,
+    too_far: 8000,
+    unsafe: 15000,
+    not_night: 12000,
+    generic: 6000
+  }
+  const FAILURE_MAX = {
+    occupied: 30000,
+    too_far: 20000,
+    unsafe: 60000,
+    not_night: 45000,
+    generic: 20000
+  }
+  const FAILURE_CAP = {
+    occupied: 3,
+    too_far: 2,
+    unsafe: 4,
+    not_night: 3,
+    generic: 2
+  }
 
   function scheduleFailureCooldown (durationMs, label) {
     if (!durationMs || durationMs <= 0) return
@@ -66,27 +89,47 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
 
+  function classifyFailure (message) {
+    if (!message) return 'generic'
+    const lower = message.toLowerCase()
+    if (lower.includes('occupied')) return 'occupied'
+    if (lower.includes('too far') || lower.includes('far away')) return 'too_far'
+    if (lower.includes('not safe') || lower.includes('monsters')) return 'unsafe'
+    if (lower.includes('not night') || lower.includes('only sleep at night') || lower.includes('you may not rest now')) return 'not_night'
+    return 'generic'
+  }
+
+  function nextFailureCooldown (reason) {
+    if (!reason) return 0
+    const base = FAILURE_BASE[reason] || FAILURE_BASE.generic
+    const cap = FAILURE_CAP[reason] || FAILURE_CAP.generic
+    const max = FAILURE_MAX[reason] || FAILURE_MAX.generic
+    const tracker = state.sleepFailure = state.sleepFailure || { reason: null, count: 0, lastAt: 0 }
+    const now = Date.now()
+    if (tracker.reason !== reason || !tracker.lastAt || (now - tracker.lastAt) > FAILURE_DECAY_MS) {
+      tracker.reason = reason
+      tracker.count = 1
+    } else {
+      tracker.count = Math.min((tracker.count || 1) + 1, cap)
+    }
+    tracker.lastAt = now
+    const duration = base * (tracker.count || 1)
+    return Math.min(duration, max)
+  }
+
+  function resetFailureTracker () {
+    if (!state.sleepFailure) state.sleepFailure = { reason: null, count: 0, lastAt: 0 }
+    state.sleepFailure.reason = null
+    state.sleepFailure.count = 0
+    state.sleepFailure.lastAt = 0
+  }
+
   function applyFailureCooldown (err) {
     const message = typeof err?.message === 'string' ? err.message : ''
-    if (!message) return
-    const lower = message.toLowerCase()
-    if (lower.includes('occupied')) {
-      scheduleFailureCooldown(10000, 'occupied')
-      return
-    }
-    if (lower.includes('too far') || lower.includes('far away')) {
-      scheduleFailureCooldown(8000, 'too_far')
-      return
-    }
-    if (lower.includes('not safe') || lower.includes('monsters')) {
-      scheduleFailureCooldown(15000, 'unsafe')
-      return
-    }
-    if (lower.includes('not night') || lower.includes('only sleep at night') || lower.includes('you may not rest now')) {
-      scheduleFailureCooldown(12000, 'not_night')
-      return
-    }
-    scheduleFailureCooldown(6000, 'generic')
+    const reason = classifyFailure(message)
+    if (!reason) return
+    const duration = nextFailureCooldown(reason)
+    scheduleFailureCooldown(duration, reason)
   }
 
   function hasOtherPlayersNearby () {
@@ -144,6 +187,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try {
         await bot.sleep(bed)
         dlog && dlog('sleep: success at', bed.position)
+        resetFailureTracker()
       } catch (err) {
         dlog && dlog('sleep: failed', err?.message || String(err))
         applyFailureCooldown(err)
@@ -167,6 +211,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     state.sleepNoBedLastNotified = 0
     state.sleepLastStart = Date.now()
     state.sleepingInProgress = true
+    resetFailureTracker()
     if (log?.info) log.info('sleep: entered')
     else dlog && dlog('sleep: entered')
   })
@@ -199,6 +244,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { if (timer) clearInterval(timer) } catch {}
     timer = null
     try { state.sleepingInProgress = false } catch {}
+    resetFailureTracker()
     if (log?.info) log.info('sleep: watcher stopped')
     else dlog && dlog('sleep: watcher stopped')
   })
@@ -215,6 +261,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { if (timer) clearInterval(timer) } catch {}
     timer = null
     try { state.sleepingInProgress = false } catch {}
+    resetFailureTracker()
   })
 }
 
