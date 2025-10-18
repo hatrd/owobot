@@ -1,6 +1,8 @@
 // Skill: write_text — write block letters on the ground using inventory blocks
 // Args: { text, item?, spacing?=1, size?=1 }
 
+const { assertCanEquipHand, isMainHandLocked } = require('../hand-lock')
+
 module.exports = function writeTextFactory ({ bot, args, log }) {
   const text = String(args.text || '').toUpperCase()
   const spacing = Math.max(1, parseInt(args.spacing || '1', 10))
@@ -30,6 +32,8 @@ module.exports = function writeTextFactory ({ bot, args, log }) {
     const inv = invItems()
     const it = inv.find(x => String(x?.name||'').toLowerCase() === n) || inv.find(x => String(x?.name||'').toLowerCase().includes(n))
     if (!it) throw new Error('材料不足')
+    if (isMainHandLocked(bot, it.name)) throw new Error('主手已锁定，无法切换方块')
+    try { assertCanEquipHand(bot, it.name) } catch (e) { if (e?.code === 'MAIN_HAND_LOCKED') throw new Error('主手已锁定，无法切换方块'); throw e }
     await bot.equip(it, 'hand')
     return it
   }

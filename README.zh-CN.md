@@ -95,7 +95,7 @@
 ## CLI 命令
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]`（别名 `.plant`；如放置按钮会默认使用 `on=solid` 且间距为 1）
-- `.spawnproof [item=name] [on=solid|block,...] [radius=N] [max=N] [spacing=N]` — 默认使用磨制黑石按钮并针对任意实体方块铺设，便于快速做防刷怪地毯
+- `.spawnproof [radius=N] [item=name] [on=solid|block,...] [max=N] [spacing=N] [collect=true|false]` — 默认使用磨制黑石按钮并针对任意实体方块铺设，便于快速做防刷怪地毯；纯数字参数会视为半径，单独写 `collect` 会开启回收
 - `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
 - `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`

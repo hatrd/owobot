@@ -25,6 +25,8 @@ function install (bot, { on, registerCleanup, log }) {
       on: { solid: true }
     }
     let itemPositionalSet = false
+    let itemExplicit = false
+    let radiusExplicit = false
 
     for (const raw of (args || [])) {
       const token = String(raw || '').trim()
@@ -36,12 +38,17 @@ function install (bot, { on, registerCleanup, log }) {
         switch (key) {
           case 'item':
           case 'what':
-            if (value) out.item = value.toLowerCase()
+            if (value) {
+              out.item = value.toLowerCase()
+              itemPositionalSet = true
+              itemExplicit = true
+            }
             break
           case 'radius': {
             const r = parsePositiveInt(value || '8', out.area.radius || 8, 1)
             ensureArea(out)
             out.area.radius = r
+            radiusExplicit = true
             break
           }
           case 'max': {
@@ -91,8 +98,33 @@ function install (bot, { on, registerCleanup, log }) {
         continue
       }
 
-      if (!itemPositionalSet) {
-        out.item = token.toLowerCase()
+      const lower = token.toLowerCase()
+      if (!radiusExplicit && /^\d+$/.test(lower)) {
+        const r = parsePositiveInt(lower, out.area.radius || 8, 1)
+        ensureArea(out)
+        out.area.radius = r
+        radiusExplicit = true
+        continue
+      }
+      if (lower === 'collect') {
+        out.collect = true
+        continue
+      }
+      if (lower === 'nocollect' || lower === 'no-collect') {
+        out.collect = false
+        continue
+      }
+      if (lower === 'solid') {
+        if (!out.on || typeof out.on !== 'object') out.on = {}
+        out.on.solid = true
+        continue
+      }
+      if (lower === 'nosolid' || lower === 'no-solid' || lower === '!solid') {
+        if (out.on && typeof out.on === 'object') delete out.on.solid
+        continue
+      }
+      if (!itemPositionalSet && !itemExplicit) {
+        out.item = lower
         itemPositionalSet = true
         continue
       }
@@ -112,8 +144,12 @@ function install (bot, { on, registerCleanup, log }) {
       const args = parseArgs(payload?.args || [])
       const actions = require('./actions').install(bot, { log: logger })
       try { bot.emit('external:begin', { source: 'cli', tool: 'place_blocks' }) } catch {}
-      const result = await actions.run('place_blocks', args)
-      try { bot.emit('external:end', { source: 'cli', tool: 'place_blocks' }) } catch {}
+      let result
+      try {
+        result = await actions.run('place_blocks', args)
+      } finally {
+        try { bot.emit('external:end', { source: 'cli', tool: 'place_blocks' }) } catch {}
+      }
       console.log('[SPAWNPROOF]', result.ok ? 'ok' : 'fail', result.msg)
     } catch (e) {
       console.log('[SPAWNPROOF] error:', e?.message || e)

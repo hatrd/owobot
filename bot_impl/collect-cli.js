@@ -39,8 +39,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const args = parseArgs(payload.args || [])
       const actions = require('./actions').install(bot, { log })
       try { bot.emit('external:begin', { source: 'cli', tool: 'collect' }) } catch {}
-      const r = await actions.run('collect', args)
-      try { bot.emit('external:end', { source: 'cli', tool: 'collect' }) } catch {}
+      let r
+      try {
+        r = await actions.run('collect', args)
+      } finally {
+        try { bot.emit('external:end', { source: 'cli', tool: 'collect' }) } catch {}
+      }
       console.log('[COLLECT]', r.ok ? 'ok' : 'fail', r.msg)
     } catch (e) {
       console.log('[COLLECT] error:', e?.message || e)

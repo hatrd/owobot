@@ -7,6 +7,8 @@ let guardTarget = null
 let cullInterval = null
 let miningAbort = false
 
+const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
+
 function install (bot, { log, on, registerCleanup }) {
   const pvp = require('./pvp')
   const observer = require('./agent/observer')
@@ -235,7 +237,19 @@ function install (bot, { log, on, registerCleanup }) {
     function now () { return Date.now() }
     function invFind (nm) { try { const s = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === s) || null } catch { return null } }
     function invCount (nm) { try { const s = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).filter(it => String(it.name||'').toLowerCase() === s).reduce((a,b)=>a+(b.count||0),0) } catch { return 0 } }
-    async function ensureItemEquipped (nm) { try { const it = invFind(nm); if (!it) return false; if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === nm) return true; await bot.equip(it, 'hand'); return true } catch { return false } }
+    async function ensureItemEquipped (nm) {
+      try {
+        const it = invFind(nm)
+        if (!it) return false
+        if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === nm) return true
+        assertCanEquipHand(bot, it.name)
+        await bot.equip(it, 'hand')
+        return true
+      } catch (e) {
+        if (e?.code === 'MAIN_HAND_LOCKED') return false
+        return false
+      }
+    }
     function isTargetSpecies (e) {
       try {
         if (!e || !e.position) return false
@@ -405,6 +419,7 @@ function install (bot, { log, on, registerCleanup }) {
         const seed = invFind(crop.item)
         if (!seed) return false
         // Equip seed and place on top face of soil
+        try { assertCanEquipHand(bot, seed.name) } catch (e) { if (e?.code === 'MAIN_HAND_LOCKED') return false; throw e }
         await bot.equip(seed, 'hand')
         try { await bot.lookAt(soil.position.offset(0.5, 0.5, 0.5), true) } catch {}
         await bot.placeBlock(soil, require('vec3').Vec3(0, 1, 0))
@@ -878,7 +893,16 @@ function install (bot, { log, on, registerCleanup }) {
   }
 
   async function ensureBestPickaxe () {
-    try { const it = findBestPickaxe(); if (it) { await bot.equip(it, 'hand'); return true } } catch {}
+    try {
+      const it = findBestPickaxe()
+      if (it) {
+        assertCanEquipHand(bot, it.name)
+        await bot.equip(it, 'hand')
+        return true
+      }
+    } catch (e) {
+      if (e?.code === 'MAIN_HAND_LOCKED') return false
+    }
     return false
   }
 
@@ -896,13 +920,20 @@ function install (bot, { log, on, registerCleanup }) {
       feet: 'feet', boots: 'feet'
     }
     const destination = map[String(dest).toLowerCase()] || 'hand'
-    await bot.equip(item, destination)
+    try {
+      if (destination === 'hand') assertCanEquipHand(bot, item.name)
+      await bot.equip(item, destination)
+    } catch (e) {
+      if (e?.code === 'MAIN_HAND_LOCKED') return fail('主手被锁定，无法切换物品')
+      throw e
+    }
     return ok(`已装备 ${item.name} -> ${destination}`)
   }
 
   async function ensureItemEquipped (name) {
     const item = resolveItemByName(name)
     if (!item) throw new Error('背包没有该物品')
+    assertCanEquipHand(bot, item.name)
     await bot.equip(item, 'hand')
     return true
   }
@@ -1546,7 +1577,20 @@ function install (bot, { log, on, registerCleanup }) {
     function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
     function invGet (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === n) || null } catch { return null } }
     function pickRangedWeapon () { if (!invHas('arrow')) return null; if (invHas('crossbow')) return 'crossbow'; if (invHas('bow')) return 'bow'; return null }
-    async function ensureWeaponEquipped (weapon) { try { if (bot.state && bot.state.holdItemLock) return false; const it = invGet(weapon); if (!it) return false; if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === weapon) return true; await bot.equip(it, 'hand'); return true } catch { return false } }
+    async function ensureWeaponEquipped (weapon) {
+      try {
+        if (isMainHandLocked(bot)) return false
+        const it = invGet(weapon)
+        if (!it) return false
+        if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === weapon) return true
+        assertCanEquipHand(bot, it.name)
+        await bot.equip(it, 'hand')
+        return true
+      } catch (e) {
+        if (e?.code === 'MAIN_HAND_LOCKED') return false
+        return false
+      }
+    }
 
     const weapon = pickRangedWeapon()
     if (!weapon) return fail('缺少弓箭（需要弓/弩和箭）')
@@ -1944,14 +1988,17 @@ function install (bot, { log, on, registerCleanup }) {
     function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false; rangedStickUntil = 0; unlockHand() }
     async function ensureWeaponEquipped (weapon) {
       try {
-        // Respect main-hand lock to avoid stealing hands from tasks (e.g., mining)
-        try { if (bot.state && bot.state.holdItemLock) return false } catch {}
+        if (isMainHandLocked(bot)) return false
         const it = invGet(weapon)
         if (!it) return false
-        if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === weapon) return true
+        if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === weapon) return true
+        assertCanEquipHand(bot, it.name)
         await bot.equip(it, 'hand')
         return true
-      } catch { return false }
+      } catch (e) {
+        if (e?.code === 'MAIN_HAND_LOCKED') return false
+        return false
+      }
     }
     const anchor = bot.entity?.position?.clone?.() || null
 
@@ -2159,13 +2206,17 @@ function install (bot, { log, on, registerCleanup }) {
     function stopRanged () { try { if (rangedActive && bot.hawkEye) bot.hawkEye.stop() } catch {} ; rangedActive = false; rangedStickUntil = 0; unlockHand() }
     async function ensureWeaponEquipped (weapon) {
       try {
-        if (bot.state && bot.state.holdItemLock) return false
+        if (isMainHandLocked(bot)) return false
         const it = invGet(weapon)
         if (!it) return false
-        if (bot.heldItem && String(bot.heldItem.name||'').toLowerCase() === weapon) return true
+        if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === weapon) return true
+        assertCanEquipHand(bot, it.name)
         await bot.equip(it, 'hand')
         return true
-      } catch { return false }
+      } catch (e) {
+        if (e?.code === 'MAIN_HAND_LOCKED') return false
+        return false
+      }
     }
 
     function mobName (e) { try { const raw = e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || ''; return String(raw).replace(/\u00a7./g, '').toLowerCase() } catch { return '' } }

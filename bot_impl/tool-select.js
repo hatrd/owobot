@@ -2,6 +2,8 @@
 
 function getMcData (bot) { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
 
+const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
+
 function listInventoryWithHands (bot) {
   const inv = bot.inventory?.items() || []
   const extra = []
@@ -95,10 +97,11 @@ async function ensureBestToolForBlock (bot, block) {
     if (!best) return false
     const cur = bot.heldItem
     if (cur && cur.type === best.type) return true
+    if (isMainHandLocked(bot, best.name)) return false
+    try { assertCanEquipHand(bot, best.name) } catch (e) { if (e?.code === 'MAIN_HAND_LOCKED') return false; throw e }
     await bot.equip(best, 'hand')
     return true
   } catch { return false }
 }
 
 module.exports = { selectBestToolForBlock, ensureBestToolForBlock }
-

@@ -89,6 +89,7 @@ async function hardReset (reason) {
     // Clear shared flags that could block behaviors
     if (state) {
       state.externalBusy = false
+      state.externalBusyCount = 0
       state.holdItemLock = null
       state.autoLookSuspended = false
       state.currentTask = null
@@ -329,6 +330,7 @@ function activate (botInstance, options = {}) {
   }
 
   if (!Array.isArray(state.cleanups)) state.cleanups = []
+  if (!Number.isFinite(state.externalBusyCount) || state.externalBusyCount < 0) state.externalBusyCount = 0
   // Ensure greetingEnabled is initialized even when reusing shared state from loader
   if (typeof state.greetingEnabled === 'undefined') state.greetingEnabled = GREET
   // Propagate login password from loader config or env into shared state
@@ -349,11 +351,17 @@ function activate (botInstance, options = {}) {
     try {
       const src = String(info?.source || '').toLowerCase()
       const source = (src === 'chat' || src === 'cli') ? 'player' : 'auto'
+      const count = Number.isFinite(state.externalBusyCount) ? state.externalBusyCount : 0
+      state.externalBusyCount = count + 1
+      state.externalBusy = true
       state.currentTask = { name: String(info?.tool || info?.name || 'unknown'), source, startedAt: Date.now() }
     } catch {}
   })
   on('external:end', (info) => {
     try {
+      const count = Number.isFinite(state.externalBusyCount) ? state.externalBusyCount : 0
+      state.externalBusyCount = count > 0 ? count - 1 : 0
+      if (state.externalBusyCount === 0) state.externalBusy = false
       const endTool = String(info?.tool || '').toLowerCase()
       const cur = state.currentTask && String(state.currentTask.name || '').toLowerCase()
       // Only clear if names match or no current task; avoid clearing tasks started by another module (e.g., skills)

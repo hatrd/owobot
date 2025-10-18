@@ -57,8 +57,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (!args.item) { console.log('[PLACE] usage: .place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]'); return }
       const actions = require('./actions').install(bot, { log })
       try { bot.emit('external:begin', { source: 'cli', tool: 'place_blocks' }) } catch {}
-      const r = await actions.run('place_blocks', args)
-      try { bot.emit('external:end', { source: 'cli', tool: 'place_blocks' }) } catch {}
+      let r
+      try {
+        r = await actions.run('place_blocks', args)
+      } finally {
+        try { bot.emit('external:end', { source: 'cli', tool: 'place_blocks' }) } catch {}
+      }
       console.log('[PLACE]', r.ok ? 'ok' : 'fail', r.msg)
     } catch (e) {
       console.log('[PLACE] error:', e?.message || e)

@@ -100,7 +100,7 @@ Default digging policy (simplified)
 ## CLI Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`; buttons default to `on=solid`, `spacing=1`)
-- `.spawnproof [item=name] [on=solid|block,...] [radius=N] [max=N] [spacing=N]` — defaults to polished blackstone buttons on any solid floor for rapid spawn-proofing
+- `.spawnproof [radius=N] [item=name] [on=solid|block,...] [max=N] [spacing=N] [collect=true|false]` — defaults to polished blackstone buttons on any solid floor for rapid spawn-proofing; bare numbers set radius and standalone `collect` toggles pickup
 - `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
 - `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`

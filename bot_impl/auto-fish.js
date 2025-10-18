@@ -4,6 +4,7 @@
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[FISH]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[FISH]', ...a) }
   const { Vec3 } = require('vec3')
+  const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
   const WATER_ADJ_OFFSETS = [new Vec3(0, 0, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)]
   const MAX_WATER_SCAN_DEPTH = 3
 
@@ -173,14 +174,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       // already in hand
       if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === 'fishing_rod') return true
+      if (isMainHandLocked(bot, 'fishing_rod')) return false
       // offhand
       const off = bot.inventory?.slots?.[45]
       if (off && String(off.name || '').toLowerCase() === 'fishing_rod') {
-        try { await bot.equip(off, 'hand'); if (cfg.debug) L.info('equip <- offhand') ; return true } catch {}
+        try {
+          assertCanEquipHand(bot, off.name)
+          await bot.equip(off, 'hand')
+          if (cfg.debug) L.info('equip <- offhand')
+          return true
+        } catch (e) {
+          if (cfg.debug && e?.code === 'MAIN_HAND_LOCKED') L.info('equip blocked by lock')
+        }
       }
       // inventory (any slot)
       const it = (bot.inventory?.items() || []).find(x => String(x?.name || '').toLowerCase() === 'fishing_rod')
       if (!it) return false
+      try { assertCanEquipHand(bot, it.name) } catch (e) { if (e?.code === 'MAIN_HAND_LOCKED') return false; throw e }
       await bot.equip(it, 'hand')
       if (cfg.debug) L.info('equip -> fishing_rod')
       return true

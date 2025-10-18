@@ -35,11 +35,20 @@ function findBestWeapon (bot) {
   return null
 }
 
+const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
+
 async function ensureBestWeapon (bot) {
-  try { if (bot.state && bot.state.holdItemLock) return false } catch {}
+  if (isMainHandLocked(bot)) return false
   const best = findBestWeapon(bot)
   if (!best) return false
-  try { await bot.equip(best, 'hand'); return true } catch { return false }
+  try {
+    assertCanEquipHand(bot, best.name)
+    await bot.equip(best, 'hand')
+    return true
+  } catch (e) {
+    if (e?.code === 'MAIN_HAND_LOCKED') return false
+    return false
+  }
 }
 
 async function ensureShieldEquipped (bot) {
