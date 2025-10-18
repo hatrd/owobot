@@ -177,7 +177,7 @@ const reloadGatePath = resolveReloadGate()
 let gateWatcher = null
 let pendingReload = false
 const GATE_TRIGGER_DELAY_MS = 60
-const GATE_DUPLICATE_SUPPRESS_MS = 400
+const GATE_DUPLICATE_SUPPRESS_MS = 1500
 const GATE_SAME_MTIME_RETRY_MS = 1200
 let gateReloadTimer = null
 let lastGateReloadAt = 0
@@ -272,10 +272,11 @@ function watchReloadGate() {
       fs.promises.stat(reloadGatePath).then((stat) => {
         const mtimeMs = Number.isFinite(stat?.mtimeMs) ? stat.mtimeMs : (stat?.mtime instanceof Date ? stat.mtime.getTime() : NaN)
         if (!hadPending) {
+          if (lastGateReloadAt && now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) return
           if (Number.isFinite(lastGateMtimeMs) && Number.isFinite(mtimeMs)) {
             if (mtimeMs < lastGateMtimeMs - 1) return
             if (mtimeMs <= lastGateMtimeMs + 1 && now - lastGateReloadAt < GATE_SAME_MTIME_RETRY_MS) return
-          } else if (now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) {
+          } else if (!Number.isFinite(mtimeMs) && lastGateReloadAt && now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) {
             return
           }
         }
@@ -290,7 +291,7 @@ function watchReloadGate() {
         }
         scheduleGateReload()
       }).catch(() => {
-        if (!hadPending && now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) return
+        if (!hadPending && lastGateReloadAt && now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) return
         scheduleGateReload()
       })
     })

@@ -144,9 +144,34 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   async function touchReloadGate () {
+    const gate = path.resolve(process.cwd(), 'open_fire')
     try {
-      const gate = path.resolve(process.cwd(), 'open_fire')
-      await fs.promises.appendFile(gate, `${Date.now()}\n`)
+      let fh = null
+      try {
+        fh = await fs.promises.open(gate, 'a')
+      } catch (e) {
+        if (e?.code === 'ENOENT') {
+          await fs.promises.writeFile(gate, '')
+          fh = await fs.promises.open(gate, 'a')
+        } else {
+          throw e
+        }
+      } finally {
+        if (fh) {
+          try { await fh.close() } catch {}
+        }
+      }
+      const stamp = new Date()
+      try {
+        await fs.promises.utimes(gate, stamp, stamp)
+      } catch (e) {
+        if (e?.code === 'ENOENT') {
+          await fs.promises.writeFile(gate, '')
+          await fs.promises.utimes(gate, stamp, stamp)
+        } else {
+          await fs.promises.appendFile(gate, `${stamp.getTime()}\n`)
+        }
+      }
       logger.info('Touched reload gate to apply new code')
     } catch (e) {
       logger.warn('Failed to touch reload gate:', e?.message || e)
@@ -237,7 +262,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const stagedDiff = await runGitCommand(['diff', '--cached', '--quiet'])
     if (stagedDiff.code === 0) {
       logger.info('[iterate] no staged changes after filtering; skip auto commit')
-      await runGitCommand(['checkout', '--', 'open_fire'])
       return
     }
     if (stagedDiff.code !== 1) {
@@ -254,11 +278,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       logger.warn('[iterate] git commit failed:', commitRes.stderr || commitRes.stdout || commitRes.code)
       // Attempt to unstage to avoid locking future commits
       await runGitCommand(['reset', '--mixed', 'HEAD'])
-      await runGitCommand(['checkout', '--', 'open_fire'])
       return
     }
     logger.info('[iterate] auto commit created:', singleLine)
-    await runGitCommand(['checkout', '--', 'open_fire'])
   }
 
   function currentLogPath () {
