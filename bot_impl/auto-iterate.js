@@ -26,6 +26,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (typeof data.lastLogFile === 'string') ctrl.lastLogFile = data.lastLogFile
         if (Number.isFinite(data.lastLogOffset)) ctrl.lastLogOffset = data.lastLogOffset
         if (Array.isArray(data.history)) ctrl.history = data.history.slice(-10)
+        if (typeof data.codexSessionId === 'string') ctrl.codexSessionId = data.codexSessionId
       }
     } catch {}
   }
@@ -39,7 +40,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         version: 1,
         lastLogFile: ctrl.lastLogFile || null,
         lastLogOffset: ctrl.lastLogOffset || 0,
-        history: Array.isArray(ctrl.history) ? ctrl.history.slice(-20) : []
+        history: Array.isArray(ctrl.history) ? ctrl.history.slice(-20) : [],
+        codexSessionId: ctrl.codexSessionId || null
       }
       fs.writeFileSync(persistPath, JSON.stringify(payload, null, 2))
     } catch (e) {
@@ -72,6 +74,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (typeof ctrl.phase !== 'string') ctrl.phase = 'idle'
   if (!Array.isArray(ctrl.history)) ctrl.history = []
   if (typeof ctrl.persistDirty !== 'boolean') ctrl.persistDirty = false
+  if (typeof ctrl.codexSessionId !== 'string') ctrl.codexSessionId = null
 
   loadPersistent()
   function parseDurationMs (raw) {
@@ -244,8 +247,20 @@ ${logs}`,
     ].join('\n\n')
   }
 
-  async function runCodex ({ logChunk, reason }) {
-    const prompt = buildPrompt({ logChunk, reason })
+  function buildResumeMessage ({ failureDetail, attempt }) {
+    const clean = (failureDetail && String(failureDetail).trim()) || '(无错误输出)'
+    return [
+      `# 补丁失败反馈（第${attempt}次重试，最多3次）`,
+      '上一次生成的补丁在执行 `git apply` 时失败，标准错误输出如下：',
+      '```',
+      clean,
+      '```',
+      '请继续沿用既有上下文，基于上述失败原因修正方案，并再次输出完整 JSON 响应（字段格式与初始指令一致）。'
+    ].join('\n')
+  }
+
+  async function runCodex ({ logChunk, reason, resume }) {
+    const prompt = resume && resume.message ? resume.message : buildPrompt({ logChunk, reason })
     const okHome = await ensureDir(codexHome)
     if (!okHome) return { ok: false, reason: 'codex_home_unwritable' }
     let tmpDir = null
@@ -256,9 +271,25 @@ ${logs}`,
       return { ok: false, reason: 'tmpdir_failed' }
     }
     const outputPath = path.join(tmpDir, 'last-message.json')
-    const args = ['exec', '-', '--skip-git-repo-check', '--output-last-message', outputPath, '-c', 'task.max_iterations=1', '-c', 'sandbox_permissions=["disk-full-read-access"]', '-c', 'shell_environment_policy.inherit=all']
-    if (codexModel && codexModel.trim()) args.push('-m', codexModel.trim())
-    if (codexExtraArgs.length) args.push(...codexExtraArgs)
+    const sharedConfigArgs = ['-c', 'task.max_iterations=1', '-c', 'sandbox_permissions=["disk-full-read-access"]', '-c', 'shell_environment_policy.inherit=all']
+    const sharedModelArgs = []
+    if (codexModel && codexModel.trim()) sharedModelArgs.push('-m', codexModel.trim())
+    if (codexExtraArgs.length) sharedModelArgs.push(...codexExtraArgs)
+
+    const args = ['exec']
+    let resumeSessionId = null
+    if (resume) {
+      const hint = resume.hint || null
+      resumeSessionId = hint && hint.sessionId ? String(hint.sessionId).trim() : ''
+      if (!resumeSessionId) {
+        logger.warn('runCodex resume requested without session id')
+        return { ok: false, reason: 'resume_session_missing', detail: 'missing_session_id' }
+      }
+      args.push('resume')
+      args.push('--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs, resumeSessionId, '-')
+    } else {
+      args.push('--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs, '-')
+    }
 
     const env = { ...process.env, HOME: codexHome }
 
@@ -351,7 +382,15 @@ ${logs}`,
             patch: String(a.patch).trim()
           }))
           const notables = actions.filter(a => !a || a.kind !== 'patch')
-          finish({ ok: true, summary, broadcast, patches, notes, raw: parsed, otherActions: notables })
+          const sessionIdRaw = parsed.session_id || parsed.sessionId || (parsed.session && (parsed.session.id || parsed.session.session_id || parsed.session.sessionId)) || (parsed.metadata && (parsed.metadata.session_id || parsed.metadata.sessionId))
+          const sessionId = sessionIdRaw ? String(sessionIdRaw).trim() : null
+          const resumeHint = sessionId ? { sessionId } : null
+          if (resumeSessionId && sessionId && sessionId !== resumeSessionId) {
+            logger.warn('resume session mismatch:', resumeSessionId, sessionId)
+            finish({ ok: false, reason: 'resume_session_mismatch', detail: `expected ${resumeSessionId} got ${sessionId}` })
+            return
+          }
+          finish({ ok: true, summary, broadcast, patches, notes, raw: parsed, otherActions: notables, resumeHint })
         })().catch((err) => {
           logger.error('codex post-processing error:', err?.message || err)
           finish({ ok: false, reason: 'processing_error', detail: err?.message || String(err) })
@@ -421,6 +460,28 @@ ${logs}`,
       return info.lastOldStart || 1
     }
 
+    function readHunk (startIdx) {
+      const hunkLines = []
+      for (let j = startIdx; j < lines.length; j++) {
+        const hunkLine = lines[j]
+        if (!hunkLine) break
+        if (hunkLine.startsWith('diff --git ')) break
+        if (hunkLine.startsWith('@@')) break
+        if (hunkLine.startsWith('--- ') || hunkLine.startsWith('+++ ')) break
+        hunkLines.push(hunkLine)
+      }
+      let oldCount = 0
+      let newCount = 0
+      for (const hLine of hunkLines) {
+        const prefix = hLine[0]
+        if (prefix === '-') { oldCount++; continue }
+        if (prefix === '+') { newCount++; continue }
+        if (prefix === ' ') { oldCount++; newCount++; continue }
+        if (prefix === '\\') continue
+      }
+      return { hunkLines, oldCount, newCount }
+    }
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
       if (line.startsWith('--- ')) {
@@ -434,40 +495,25 @@ ${logs}`,
       }
       if (!line.startsWith('@@')) continue
       const trimmed = line.trim()
-      if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(trimmed)) {
-        const info = currentFile ? files.get(currentFile) : null
+      const { hunkLines, oldCount, newCount } = readHunk(i + 1)
+      const info = currentFile ? getFileInfo(currentFile, currentOldPath) : null
+      const metaMatch = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(trimmed)
+      if (metaMatch) {
+        const oldStart = parseInt(metaMatch[1] || '1', 10) || 1
+        const declaredOldCount = metaMatch[2] ? parseInt(metaMatch[2], 10) : 1
+        const newStart = parseInt(metaMatch[3] || '1', 10) || 1
+        const declaredNewCount = metaMatch[4] ? parseInt(metaMatch[4], 10) : 1
+        const suffix = metaMatch[5] || ''
         if (info) {
-          const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@$/.exec(trimmed)
-          if (m) {
-            const oldStart = parseInt(m[1] || '1', 10) || 1
-            const oldCount = parseInt(m[2] || m[1] || '0', 10) || 0
-            const newCount = parseInt(m[4] || m[3] || '0', 10) || 0
-            info.lastOldStart = oldStart
-            info.delta = (info.delta || 0) + (newCount - oldCount)
-          }
+          info.lastOldStart = oldStart
+          info.delta = (info.delta || 0) + (newCount - oldCount)
+        }
+        if (declaredOldCount !== oldCount || declaredNewCount !== newCount || !metaMatch[2] || !metaMatch[4]) {
+          lines[i] = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@${suffix}`
+          mutated = true
         }
         continue
       }
-      const hunkLines = []
-      let removed = 0
-      let added = 0
-      let context = 0
-      for (let j = i + 1; j < lines.length; j++) {
-        const hunkLine = lines[j]
-        if (!hunkLine) break
-        const prefix = hunkLine[0]
-        if (prefix === 'd' && hunkLine.startsWith('diff --git ')) break
-        if (prefix === '@' && hunkLine.startsWith('@@')) break
-        hunkLines.push(hunkLine)
-        if (prefix === ' ') { context++; continue }
-        if (prefix === '+') { added++; continue }
-        if (prefix === '-') { removed++; continue }
-        if (prefix === '\\') continue
-        break
-      }
-      const oldCount = context + removed
-      const newCount = context + added
-      const info = currentFile ? getFileInfo(currentFile, currentOldPath) : null
       let oldStart = oldCount > 0 ? 1 : 0
       if (info && oldCount > 0) {
         const guess = findOldStart(info, hunkLines)
@@ -504,7 +550,7 @@ ${logs}`,
           resolve({ ok: false, error: err?.message || String(err) })
         })
         proc.on('close', (code) => {
-          if (code === 0) resolve({ ok: true })
+          if (code === 0) resolve({ ok: true, normalized })
           else {
             logger.error('git apply failed:', stderr || `exit ${code}`)
             resolve({ ok: false, error: stderr || `exit ${code}` })
@@ -516,6 +562,54 @@ ${logs}`,
         resolve({ ok: false, error: e?.message || String(e) })
       }
     })
+  }
+
+  async function revertNormalizedPatch (normalizedPatch) {
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn('git', ['apply', '-R', '--whitespace=nowarn'], { cwd: process.cwd() })
+        let stderr = ''
+        proc.stdout.on('data', () => {})
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('error', (err) => {
+          logger.error('git apply -R error:', err?.message || err)
+          resolve({ ok: false, error: err?.message || String(err) })
+        })
+        proc.on('close', (code) => {
+          if (code === 0) resolve({ ok: true })
+          else {
+            logger.error('git apply -R failed:', stderr || `exit ${code}`)
+            resolve({ ok: false, error: stderr || `exit ${code}` })
+          }
+        })
+        proc.stdin.end(normalizedPatch)
+      } catch (e) {
+        logger.error('revertNormalizedPatch exception:', e?.message || e)
+        resolve({ ok: false, error: e?.message || String(e) })
+      }
+    })
+  }
+
+  async function applyPatchSet (patches) {
+    if (!patches || !patches.length) return { ok: true, changed: false }
+    const applied = []
+    for (const item of patches) {
+      ctrl.phase = 'apply_patch'
+      logger.info('[iterate] applying patch:', item.detail || '(no detail)')
+      const res = await applyPatch(item.patch)
+      if (!res.ok) {
+        const revertErrors = []
+        for (let i = applied.length - 1; i >= 0; i--) {
+          const revertRes = await revertNormalizedPatch(applied[i].normalized)
+          if (!revertRes.ok) revertErrors.push(revertRes.error || 'unknown')
+        }
+        let error = res.error || 'unknown'
+        if (revertErrors.length) error += ` | revert_failed: ${revertErrors.join('; ')}`
+        return { ok: false, error }
+      }
+      applied.push({ normalized: res.normalized })
+    }
+    return { ok: true, changed: applied.length > 0 }
   }
 
   async function runIteration (source, opts = {}) {
@@ -541,10 +635,31 @@ ${logs}`,
       const { text: logChunk } = await readLogSegment()
       ctrl.phase = 'codex'
       logger.info('[iterate] contacting codex…')
-      const codexRes = await runCodex({ logChunk, reason: reasonLabel })
+      const initialSession = typeof ctrl.codexSessionId === 'string' && ctrl.codexSessionId.trim() ? ctrl.codexSessionId.trim() : null
+      let sessionId = initialSession
+      const baseMessage = buildPrompt({ logChunk, reason: reasonLabel })
+      let codexRes
+      let codexAttempts = 0
+      while (true) {
+        codexAttempts++
+        const options = sessionId
+          ? { logChunk, reason: reasonLabel, resume: { message: baseMessage, hint: { sessionId } } }
+          : { logChunk, reason: reasonLabel }
+        codexRes = await runCodex(options)
+        if (!codexRes.ok && sessionId && (codexRes.reason === 'resume_session_missing' || codexRes.reason === 'resume_session_mismatch')) {
+          logger.warn('[iterate] stored Codex session unusable, resetting id:', sessionId, 'reason=', codexRes.reason)
+          sessionId = null
+          if (ctrl.codexSessionId) {
+            ctrl.codexSessionId = null
+            ctrl.persistDirty = true
+          }
+          if (codexAttempts < 3) continue
+        }
+        break
+      }
       if (!codexRes.ok) {
         ctrl.failureCount = (ctrl.failureCount || 0) + 1
-        ctrl.lastRunAt = now
+        ctrl.lastRunAt = Date.now()
         ctrl.lastReason = `${reasonLabel}:${codexRes.reason}`
         ctrl.phase = 'error'
         logger.warn('Iteration stopped:', codexRes.reason)
@@ -554,34 +669,97 @@ ${logs}`,
         ctrl.persistDirty = true
         return { ok: false, reason: codexRes.reason }
       }
-      ctrl.lastSummary = codexRes.summary || ''
-      ctrl.lastRunAt = now
-      ctrl.lastReason = reasonLabel
-      const patches = codexRes.patches || []
+      const returnedSession = codexRes.resumeHint && codexRes.resumeHint.sessionId ? String(codexRes.resumeHint.sessionId).trim() : null
+      if (returnedSession) sessionId = returnedSession
+      if (sessionId && sessionId !== ctrl.codexSessionId) {
+        ctrl.codexSessionId = sessionId
+        ctrl.persistDirty = true
+      }
+      let resumeAttempts = 0
       let changed = false
       let broadcastMsg = null
-      for (const item of patches) {
-        ctrl.phase = 'apply_patch'
-        logger.info('[iterate] applying patch:', item.detail || '(no detail)')
-        const res = await applyPatch(item.patch)
-        if (!res.ok) {
+      let finalSummary = codexRes.summary || ''
+      ctrl.lastSummary = finalSummary
+      ctrl.lastRunAt = Date.now()
+      ctrl.lastReason = reasonLabel
+      ctrl.persistDirty = true
+      while (true) {
+        const patchResult = await applyPatchSet(codexRes.patches || [])
+        if (patchResult.ok) {
+          changed = patchResult.changed
+          if (codexRes.broadcast && codexRes.broadcast.length) broadcastMsg = codexRes.broadcast
+          finalSummary = codexRes.summary || finalSummary
+          break
+        }
+        const failureDetail = patchResult.error || 'unknown'
+        if (resumeAttempts >= 3) {
           ctrl.failureCount = (ctrl.failureCount || 0) + 1
           ctrl.lastRunAt = Date.now()
           ctrl.lastReason = `${reasonLabel}:patch_failed`
           ctrl.phase = 'error'
           ctrl.history = ctrl.history || []
-          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'patch_failed', summary: String(res.error || ''), broadcast: null })
+          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'patch_failed', summary: String(failureDetail), broadcast: null })
           if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
           ctrl.persistDirty = true
-          return { ok: false, reason: 'patch_failed', detail: res.error }
+          return { ok: false, reason: 'patch_failed', detail: failureDetail }
         }
-        changed = true
+        resumeAttempts++
+        ctrl.phase = 'codex_resume'
+        logger.warn('[iterate] git apply failed; attempting resume', resumeAttempts, failureDetail)
+        if (!sessionId) {
+          ctrl.failureCount = (ctrl.failureCount || 0) + 1
+          ctrl.lastRunAt = Date.now()
+          ctrl.lastReason = `${reasonLabel}:resume_unavailable`
+          ctrl.phase = 'error'
+          ctrl.history = ctrl.history || []
+          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'patch_failed', summary: 'resume_unavailable_no_session_id', broadcast: null })
+          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+          ctrl.persistDirty = true
+          return { ok: false, reason: 'patch_failed', detail: `${failureDetail} | resume_unavailable` }
+        }
+        const resumeMessage = buildResumeMessage({ failureDetail, attempt: resumeAttempts })
+        const resumeRes = await runCodex({ reason: reasonLabel, resume: { message: resumeMessage, hint: { sessionId } } })
+        if (!resumeRes.ok) {
+          ctrl.failureCount = (ctrl.failureCount || 0) + 1
+          ctrl.lastRunAt = Date.now()
+          ctrl.lastReason = `${reasonLabel}:resume_failed`
+          ctrl.phase = 'error'
+          ctrl.history = ctrl.history || []
+          const summary = resumeRes.detail || resumeRes.reason || 'resume_failed'
+          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'resume_failed', summary: String(summary), broadcast: null })
+          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+          ctrl.persistDirty = true
+          return { ok: false, reason: resumeRes.reason || 'resume_failed', detail: resumeRes.detail || resumeRes.reason || failureDetail }
+        }
+        codexRes = resumeRes
+        const resumedId = codexRes.resumeHint && codexRes.resumeHint.sessionId ? String(codexRes.resumeHint.sessionId).trim() : sessionId
+        if (resumedId && resumedId !== sessionId) {
+          ctrl.failureCount = (ctrl.failureCount || 0) + 1
+          ctrl.lastRunAt = Date.now()
+          ctrl.lastReason = `${reasonLabel}:resume_mismatch`
+          ctrl.phase = 'error'
+          ctrl.history = ctrl.history || []
+          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'resume_failed', summary: 'resume_session_mismatch', broadcast: null })
+          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
+          ctrl.persistDirty = true
+          return { ok: false, reason: 'resume_session_mismatch', detail: `expected ${sessionId} got ${resumedId}` }
+        }
+        finalSummary = codexRes.summary || finalSummary
+        ctrl.lastSummary = finalSummary
+        ctrl.lastRunAt = Date.now()
+        ctrl.lastReason = `${reasonLabel}:resume${resumeAttempts}`
+        ctrl.persistDirty = true
+      }
+      ctrl.lastSummary = finalSummary
+      ctrl.lastRunAt = Date.now()
+      if (ctrl.codexSessionId !== (sessionId || null)) {
+        ctrl.codexSessionId = sessionId || null
+        ctrl.persistDirty = true
       }
       ctrl.phase = 'post'
       if (source === 'deepseek') ctrl.deepseekCooldownUntil = Date.now() + ctrl.cooldownMs
       if (changed) await touchReloadGate()
-      if (codexRes.broadcast && codexRes.broadcast.length) {
-        broadcastMsg = codexRes.broadcast
+      if (broadcastMsg && broadcastMsg.length) {
         queueBroadcast(broadcastMsg)
       } else if (changed) {
         broadcastMsg = `【迭代完成】新功能上线（来源：${reasonLabel}），快来试试看！`
@@ -589,12 +767,12 @@ ${logs}`,
       }
       ctrl.lastBroadcast = broadcastMsg || null
       ctrl.failureCount = 0
-      if (codexRes.summary) logger.info('[iterate] summary:', codexRes.summary)
+      if (finalSummary) logger.info('[iterate] summary:', finalSummary)
       ctrl.history = ctrl.history || []
-      ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: changed ? 'changed' : 'noop', summary: ctrl.lastSummary || '', broadcast: broadcastMsg || null })
+      ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: changed ? 'changed' : 'noop', summary: finalSummary || '', broadcast: broadcastMsg || null })
       if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
       ctrl.persistDirty = true
-      return { ok: true, changed, summary: ctrl.lastSummary, broadcast: broadcastMsg }
+      return { ok: true, changed, summary: finalSummary, broadcast: broadcastMsg }
     })().catch((e) => {
       ctrl.failureCount = (ctrl.failureCount || 0) + 1
       logger.error('Iteration run error:', e?.message || e)
