@@ -42,10 +42,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
   state.sleepingInProgress = state.sleepingInProgress || false
   state.sleepNoBedLastNotified = state.sleepNoBedLastNotified || 0
+  state.sleepLastStart = state.sleepLastStart || 0
+  state.sleepCooldownUntil = state.sleepCooldownUntil || 0
   let timer = null
   let lastAttemptAt = 0
   const COOLDOWN_MS = 3000
   const NO_BED_NOTIFY_INTERVAL_MS = 60000
+  const DISTURBED_RETRY_COOLDOWN_MS = 15000
+  const MIN_SLEEP_DURATION_MS = 4000
 
   function hasOtherPlayersNearby () {
     try {
@@ -59,10 +63,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { if (state?.backInProgress || state?.externalBusy) return } catch {}
     const tod = bot.time?.timeOfDay
     const night = isNight(bot)
-    dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)
-    if (!night) return
-    if (bot.isSleeping) { dlog && dlog('sleep: already sleeping') ; return }
     const now = Date.now()
+    dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)
+    if (!night) {
+      state.sleepCooldownUntil = 0
+      return
+    }
+    if (state.sleepCooldownUntil && now < state.sleepCooldownUntil) {
+      dlog && dlog('sleep: cooling down', (state.sleepCooldownUntil - now), 'ms')
+      return
+    }
+    if (bot.isSleeping) { dlog && dlog('sleep: already sleeping') ; return }
     if (now - lastAttemptAt < COOLDOWN_MS) {
       dlog && dlog('sleep: cooldown', (COOLDOWN_MS - (now - lastAttemptAt)), 'ms')
       return
@@ -99,11 +110,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   on('sleep', () => {
     state.sleepNoBedLastNotified = 0
+    state.sleepLastStart = Date.now()
     if (log?.info) log.info('sleep: entered')
     else dlog && dlog('sleep: entered')
   })
   on('wake', () => {
     state.sleepNoBedLastNotified = 0
+    const now = Date.now()
+    const lastStart = state.sleepLastStart || 0
+    state.sleepLastStart = 0
+    if (!isNight(bot)) {
+      state.sleepCooldownUntil = 0
+    } else if (lastStart && now - lastStart < MIN_SLEEP_DURATION_MS) {
+      state.sleepCooldownUntil = now + DISTURBED_RETRY_COOLDOWN_MS
+      const msg = 'sleep: disturbed, delaying retry ' + DISTURBED_RETRY_COOLDOWN_MS + 'ms'
+      if (log?.info) log.info(msg)
+      else dlog && dlog(msg)
+    }
     if (log?.info) log.info('sleep: woke up')
     else dlog && dlog('sleep: woke up')
   })
