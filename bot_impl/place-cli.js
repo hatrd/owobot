@@ -21,8 +21,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           case 'spacing': out.spacing = Math.max(1, parseInt(v || '3', 10)); break
           case 'collect': out.collect = String(v || 'false').toLowerCase(); break
           case 'on': {
-            const arr = String(v || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean)
-            if (arr.length) out.on = { top_of: arr }
+            const tokens = String(v || '').toLowerCase().split(',').map(x => x.trim()).filter(Boolean)
+            if (tokens.length) {
+              const opts = {}
+              const bases = tokens.filter(t => t && t !== 'solid' && t !== '*' && t !== 'any')
+              if (bases.length) opts.top_of = bases
+              if (tokens.some(t => t === 'solid' || t === '*' || t === 'any')) opts.solid = true
+              if (Object.keys(opts).length) out.on = opts
+            }
             break
           }
           case 'x': out.area = out.area || {}; out.area.origin = out.area.origin || {}; out.area.origin.x = Number(v); break
@@ -34,6 +40,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       // positional first token -> item
       if (!out.item) { out.item = s.toLowerCase(); continue }
     }
+    const itemName = out.item ? String(out.item).toLowerCase() : ''
+    if (itemName && /_button$/.test(itemName)) {
+      if (!out.on) out.on = { solid: true }
+      else if (!out.on.top_of && !out.on.solid) out.on.solid = true
+      if (out.spacing == null) out.spacing = 1
+      if (out.max == null) out.max = 32
+    }
     return out
   }
 
@@ -41,7 +54,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       if (!payload || (payload.cmd !== 'place' && payload.cmd !== 'plant')) return
       const args = parseArgs(payload.args || [])
-      if (!args.item) { console.log('[PLACE] usage: .place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]'); return }
+      if (!args.item) { console.log('[PLACE] usage: .place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]'); return }
       const actions = require('./actions').install(bot, { log })
       try { bot.emit('external:begin', { source: 'cli', tool: 'place_blocks' }) } catch {}
       const r = await actions.run('place_blocks', args)

@@ -19,6 +19,7 @@ Mineflayer bot with hot reload and optional AI chat.
 - Reduce logs: `MC_DEBUG=0 npm start`
 - Adjust auto-iteration cadence: `AUTO_ITERATE_INTERVAL_MS=300000 npm start` or `npm start -- --iterate-interval 5m`
 - Scope Codex write access: `AUTO_ITERATE_REPO_ROOT=/absolute/path/to/repo npm start`
+  - Remember to `touch open_fire` (or restart) after changing this value so the iterator reloads the new scope.
 - Allow Codex more time: `CODEX_EXEC_TIMEOUT_MS=180000 npm start` (omit or ≤0 for no limit)
 - Customize AI prompts: edit files under `bot_impl/prompts/` (hot reload via `touch open_fire`)
 
@@ -98,7 +99,8 @@ Default digging policy (simplified)
   - Example: feed nearby cows with wheat: `TOOL {"tool":"feed_animals","args":{"species":"cow","item":"wheat"}}`
 ## CLI Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
-- `.place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`)
+- `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`; buttons default to `on=solid`, `spacing=1`)
+- `.spawnproof [item=name] [on=solid|block,...] [radius=N] [max=N] [spacing=N]` — defaults to polished blackstone buttons on any solid floor for rapid spawn-proofing
 - `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
 - `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`

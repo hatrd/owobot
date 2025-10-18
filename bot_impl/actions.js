@@ -2470,10 +2470,28 @@ function install (bot, { log, on, registerCleanup }) {
     const debug = String(args.debug || 'false').toLowerCase() === 'true'
     const on = args.on || { top_of: [] }
     const tops = Array.isArray(on.top_of) ? on.top_of.map(n => String(n).toLowerCase()) : []
-    const max = Math.max(1, parseInt(args.max || '8', 10))
-    const spacing = Math.max(1, parseInt(args.spacing || '3', 10))
+    const isButton = /_button$/.test(item)
+    const isPressurePlate = /_pressure_plate$/.test(item)
+    let allowSolid = on.solid === true
+    let baseNames = tops
+    if (baseNames.length === 0 && /_sapling$/.test(item)) {
+      baseNames = ['dirt','grass_block','podzol','coarse_dirt','rooted_dirt','mud','muddy_mangrove_roots']
+    }
+    if (baseNames.length === 0 && (isButton || isPressurePlate)) allowSolid = true
+    if (baseNames.length === 0 && !allowSolid) return fail('缺少on.top_of')
+    const spacingDefault = (isButton || isPressurePlate) ? 1 : 3
+    const maxDefault = (isButton || isPressurePlate) ? 32 : 8
+    const spacingRaw = (args.spacing != null) ? args.spacing : spacingDefault
+    const maxRaw = (args.max != null) ? args.max : maxDefault
+    const spacingParsed = parseInt(String(spacingRaw), 10)
+    const maxParsed = parseInt(String(maxRaw), 10)
+    const spacing = Math.max(1, Number.isFinite(spacingParsed) ? spacingParsed : spacingDefault)
+    const max = Math.max(1, Number.isFinite(maxParsed) ? maxParsed : maxDefault)
     const collect = (String(args.collect ?? 'false').toLowerCase() === 'true')
     const area = args.area || { shape: 'sphere', radius: 8 }
+    const radiusRaw = (area && area.radius != null) ? area.radius : 8
+    const radiusParsed = parseInt(String(radiusRaw), 10)
+    const radius = Math.max(1, Number.isFinite(radiusParsed) ? radiusParsed : 8)
     const origin = area.origin ? new (require('vec3').Vec3)(area.origin.x, area.origin.y, area.origin.z) : (bot.entity?.position || null)
     if (!origin) return fail('未就绪')
     if (!ensurePathfinder()) return fail('无寻路')
@@ -2483,23 +2501,39 @@ function install (bot, { log, on, registerCleanup }) {
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
-    // default valid bases for saplings
-    let baseNames = tops
-    if (baseNames.length === 0 && /_sapling$/.test(item)) {
-      baseNames = ['dirt','grass_block','podzol','coarse_dirt','rooted_dirt','mud','muddy_mangrove_roots']
+    const blockInfo = mcData?.blocks || {}
+    function isSolidSupport (block) {
+      try {
+        if (!block) return false
+        const n = String(block.name || '').toLowerCase()
+        if (!n || n === 'air') return false
+        if (n.includes('water') || n.includes('lava') || n.includes('bubble_column') || n.includes('fire')) return false
+        if (block.boundingBox && block.boundingBox !== 'block') return false
+        const info = blockInfo[block.type]
+        if (info && info.boundingBox && info.boundingBox !== 'block') return false
+        return true
+      } catch { return false }
     }
-    if (baseNames.length === 0) return fail('缺少on.top_of')
+
+    function baseMatches (block) {
+      if (!block) return false
+      const n = String(block.name || '').toLowerCase()
+      if (baseNames.length > 0 && baseNames.includes(n)) return true
+      if (allowSolid) return isSolidSupport(block)
+      return false
+    }
 
     const me = bot.entity.position
-    if (debug) try { console.log('[PLACE] item=', item, 'tops=', baseNames, 'radius=', radius, 'me=', `${me.x},${me.y},${me.z}`) } catch {}
-    const radius = Math.max(1, parseInt(area.radius || '8', 10))
+    if (debug) {
+      try {
+        console.log('[PLACE] item=', item, 'tops=', baseNames, 'solid=', allowSolid, 'radius=', radius, 'me=', `${me.x},${me.y},${me.z}`)
+      } catch {}
+    }
     let candidates = bot.findBlocks({
       maxDistance: Math.max(2, radius),
       count: 128,
       matching: (b) => {
-        if (!b) return false
-        const n = String(b.name || '').toLowerCase()
-        if (!baseNames.includes(n)) return false
+        if (!baseMatches(b)) return false
         // top must be air/replaceable
         const pos = b && b.position ? b.position : null
         if (!pos || typeof pos.offset !== 'function') return false
@@ -2524,8 +2558,7 @@ function install (bot, { log, on, registerCleanup }) {
               const p = new V(center.x + dx, center.y + dy, center.z + dz)
               const b = bot.blockAt(p)
               if (!b) continue
-              const n = String(b.name || '').toLowerCase()
-              if (!baseNames.includes(n)) continue
+              if (!baseMatches(b)) continue
               const top = bot.blockAt(p.offset(0, 1, 0))
               const tn = String(top?.name || 'air').toLowerCase()
               const replaceable = (tn === 'air') || ['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)

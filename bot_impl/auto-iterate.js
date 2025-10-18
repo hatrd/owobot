@@ -285,13 +285,13 @@ Notes: <可选补充>
     const outputPath = path.join(tmpDir, 'last-message.txt')
     const repoEnv = process.env.CODEX_REPO_ROOT || process.env.AUTO_ITERATE_REPO_ROOT || process.env.PROJECT_ROOT || process.cwd()
     const scopedDir = path.resolve(process.cwd(), repoEnv)
-    const sandboxScope = `disk-full-access:${scopedDir}`
-    const sharedConfigArgs = ['-c', 'task.max_iterations=1', '-c', `sandbox_permissions=["${sandboxScope}"]`, '-c', 'shell_environment_policy.inherit=all']
+    logger.info('[iterate] codex sandbox scope:', scopedDir)
+    const sharedConfigArgs = ['-c', 'task.max_iterations=1', '-c', 'shell_environment_policy.inherit=all']
     const sharedModelArgs = []
     if (codexModel && codexModel.trim()) sharedModelArgs.push('-m', codexModel.trim())
     if (codexExtraArgs.length) sharedModelArgs.push(...codexExtraArgs)
 
-    const optionArgs = ['--json', '--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs]
+    const optionArgs = ['--json', '--sandbox', 'workspace-write', '-C', scopedDir, '--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs]
     const args = ['exec']
     let resumeSessionId = null
     if (resume) {

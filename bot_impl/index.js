@@ -464,6 +464,7 @@ function activate (botInstance, options = {}) {
   try { require('./collect-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('collect') }) } catch (e) { coreLog.warn('collect-cli install error:', e?.message || e) }
   // CLI: place blocks/saplings
   try { require('./place-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('place') }) } catch (e) { coreLog.warn('place-cli install error:', e?.message || e) }
+  try { require('./spawnproof-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('spawnproof') }) } catch (e) { coreLog.warn('spawnproof-cli install error:', e?.message || e) }
   // CLI: status snapshot
   try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
   // CLI: start/stop mining ores

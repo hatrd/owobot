@@ -3,6 +3,9 @@
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[FISH]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[FISH]', ...a) }
+  const { Vec3 } = require('vec3')
+  const WATER_ADJ_OFFSETS = [new Vec3(0, 0, 0), new Vec3(1, 0, 0), new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1)]
+  const MAX_WATER_SCAN_DEPTH = 3
 
   const S = state.autoFish = state.autoFish || {}
   const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 8000, radius: 10, debug: false }, S.cfg || {})
@@ -14,6 +17,54 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let running = false
   let session = null
   let fishingBusy = false
+  let waterBelowDetected = false
+
+  function floorVec (pos) {
+    if (!pos) return null
+    if (typeof pos.floored === 'function') return pos.floored()
+    return new Vec3(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z))
+  }
+
+  function isWaterBlock (block) {
+    if (!block) return false
+    const n = String(block.name || '').toLowerCase()
+    if (n.includes('water') || n.includes('bubble_column')) return true
+    try {
+      const props = block.getProperties && block.getProperties()
+      if (props && props.waterlogged === true) return true
+    } catch {}
+    return false
+  }
+
+  function hasWaterBelow (pos, depth = MAX_WATER_SCAN_DEPTH) {
+    try {
+      const base = floorVec(pos)
+      if (!base) return false
+      const max = Math.max(1, depth)
+      for (let d = 1; d <= max; d++) {
+        const block = bot.blockAt(base.offset(0, -d, 0))
+        if (isWaterBlock(block)) return true
+      }
+      return false
+    } catch { return false }
+  }
+
+  function hasAdjacentWaterColumn (ground, depth = MAX_WATER_SCAN_DEPTH) {
+    try {
+      const base = ground?.clone ? ground.clone() : floorVec(ground)
+      if (!base) return false
+      const max = Math.max(0, depth)
+      for (const dir of WATER_ADJ_OFFSETS) {
+        for (let drop = 0; drop <= max; drop++) {
+          if (dir.x === 0 && dir.z === 0 && drop === 0) continue
+          const target = base.offset(dir.x, 0, dir.z).offset(0, -drop, 0)
+          const block = bot.blockAt(target)
+          if (isWaterBlock(block)) return true
+        }
+      }
+      return false
+    } catch { return false }
+  }
 
   function hasFishingRod () {
     try { return (bot.inventory?.items() || []).some(it => String(it?.name || '').toLowerCase() === 'fishing_rod') } catch { return false }
@@ -21,15 +72,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function isNearbyWater (pos, r = 8) {
     try {
+      if (hasWaterBelow(pos, MAX_WATER_SCAN_DEPTH)) {
+        if (!waterBelowDetected && cfg.debug) L.info('water detected below feet (<=3 blocks)')
+        waterBelowDetected = true
+        return true
+      }
+      if (waterBelowDetected) waterBelowDetected = false
       const list = bot.findBlocks({
-        matching: (b) => {
-          if (!b) return false
-          const n = String(b.name || '').toLowerCase()
-          if (n.includes('water')) return true
-          // waterlogged support (basic): some blocks expose getProperties().waterlogged
-          try { const p = b.getProperties && b.getProperties(); if (p && p.waterlogged === true) return true } catch {}
-          return false
-        },
+        matching: (b) => isWaterBlock(b),
         maxDistance: Math.max(2, r),
         count: 50
       }) || []
@@ -38,20 +88,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return false }
   }
 
-  function isWaterName (n) { const s = String(n || '').toLowerCase(); return s.includes('water') || s.includes('bubble_column') }
   function feetInWater () {
     try {
       const p = bot.entity?.position?.floored?.()
       if (!p) return false
       const feet = bot.blockAt(p)
       const head = bot.blockAt(p.offset(0, 1, 0))
-      const feetW = feet && isWaterName(feet.name)
-      let wlF = false
-      try { const pr = feet?.getProperties && feet.getProperties(); if (pr && pr.waterlogged) wlF = true } catch {}
-      const headW = head && isWaterName(head.name)
-      let wlH = false
-      try { const pr = head?.getProperties && head.getProperties(); if (pr && pr.waterlogged) wlH = true } catch {}
-      return feetW || wlF || headW || wlH
+      return isWaterBlock(feet) || isWaterBlock(head)
     } catch { return false }
   }
 
@@ -86,26 +129,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       const me = bot.entity?.position; if (!me) return null
       const waterBlocks = bot.findBlocks({
-        matching: (b) => {
-          if (!b) return false
-          const n = String(b.name || '').toLowerCase()
-          if (n === 'water') return true
-          try { const p = b.getProperties && b.getProperties(); if (p && p.waterlogged === true) return true } catch {}
-          return false
-        },
+        matching: (b) => isWaterBlock(b),
         maxDistance: Math.max(3, r),
         count: 100
       }) || []
       if (!waterBlocks.length) return null
-      // For each water block, find an adjacent standable position (4-neighborhood)
-      const { Vec3 } = require('vec3')
+      // For each water block, find an adjacent standable position (cardinals + vertical tolerance)
       let best = null; let bestD = Infinity
       for (const wb of waterBlocks) {
-        const adj = [new Vec3(1,0,0), new Vec3(-1,0,0), new Vec3(0,0,1), new Vec3(0,0,-1)].map(d => wb.offset(d.x, 0, d.z))
-        for (const p of adj) {
-          if (!canStandOn(p)) continue
-          const d = p.offset(0,1,0).distanceTo(me)
-          if (d < bestD) { best = p; bestD = d }
+        for (const dir of WATER_ADJ_OFFSETS) {
+          for (let rise = 0; rise <= MAX_WATER_SCAN_DEPTH; rise++) {
+            if (dir.x === 0 && dir.z === 0 && rise === 0) continue
+            const ground = new Vec3(wb.x + dir.x, wb.y + rise, wb.z + dir.z)
+            if (!canStandOn(ground)) continue
+            if (!hasAdjacentWaterColumn(ground, MAX_WATER_SCAN_DEPTH)) continue
+            const d = ground.offset(0, 1, 0).distanceTo(me)
+            if (d < bestD) { best = ground; bestD = d }
+          }
         }
       }
       if (cfg.debug) L.info('spot ->', best ? `${best.x},${best.y},${best.z}` : 'none')
@@ -194,7 +234,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         await goto(spot, 0)
         // Ensure we stand on dry block (not in water). If feet in water, nudge to nearest standable
         if (feetInWater()) {
-          const { Vec3 } = require('vec3')
           const base = spot.clone ? spot.clone() : spot
           const cand = [new Vec3(1,0,0), new Vec3(-1,0,0), new Vec3(0,0,1), new Vec3(0,0,-1)]
           let moved = false
@@ -220,8 +259,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           await ensureRodEquipped()
           // orient to nearest water to reduce immediate cancels due to ground
           try {
-            const { Vec3 } = require('vec3')
-            const blocks = bot.findBlocks({ matching: b => b && String(b.name||'').toLowerCase().includes('water'), maxDistance: 5, count: 20 }) || []
+            const blocks = bot.findBlocks({ matching: b => isWaterBlock(b), maxDistance: 5, count: 20 }) || []
             if (blocks.length) {
               const me = bot.entity?.position
               blocks.sort((a,b)=>a.distanceTo(me)-b.distanceTo(me))

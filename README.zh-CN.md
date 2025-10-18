@@ -19,6 +19,7 @@
 - 降低日志：`MC_DEBUG=0 npm start`
 - 调整自动迭代频率：`AUTO_ITERATE_INTERVAL_MS=300000 npm start` 或 `npm start -- --iterate-interval 5m`
 - 限定 Codex 写入范围：`AUTO_ITERATE_REPO_ROOT=/绝对路径/到/仓库 npm start`
+  - 修改后记得执行 `touch open_fire`（或重启进程）以让自动迭代加载新的权限范围。
 - 放宽 Codex 超时：`CODEX_EXEC_TIMEOUT_MS=180000 npm start`（≤0 表示无限制）
 - 自定义提示词：编辑 `bot_impl/prompts/` 下的文件（改动后 `touch open_fire` 热重载）
 
@@ -93,7 +94,8 @@
 
 ## CLI 命令
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
-- `.place <item> [on=a,b] [radius=N] [max=N] [spacing=N] [collect=true|false]`（别名 `.plant`）
+- `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]`（别名 `.plant`；如放置按钮会默认使用 `on=solid` 且间距为 1）
+- `.spawnproof [item=name] [on=solid|block,...] [radius=N] [max=N] [spacing=N]` — 默认使用磨制黑石按钮并针对任意实体方块铺设，便于快速做防刷怪地毯
 - `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
 - `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`
@@ -127,4 +129,4 @@
 运行时环境变量均可被 CLI 覆盖：
 - `--host`、`--port`、`--username|--user`、`--auth`、`--password`、`--greet on|off`
 示例：`npm start -- --host my.server --port 25565 --username MyBot --greet off`
-- **Codex 沙盒警告**：自动迭代只会在 `AUTO_ITERATE_REPO_ROOT` 指定的目录内授予写权限（默认即当前工作目录）。启用前请确认路径准确，避免暴露不相关的文件夹。
+- **Codex 沙盒警告**：自动迭代只会在 `AUTO_ITERATE_REPO_ROOT` 指定的目录内授予写权限（默认即当前工作目录）。启用前请确认路径准确，避免暴露不相关的文件夹；调整后需要热重载或重启以生效。
