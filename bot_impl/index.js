@@ -208,6 +208,151 @@ function clearAllPendingGreets() {
 }
 
 const GREET_INITIAL_DELAY_MS = 5000
+const GREET_DEFAULT_SUFFIX = '☆ (≧▽≦)ﾉ'
+const DEFAULT_GREETING_ZONES = [
+  {
+    name: 'siwuxie_wool',
+    x: -175,
+    y: 64,
+    z: 10,
+    radius: 50,
+    suffix: 'Siwuxie_log 的十六色羊毛机已经开机啦，现在tpa 我免费领羊毛~',
+    enabled: true
+  }
+]
+
+function initializeGreetingZones () {
+  if (!state) return
+  if (!Array.isArray(state.greetZones)) state.greetZones = []
+  if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
+  if (state.greetZonesSeeded) return
+  for (const zone of DEFAULT_GREETING_ZONES) {
+    if (!zone || !zone.name) continue
+    const exists = state.greetZones.some((z) => String(z?.name || '').toLowerCase() === String(zone.name).toLowerCase())
+    if (exists) continue
+    state.greetZones.push({ ...zone })
+  }
+  state.greetZonesSeeded = true
+}
+
+function collectGreetingSuffixes () {
+  try {
+    if (!state || !Array.isArray(state.greetZones)) return []
+    const pos = bot?.entity?.position
+    if (!pos) return []
+    const suffixes = []
+    for (const zone of state.greetZones) {
+      if (!zone) continue
+      if (zone.enabled === false) continue
+      const suffix = typeof zone.suffix === 'string' ? zone.suffix.trim() : ''
+      if (!suffix) continue
+      const radius = Number(zone.radius)
+      if (!Number.isFinite(radius) || radius <= 0) continue
+      const zx = Number(zone.x ?? zone.cx ?? zone.pos?.x)
+      const zy = Number(zone.y ?? zone.cy ?? zone.pos?.y)
+      const zz = Number(zone.z ?? zone.cz ?? zone.pos?.z)
+      if (![zx, zy, zz].every(Number.isFinite)) continue
+      const center = new Vec3(zx, zy, zz)
+      const dist = pos.distanceTo(center)
+      if (!Number.isFinite(dist) || dist > radius) continue
+      suffixes.push(suffix)
+    }
+    return suffixes
+  } catch { return [] }
+}
+
+function handleGreetZoneCli (args = []) {
+  initializeGreetingZones()
+  const sub = String(args[0] || '').toLowerCase()
+  if (!sub || sub === 'list' || sub === 'ls') {
+    const zones = Array.isArray(state?.greetZones) ? state.greetZones : []
+    console.log(`[GREETZONE] 共${zones.length}个配置`)
+    zones.forEach((zone, idx) => {
+      try {
+        console.log(`[${idx}] ${zone.name || '未命名'} @ (${zone.x},${zone.y},${zone.z}) r=${zone.radius} enabled=${zone.enabled !== false} suffix="${zone.suffix || ''}"`)
+      } catch {}
+    })
+    if (!zones.length) console.log('[GREETZONE] 使用 .greetzone add <name> <x> <y> <z> <radius> <suffix...> 添加')
+    return
+  }
+
+  if (sub === 'add' || sub === 'set') {
+    if (args.length < 6) {
+      console.log('[GREETZONE] 用法: .greetzone add <名称> <x> <y> <z> <半径> <后缀...>')
+      return
+    }
+    const name = String(args[1] || '').trim()
+    const x = Number(args[2])
+    const y = Number(args[3])
+    const z = Number(args[4])
+    const radius = Number(args[5])
+    const suffix = args.slice(6).join(' ').trim()
+    if (!name) { console.log('[GREETZONE] 名称不能为空'); return }
+    if (![x, y, z, radius].every(Number.isFinite)) { console.log('[GREETZONE] 坐标或半径需要为数字'); return }
+    if (radius <= 0) { console.log('[GREETZONE] 半径需大于0'); return }
+    if (!suffix) { console.log('[GREETZONE] 后缀不能为空'); return }
+    const zone = { name, x, y, z, radius, suffix, enabled: true }
+    const zones = state.greetZones
+    const idx = zones.findIndex((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
+    if (idx >= 0) zones[idx] = zone
+    else zones.push(zone)
+    console.log(`[GREETZONE] ${idx >= 0 ? '更新' : '添加'} ${name}`)
+    return
+  }
+
+  if (sub === 'remove' || sub === 'rm' || sub === 'del' || sub === 'delete') {
+    const name = String(args[1] || '').trim()
+    if (!name) { console.log('[GREETZONE] 用法: .greetzone remove <名称>'); return }
+    const zones = state.greetZones
+    const idx = zones.findIndex((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
+    if (idx < 0) { console.log(`[GREETZONE] 未找到 ${name}`); return }
+    zones.splice(idx, 1)
+    console.log(`[GREETZONE] 已移除 ${name}`)
+    return
+  }
+
+  if (sub === 'enable' || sub === 'on') {
+    const name = String(args[1] || '').trim()
+    if (!name) { console.log('[GREETZONE] 用法: .greetzone enable <名称>'); return }
+    const zone = state.greetZones.find((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
+    if (!zone) { console.log(`[GREETZONE] 未找到 ${name}`); return }
+    zone.enabled = true
+    console.log(`[GREETZONE] 已启用 ${name}`)
+    return
+  }
+
+  if (sub === 'disable' || sub === 'off') {
+    const name = String(args[1] || '').trim()
+    if (!name) { console.log('[GREETZONE] 用法: .greetzone disable <名称>'); return }
+    const zone = state.greetZones.find((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
+    if (!zone) { console.log(`[GREETZONE] 未找到 ${name}`); return }
+    zone.enabled = false
+    console.log(`[GREETZONE] 已禁用 ${name}`)
+    return
+  }
+
+  if (sub === 'clear') {
+    state.greetZones.splice(0, state.greetZones.length)
+    console.log('[GREETZONE] 已清空所有配置（不会自动恢复默认）')
+    return
+  }
+
+  if (sub === 'reset') {
+    state.greetZones.splice(0, state.greetZones.length)
+    state.greetZonesSeeded = false
+    initializeGreetingZones()
+    console.log('[GREETZONE] 已重置到默认配置')
+    return
+  }
+
+  if (sub === 'help') {
+    console.log('[GREETZONE] 指令: list|add|remove|enable|disable|clear|reset')
+    console.log('  add 示例: .greetzone add sheep -175 64 10 40 来领取羊毛呀')
+    return
+  }
+
+  console.log('[GREETZONE] 未知子命令，使用 .greetzone help 查看用法')
+}
 
 function buildGreeting (username) {
   const now = new Date()
@@ -220,8 +365,9 @@ function buildGreeting (username) {
   else if (hour >= 18 && hour < 23) salutation = '晚上好呀'
   else salutation = '深夜好喔'
 
-  const suffix = '☆ (≧▽≦)ﾉ'
-  return `${salutation} ${username}酱~ 这里是${bot.username}，${suffix}`
+  const parts = [GREET_DEFAULT_SUFFIX, ...collectGreetingSuffixes()]
+  const extra = parts.length ? `，${parts.join(' ')}` : ''
+  return `${salutation} ${username}酱~ 这里是${bot.username}${extra}`
 }
 
 function resolvePlayerUsername (player) {
@@ -332,11 +478,15 @@ function activate (botInstance, options = {}) {
     autoLookSuspended: false,
     cleanups: [],
     greetingEnabled: GREET,
+    greetZones: [],
+    greetZonesSeeded: false,
     loginPassword: undefined
   }
 
   if (!Array.isArray(state.cleanups)) state.cleanups = []
   if (!Number.isFinite(state.externalBusyCount) || state.externalBusyCount < 0) state.externalBusyCount = 0
+  if (!Array.isArray(state.greetZones)) state.greetZones = []
+  if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
   // Ensure greetingEnabled is initialized even when reusing shared state from loader
   if (typeof state.greetingEnabled === 'undefined') state.greetingEnabled = GREET
   // Propagate login password from loader config or env into shared state
@@ -348,6 +498,8 @@ function activate (botInstance, options = {}) {
   try { logging.init(state) } catch {}
   // expose shared state on bot for modules that only receive bot
   try { bot.state = state } catch {}
+
+  initializeGreetingZones()
 
   // Optional: dig packet trace/throttle for diagnosing anti-cheat timing
   try { require('./dig-throttle').install(bot, { log: logging.getLogger('dig') }) } catch (e) { coreLog.warn('dig-throttle install error:', e?.message || e) }
@@ -391,6 +543,11 @@ function activate (botInstance, options = {}) {
     } catch (e) {
       try { console.log(String(message)) } catch {}
     }
+  })
+
+  on('cli', ({ cmd, args }) => {
+    if (String(cmd || '').toLowerCase() !== 'greetzone') return
+    handleGreetZoneCli(Array.isArray(args) ? args : [])
   })
 
   // Feature: sleep when item dropped onto a bed at night
@@ -442,6 +599,9 @@ function activate (botInstance, options = {}) {
 
   // Feature: inventory compression when space is tight (no tossing)
   try { require('./inventory-compress').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('compress') }) } catch (e) { coreLog.warn('inventory-compress install error:', e?.message || e) }
+
+  // Feature: frame-based storage sorting tools
+  try { require('./frame-sorter').install(bot, { on, state, log: logging.getLogger('frames') }) } catch (e) { coreLog.warn('frame-sorter install error:', e?.message || e) }
 
   // Feature: auto-login when server prompts
   try { require('./auto-login').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('login') }) } catch (e) { coreLog.warn('auto-login install error:', e?.message || e) }
