@@ -53,6 +53,41 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const MIN_SLEEP_DURATION_MS = 4000
   const POST_WAKE_COOLDOWN_MS = 5000
 
+  function scheduleFailureCooldown (durationMs, label) {
+    if (!durationMs || durationMs <= 0) return
+    const now = Date.now()
+    const target = now + durationMs
+    if (!state.sleepCooldownUntil || state.sleepCooldownUntil < target) {
+      state.sleepCooldownUntil = target
+      const msg = 'sleep: failure cooldown ' + durationMs + 'ms' + (label ? ' (' + label + ')' : '')
+      if (log?.info) log.info(msg)
+      else dlog && dlog(msg)
+    }
+  }
+
+  function applyFailureCooldown (err) {
+    const message = typeof err?.message === 'string' ? err.message : ''
+    if (!message) return
+    const lower = message.toLowerCase()
+    if (lower.includes('occupied')) {
+      scheduleFailureCooldown(10000, 'occupied')
+      return
+    }
+    if (lower.includes('too far') || lower.includes('far away')) {
+      scheduleFailureCooldown(8000, 'too_far')
+      return
+    }
+    if (lower.includes('not safe') || lower.includes('monsters')) {
+      scheduleFailureCooldown(15000, 'unsafe')
+      return
+    }
+    if (lower.includes('not night') || lower.includes('only sleep at night') || lower.includes('you may not rest now')) {
+      scheduleFailureCooldown(12000, 'not_night')
+      return
+    }
+    scheduleFailureCooldown(6000, 'generic')
+  }
+
   function hasOtherPlayersNearby () {
     try {
       const players = bot.players || {}
@@ -106,6 +141,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       dlog && dlog('sleep: success at', bed.position)
     } catch (err) {
       dlog && dlog('sleep: failed', err?.message || String(err))
+      applyFailureCooldown(err)
     }
   }
 
