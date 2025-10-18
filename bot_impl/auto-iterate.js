@@ -28,6 +28,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (Array.isArray(data.history)) ctrl.history = data.history.slice(-10)
         if (typeof data.codexSessionId === 'string') ctrl.codexSessionId = data.codexSessionId
         if (Number.isFinite(data.lastAnnounceMinute)) ctrl.lastAnnounceMinute = data.lastAnnounceMinute
+        if (typeof data.supervisorNote === 'string') ctrl.supervisorNote = data.supervisorNote
       }
     } catch {}
   }
@@ -43,7 +44,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         lastLogOffset: ctrl.lastLogOffset || 0,
         history: Array.isArray(ctrl.history) ? ctrl.history.slice(-20) : [],
         codexSessionId: ctrl.codexSessionId || null,
-        lastAnnounceMinute: Number.isFinite(ctrl.lastAnnounceMinute) ? ctrl.lastAnnounceMinute : null
+        lastAnnounceMinute: Number.isFinite(ctrl.lastAnnounceMinute) ? ctrl.lastAnnounceMinute : null,
+        supervisorNote: ctrl.supervisorNote || null
       }
       fs.writeFileSync(persistPath, JSON.stringify(payload, null, 2))
     } catch (e) {
@@ -68,7 +70,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       phase: 'idle',
       history: [],
       persistDirty: false,
-      lastAnnounceMinute: null
+      lastAnnounceMinute: null,
+      supervisorNote: null
     }
   }
   const ctrl = state.autoIter
@@ -79,6 +82,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (typeof ctrl.persistDirty !== 'boolean') ctrl.persistDirty = false
   if (typeof ctrl.codexSessionId !== 'string') ctrl.codexSessionId = null
   if (!Number.isFinite(ctrl.lastAnnounceMinute)) ctrl.lastAnnounceMinute = null
+  if (typeof ctrl.supervisorNote !== 'string') ctrl.supervisorNote = ctrl.supervisorNote == null ? null : String(ctrl.supervisorNote)
 
   loadPersistent()
   function parseDurationMs (raw) {
@@ -283,6 +287,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     logger.info('[iterate] auto commit created:', singleLine)
   }
 
+  function updateSupervisorNote (text) {
+    const trimmed = text == null ? '' : String(text).trim()
+    if (trimmed) {
+      ctrl.supervisorNote = trimmed.slice(0, 2000)
+      logger.info('[iterate] supervisor note set')
+    } else {
+      ctrl.supervisorNote = null
+      logger.info('[iterate] supervisor note cleared')
+    }
+    ctrl.persistDirty = true
+    savePersistent()
+  }
+
   function currentLogPath () {
     try {
       const active = fileLogger.currentPath && fileLogger.currentPath()
@@ -352,7 +369,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         return `- ${when} ${reasonTag} ${status} ${sum}`.trim()
       }).join('\n')
       : '- 暂无记录'
-    return [
+    const sections = [
       `# 角色
 你是Minecraft机器人项目的合作者。根据运行日志，自主分析并直接修改仓库中的代码/配置，以提升稳定性、玩家体验或功能性。`,
       `# 触发信息
@@ -376,7 +393,11 @@ Broadcast: <给玩家的播报，无则留空>
 Notes: <可选补充>
 
 如需额外说明，可在上述三行之前自由撰写。`
-    ].join('\n\n')
+    ]
+    if (ctrl.supervisorNote && ctrl.supervisorNote.trim()) {
+      sections.splice(4, 0, `# 监督提示\n${ctrl.supervisorNote.trim()}`)
+    }
+    return sections.join('\n\n')
   }
 
   async function runCodex ({ logChunk, reason, resume }) {
@@ -659,6 +680,10 @@ Notes: <可选补充>
           logger.warn('[iterate] auto commit error:', e?.message || e)
         }
       }
+      if (ctrl.supervisorNote) {
+        ctrl.supervisorNote = null
+        ctrl.persistDirty = true
+      }
       return { ok: true, changed, summary: finalSummary, broadcast: broadcastMsg }
     })().catch((e) => {
       ctrl.failureCount = (ctrl.failureCount || 0) + 1
@@ -782,7 +807,8 @@ Notes: <可选补充>
 
   bot.autoIter = {
     trigger: (source, opts) => runIteration(source || 'manual', opts || {}),
-    status
+    status,
+    supervise: (text) => { updateSupervisorNote(text); return ctrl.supervisorNote }
   }
 
   scheduleNextTick()
@@ -875,6 +901,21 @@ Notes: <可选补充>
         ctrl.cooldownMs = val
         process.env.AUTO_ITERATE_DEEPSEEK_COOLDOWN_MS = String(val)
         console.log('[ITERATE]', '已设置新的冷却 =', fmtMs(val))
+        return
+      }
+      if (cmd === 'supervisor') {
+        if (!rest.length) {
+          console.log('[ITERATE]', ctrl.supervisorNote ? `当前监督提示: ${ctrl.supervisorNote}` : '当前没有监督提示')
+          return
+        }
+        const raw = rest.join(' ').trim()
+        if (!raw || raw.toLowerCase() === 'clear') {
+          updateSupervisorNote(null)
+          console.log('[ITERATE]', '已清除监督提示')
+        } else {
+          updateSupervisorNote(raw)
+          console.log('[ITERATE]', '已更新监督提示')
+        }
         return
       }
       if (cmd === 'reset') {

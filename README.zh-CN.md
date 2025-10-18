@@ -104,7 +104,7 @@
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
-- `.iterate status|interval <时长>|run|cooldown <时长>|reset` — 在线调整自动 Codex 迭代周期（时长支持 ms/s/m/h 后缀；`reset` 将日志游标移动到当前末尾）
+- `.iterate status|interval <时长>|run|cooldown <时长>|supervisor <文本>|reset` — 在线调整自动 Codex 迭代周期（支持 ms/s/m/h）；`supervisor` 可设置/清除一次性监督提示，`reset` 将日志游标移动到当前末尾
 - `.pulse status|on|off|now` — 控制自动 DeepSeek 聊天脉冲（定期汇总玩家聊天并主动发言）
 
 ## 种植

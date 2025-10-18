@@ -9,6 +9,8 @@ const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
 const PULSE_MAX_MESSAGES = 20
 const PULSE_INTERVAL_MS = 8 * 60 * 1000
 const PULSE_CHECK_MS = 60 * 1000
+const PULSE_RECENT_REPLY_SUPPRESS_MS = 2 * 60 * 1000
+const PULSE_REPEAT_SUPPRESS_MS = 6 * 60 * 1000
 
 const fs = require('fs')
 const path = require('path')
@@ -72,6 +74,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   state.aiPulse = state.aiPulse || { enabled: true, buffer: [], lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
   if (!Array.isArray(state.aiPulse.buffer)) state.aiPulse.buffer = []
   if (!Number.isFinite(state.aiPulse.lastFlushAt)) state.aiPulse.lastFlushAt = Date.now()
+  if (!(state.aiPulse.recentKeys instanceof Map)) state.aiPulse.recentKeys = new Map()
+  if (!Number.isFinite(state.aiPulse.lastMessageAt)) state.aiPulse.lastMessageAt = 0
 
   state.aiExtras = state.aiExtras || { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
@@ -200,6 +204,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (!username || username === bot.username) return
       const trimmed = String(text || '').trim()
       if (!trimmed) return
+      const replyStore = state.aiRecentReplies instanceof Map ? state.aiRecentReplies : null
+      const lastReplyAt = replyStore ? replyStore.get(username) : null
+      if (lastReplyAt && now() - lastReplyAt <= PULSE_RECENT_REPLY_SUPPRESS_MS) return
       const buf = state.aiPulse.buffer ||= []
       buf.push({ t: now(), user: username, text: trimmed })
       if (buf.length > 80) buf.splice(0, buf.length - 80)
@@ -207,6 +214,47 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch (e) {
       if (log?.warn) log.warn('pulse enqueue error:', e?.message || e)
     }
+  }
+
+  function ensurePulseHistory () {
+    if (!(state.aiPulse.recentKeys instanceof Map)) state.aiPulse.recentKeys = new Map()
+    return state.aiPulse.recentKeys
+  }
+
+  function normalizePulseText (text) {
+    if (typeof text !== 'string') return ''
+    return text.replace(/\s+/g, ' ').trim().toLowerCase()
+  }
+
+  function pulseKey (entry) {
+    if (!entry) return ''
+    const user = String(entry.user || '').trim().toLowerCase()
+    const text = normalizePulseText(entry.text || '')
+    if (!user && !text) return ''
+    return `${user}#${text}`
+  }
+
+  function markPulseHandled (entries, ts) {
+    try {
+      if (!entries || !entries.length) return
+      const history = ensurePulseHistory()
+      for (const entry of entries) {
+        const key = pulseKey(entry)
+        if (!key) continue
+        history.set(key, ts)
+      }
+      const cutoff = ts - PULSE_REPEAT_SUPPRESS_MS
+      for (const [key, seen] of history.entries()) {
+        if (seen < cutoff) history.delete(key)
+      }
+      if (history.size > 160) {
+        const ordered = [...history.entries()].sort((a, b) => a[1] - b[1])
+        while (history.size > 120 && ordered.length) {
+          const [key] = ordered.shift()
+          history.delete(key)
+        }
+      }
+    } catch {}
   }
 
   function noteRecentReply (username) {
@@ -275,6 +323,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     state.aiPulse.lastFlushAt = now()
     state.aiPulse.lastReason = trigger
     let revert = true
+    const nowTs = now()
+    const history = ensurePulseHistory()
+    const filteredBatch = batch.filter(entry => {
+      const key = pulseKey(entry)
+      if (!key) return false
+      const seen = history.get(key)
+      if (seen && nowTs - seen < PULSE_REPEAT_SUPPRESS_MS) return false
+      return true
+    })
+    if (!filteredBatch.length) {
+      state.aiPulse.lastMessage = null
+      revert = false
+      return
+    }
     if (!pulseEnabled()) {
       // feature disabled or no key — drop silently but keep last flush time
       revert = false
@@ -287,7 +349,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       state.aiPulse.lastMessage = null
       return
     }
-    const transcript = batch.map(it => {
+    const transcript = filteredBatch.map(it => {
       const ts = it?.t ? new Date(it.t).toISOString().slice(11, 19) : ''
       return `${ts ? '[' + ts + '] ' : ''}${it.user || '??'}: ${it.text || ''}`
     }).join('\n')
@@ -358,10 +420,21 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       applyUsage(inTok, outTok)
       if (!trimmed || /^skip$/i.test(trimmed)) {
         state.aiPulse.lastMessage = null
+        markPulseHandled(filteredBatch, nowTs)
+        revert = false
+        return
+      }
+      const lastMsg = state.aiPulse.lastMessage || ''
+      const lastMsgAt = Number.isFinite(state.aiPulse.lastMessageAt) ? state.aiPulse.lastMessageAt : 0
+      if (trimmed === lastMsg && nowTs - lastMsgAt < PULSE_REPEAT_SUPPRESS_MS) {
+        state.aiPulse.lastMessageAt = nowTs
+        markPulseHandled(filteredBatch, nowTs)
         revert = false
         return
       }
       state.aiPulse.lastMessage = trimmed
+      state.aiPulse.lastMessageAt = nowTs
+      markPulseHandled(filteredBatch, nowTs)
       revert = false
       if (log?.info) log.info('pulse reply ->', trimmed)
       try { bot.chat(trimmed) } catch (e) { if (log?.warn) log.warn('pulse chat error:', e?.message || e) }
