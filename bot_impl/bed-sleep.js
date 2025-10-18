@@ -40,13 +40,14 @@ function findBedAroundBot (bot, radius = 3) {
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   // Route dlog through namespaced logger if present
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
-  state.sleepingInProgress = state.sleepingInProgress || false
+  state.sleepingInProgress = Boolean(state.sleepingInProgress)
   state.sleepNoBedLastNotified = state.sleepNoBedLastNotified || 0
   state.sleepLastStart = state.sleepLastStart || 0
   const rawCooldown = Number(state.sleepCooldownUntil)
   state.sleepCooldownUntil = Number.isFinite(rawCooldown) && rawCooldown > 0 ? rawCooldown : 0
   let timer = null
   let lastAttemptAt = 0
+  let inFlight = false
   const COOLDOWN_MS = 3000
   const NO_BED_NOTIFY_INTERVAL_MS = 60000
   const DISTURBED_RETRY_COOLDOWN_MS = 15000
@@ -97,51 +98,61 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   async function trySleepNearby () {
-    try { if (state?.backInProgress || state?.externalBusy) return } catch {}
-    const dimension = String(bot?.game?.dimension || '')
-    if (dimension && dimension !== 'minecraft:overworld' && dimension !== 'overworld') {
-      if (state.sleepCooldownUntil) state.sleepCooldownUntil = 0
-      return
-    }
-    const tod = bot.time?.timeOfDay
-    const night = isNight(bot)
-    const now = Date.now()
-    if (!Number.isFinite(state.sleepCooldownUntil)) state.sleepCooldownUntil = 0
-    dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)
-    if (!night) {
-      if (state.sleepCooldownUntil && state.sleepCooldownUntil < now) state.sleepCooldownUntil = 0
-      return
-    }
-    if (state.sleepCooldownUntil && now < state.sleepCooldownUntil) {
-      dlog && dlog('sleep: cooling down', (state.sleepCooldownUntil - now), 'ms')
-      return
-    }
-    if (bot.isSleeping) { dlog && dlog('sleep: already sleeping') ; return }
-    if (now - lastAttemptAt < COOLDOWN_MS) {
-      dlog && dlog('sleep: cooldown', (COOLDOWN_MS - (now - lastAttemptAt)), 'ms')
-      return
-    }
-    lastAttemptAt = now
-    const bed = findBedAroundBot(bot, 3)
-    if (!bed) {
-      dlog && dlog('sleep: night, no bed nearby (radius=3)')
-      if (hasOtherPlayersNearby()) {
-        const notifyGap = now - (state.sleepNoBedLastNotified || 0)
-        if (notifyGap >= NO_BED_NOTIFY_INTERVAL_MS) {
-          state.sleepNoBedLastNotified = now
-          // try { bot.chat('我附近没有床，想跳夜的话请带我到床边喵~') } catch {}
-        }
-      }
-      return
-    }
-    dlog && dlog('sleep: bed candidate at', bed.position)
-    try { await bot.lookAt(bed.position.offset(0.5, 0.5, 0.5), true) } catch {}
+    if (inFlight) return
+    inFlight = true
+    if (state) state.sleepingInProgress = true
     try {
-      await bot.sleep(bed)
-      dlog && dlog('sleep: success at', bed.position)
-    } catch (err) {
-      dlog && dlog('sleep: failed', err?.message || String(err))
-      applyFailureCooldown(err)
+      try { if (state?.backInProgress || state?.externalBusy) return } catch {}
+      const dimension = String(bot?.game?.dimension || '')
+      if (dimension && dimension !== 'minecraft:overworld' && dimension !== 'overworld') {
+        if (state.sleepCooldownUntil) state.sleepCooldownUntil = 0
+        return
+      }
+      const tod = bot.time?.timeOfDay
+      const night = isNight(bot)
+      const now = Date.now()
+      if (!Number.isFinite(state.sleepCooldownUntil)) state.sleepCooldownUntil = 0
+      dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)
+      if (!night) {
+        if (state.sleepCooldownUntil && state.sleepCooldownUntil < now) state.sleepCooldownUntil = 0
+        return
+      }
+      if (state.sleepCooldownUntil && now < state.sleepCooldownUntil) {
+        dlog && dlog('sleep: cooling down', (state.sleepCooldownUntil - now), 'ms')
+        return
+      }
+      if (bot.isSleeping) { dlog && dlog('sleep: already sleeping') ; return }
+      if (now - lastAttemptAt < COOLDOWN_MS) {
+        dlog && dlog('sleep: cooldown', (COOLDOWN_MS - (now - lastAttemptAt)), 'ms')
+        return
+      }
+      lastAttemptAt = now
+      const bed = findBedAroundBot(bot, 3)
+      if (!bed) {
+        dlog && dlog('sleep: night, no bed nearby (radius=3)')
+        if (hasOtherPlayersNearby()) {
+          const notifyGap = now - (state.sleepNoBedLastNotified || 0)
+          if (notifyGap >= NO_BED_NOTIFY_INTERVAL_MS) {
+            state.sleepNoBedLastNotified = now
+            // try { bot.chat('我附近没有床，想跳夜的话请带我到床边喵~') } catch {}
+          }
+        }
+        return
+      }
+      dlog && dlog('sleep: bed candidate at', bed.position)
+      try { await bot.lookAt(bed.position.offset(0.5, 0.5, 0.5), true) } catch {}
+      try {
+        await bot.sleep(bed)
+        dlog && dlog('sleep: success at', bed.position)
+      } catch (err) {
+        dlog && dlog('sleep: failed', err?.message || String(err))
+        applyFailureCooldown(err)
+      }
+    } finally {
+      if (!bot.isSleeping) {
+        try { state.sleepingInProgress = false } catch {}
+      }
+      inFlight = false
     }
   }
 
@@ -155,11 +166,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('sleep', () => {
     state.sleepNoBedLastNotified = 0
     state.sleepLastStart = Date.now()
+    state.sleepingInProgress = true
     if (log?.info) log.info('sleep: entered')
     else dlog && dlog('sleep: entered')
   })
   on('wake', () => {
     state.sleepNoBedLastNotified = 0
+    state.sleepingInProgress = false
     const now = Date.now()
     const lastStart = state.sleepLastStart || 0
     state.sleepLastStart = 0
@@ -185,6 +198,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('end', () => {
     try { if (timer) clearInterval(timer) } catch {}
     timer = null
+    try { state.sleepingInProgress = false } catch {}
     if (log?.info) log.info('sleep: watcher stopped')
     else dlog && dlog('sleep: watcher stopped')
   })
@@ -197,7 +211,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   // Ensure interval cleared on plugin deactivate
-  registerCleanup && registerCleanup(() => { try { if (timer) clearInterval(timer) } catch {} ; timer = null })
+  registerCleanup && registerCleanup(() => {
+    try { if (timer) clearInterval(timer) } catch {}
+    timer = null
+    try { state.sleepingInProgress = false } catch {}
+  })
 }
 
 module.exports = { install }
