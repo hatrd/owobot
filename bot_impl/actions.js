@@ -47,7 +47,7 @@ function install (bot, { log, on, registerCleanup }) {
   async function goto_block (args = {}) {
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : (args.name ? [String(args.name).toLowerCase()] : null)
     const match = args.match ? String(args.match).toLowerCase() : null
-    const radius = Math.max(2, parseInt(args.radius || '32', 10))
+    const radius = Math.max(2, parseInt(args.radius || '64', 10))
     const range = Math.max(1, parseFloat(args.range || '1.5'))
     if (!names && !match) return fail('缺少目标名（name|names|match）')
     if (!bot.entity || !bot.entity.position) return fail('未就绪')
