@@ -282,8 +282,14 @@ function install (bot, { log, on, registerCleanup }) {
     if (have <= 0) return fail(`缺少${itemName}`)
 
     let fed = 0
-    const lockToken = 'feed_animals'
-    try { if (bot.state && !bot.state.holdItemLock) bot.state.holdItemLock = lockToken } catch {}
+    const lockName = itemName
+    let lockApplied = false
+    try {
+      if (bot.state && !bot.state.holdItemLock) {
+        bot.state.holdItemLock = lockName
+        lockApplied = true
+      }
+    } catch {}
     try {
       const start = now()
       while (fed < max && (now() - start) < 20000) {
@@ -319,7 +325,9 @@ function install (bot, { log, on, registerCleanup }) {
       }
     } finally {
       try { bot.pathfinder.setGoal(null) } catch {}
-      try { if (bot.state && bot.state.holdItemLock === lockToken) bot.state.holdItemLock = null } catch {}
+      try {
+        if (lockApplied && bot.state && String(bot.state.holdItemLock || '').toLowerCase() === lockName) bot.state.holdItemLock = null
+      } catch {}
     }
     return fed > 0 ? ok(`已喂食${fed}`) : fail('附近没有可喂食目标或缺少小麦')
   }

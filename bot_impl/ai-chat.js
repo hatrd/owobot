@@ -76,6 +76,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   state.aiExtras = state.aiExtras || { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
 
+  if (!state.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
+
   // global recent chat logs
   state.aiRecent = state.aiRecent || [] // [{t, user, text}]
   state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
@@ -205,6 +207,34 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch (e) {
       if (log?.warn) log.warn('pulse enqueue error:', e?.message || e)
     }
+  }
+
+  function noteRecentReply (username) {
+    if (!username) return
+    try {
+      if (!(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
+      const store = state.aiRecentReplies
+      const nowTs = now()
+      store.set(username, nowTs)
+      const EXPIRE_MS = 2 * 60 * 1000
+      for (const [name, ts] of [...store.entries()]) {
+        if (nowTs - ts > EXPIRE_MS) store.delete(name)
+      }
+      if (store.size > 64) {
+        const ordered = [...store.entries()].sort((a, b) => a[1] - b[1])
+        while (ordered.length > 64) {
+          const [name] = ordered.shift()
+          store.delete(name)
+        }
+      }
+    } catch {}
+  }
+
+  function sendDirectReply (username, text) {
+    const trimmed = String(text || '').trim()
+    if (!trimmed) return
+    try { bot.chat(trimmed) } catch {}
+    noteRecentReply(username)
   }
 
   function maybeFlush (reason) {
@@ -898,9 +928,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (!allow.has(String(payload.tool))) {
             return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
           }
-          if (speech) {
-            try { bot.chat(speech) } catch {}
-          }
+          if (speech) sendDirectReply(username, speech)
           // Mark external-busy and current task for context; emit begin/end for tracker
           try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
           let res
@@ -917,7 +945,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           }
           const failText = H.trimReply(res?.msg || '这次没成功！', maxReplyLen || 120)
           if (speech) {
-            try { bot.chat(failText) } catch {}
+            sendDirectReply(username, failText)
             return ''
           }
           return failText
@@ -960,7 +988,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         try {
           const tools = actionsMod.install(bot, { log })
           const res = await tools.run('dismount', {})
-          try { bot.chat(res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`)) } catch {}
+          sendDirectReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`))
         } catch {}
         return
       }
@@ -971,13 +999,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const tools = actionsMod.install(bot, { log })
         await tools.run('reset', {})
       } catch {}
-      try { bot.chat('好的') } catch {}
+      sendDirectReply(username, '好的')
       return
     }
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
-        try { bot.chat('太快啦，稍后再试~') } catch {}
+        sendDirectReply(username, '太快啦，稍后再试~')
       }
       return
     }
@@ -999,7 +1027,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           log.info('snapshot.nearby.drops =', snap.nearby?.drops)
         } catch {}
       }
-      try { bot.chat(quick) } catch {}
+      sendDirectReply(username, quick)
       return
     }
 
@@ -1014,15 +1042,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
-        try { bot.chat(reply) } catch {}
+        sendDirectReply(username, reply)
       }
     } catch (e) {
       dlog('ai error:', e?.message || e)
       // Optional: notify user softly if misconfigured
       if (/key not configured/i.test(String(e))) {
-        try { bot.chat('AI未配置') } catch {}
+        sendDirectReply(username, 'AI未配置')
       } else if (/budget/i.test(String(e)) && state.ai.notifyOnBudget) {
-        try { bot.chat('AI余额不足') } catch {}
+        sendDirectReply(username, 'AI余额不足')
       }
     } finally {
       ctrl.busy = false

@@ -60,7 +60,7 @@ If you need one‑time “post‑spawn init”, extract a common function (e.g. 
 
 ### 协调（优先级与锁）
 - `state.externalBusy`: set true while executing player/AI‑triggered tools. Self‑running automations should pause when this is true.
-- `state.holdItemLock`: set to a string (e.g. `'fishing_rod'`) to lock the main hand; modules that equip should skip main‑hand changes but may still equip off‑hand (shield).
+- `state.holdItemLock`: set to a normalized item name (e.g. `'fishing_rod'`) to lock the main hand; modules that equip should skip main‑hand changes but may still equip off‑hand (shield). Use the actual item name you expect to keep equipped so the owning module can still re-equip it while the lock is active.
 - `state.autoLookSuspended`: suspend auto‑look loops while a module needs precise aim (e.g., fishing).
 
 Recommended usage in modules:

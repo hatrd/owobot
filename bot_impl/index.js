@@ -16,6 +16,7 @@ const listeners = []
 let fireWatcher = null
 let playerWatcher = null
 let explosionCooldownUntil = 0
+const RECENT_AI_REPLY_WINDOW_MS = 20 * 1000
 function initAfterSpawn() {
   // Reset greeting bookkeeping
   if (!state?.greetedPlayers || typeof state.greetedPlayers.clear !== 'function') {
@@ -24,6 +25,11 @@ function initAfterSpawn() {
   state.greetedPlayers.clear()
   if (!state?.pendingGreets || !(state.pendingGreets instanceof Map)) state.pendingGreets = new Map()
   clearAllPendingGreets()
+  if (!state?.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
+  const nowTs = Date.now()
+  for (const [name, ts] of [...state.aiRecentReplies.entries()]) {
+    if (!Number.isFinite(ts) || nowTs - ts > RECENT_AI_REPLY_WINDOW_MS) state.aiRecentReplies.delete(name)
+  }
 
   const players = bot && bot.players ? bot.players : {}
   for (const username of Object.keys(players)) {
@@ -542,6 +548,14 @@ function activate (botInstance, options = {}) {
       dlog('Skip greeting: already pending:', username)
       return
     }
+    if (state.aiRecentReplies instanceof Map) {
+      const ts = state.aiRecentReplies.get(username)
+      if (Number.isFinite(ts) && Date.now() - ts < RECENT_AI_REPLY_WINDOW_MS) {
+        dlog('Skip greeting: recent AI reply for', username)
+        state.greetedPlayers.add(username)
+        return
+      }
+    }
 
     scheduleGreeting(username)
   })
@@ -552,6 +566,7 @@ function activate (botInstance, options = {}) {
     dlog('playerLeft event:', summarizePlayer(player), 'resolved =', username)
     if (!username) return
     state.greetedPlayers.delete(username)
+    if (state.aiRecentReplies instanceof Map) state.aiRecentReplies.delete(username)
     const timeout = state.pendingGreets.get(username)
     if (timeout) {
       clearTimeout(timeout)

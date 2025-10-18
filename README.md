@@ -25,6 +25,7 @@ Mineflayer bot with hot reload and optional AI chat.
 - Customize AI prompts: edit files under `bot_impl/prompts/` (hot reload via `touch open_fire`)
 
 - **Codex sandboxing:** auto-iteration grants Codex write access only within `AUTO_ITERATE_REPO_ROOT` (defaults to the current working directory). Double-check the path before enabling to avoid exposing unrelated folders.
+
 ### File Logging
 - Default path: `logs/bot-YYYY-MM-DD.log` (created automatically).
 - Configure directory: set `MC_LOG_DIR=/path/to/dir`.

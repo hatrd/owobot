@@ -27,6 +27,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (Number.isFinite(data.lastLogOffset)) ctrl.lastLogOffset = data.lastLogOffset
         if (Array.isArray(data.history)) ctrl.history = data.history.slice(-10)
         if (typeof data.codexSessionId === 'string') ctrl.codexSessionId = data.codexSessionId
+        if (Number.isFinite(data.lastAnnounceMinute)) ctrl.lastAnnounceMinute = data.lastAnnounceMinute
       }
     } catch {}
   }
@@ -41,7 +42,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         lastLogFile: ctrl.lastLogFile || null,
         lastLogOffset: ctrl.lastLogOffset || 0,
         history: Array.isArray(ctrl.history) ? ctrl.history.slice(-20) : [],
-        codexSessionId: ctrl.codexSessionId || null
+        codexSessionId: ctrl.codexSessionId || null,
+        lastAnnounceMinute: Number.isFinite(ctrl.lastAnnounceMinute) ? ctrl.lastAnnounceMinute : null
       }
       fs.writeFileSync(persistPath, JSON.stringify(payload, null, 2))
     } catch (e) {
@@ -65,7 +67,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       intervalMs: null,
       phase: 'idle',
       history: [],
-      persistDirty: false
+      persistDirty: false,
+      lastAnnounceMinute: null
     }
   }
   const ctrl = state.autoIter
@@ -75,6 +78,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (!Array.isArray(ctrl.history)) ctrl.history = []
   if (typeof ctrl.persistDirty !== 'boolean') ctrl.persistDirty = false
   if (typeof ctrl.codexSessionId !== 'string') ctrl.codexSessionId = null
+  if (!Number.isFinite(ctrl.lastAnnounceMinute)) ctrl.lastAnnounceMinute = null
 
   loadPersistent()
   function parseDurationMs (raw) {
@@ -199,6 +203,21 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     })
   }
 
+  async function ensureGitIdentity () {
+    try {
+      const nameRes = await runGitCommand(['config', '--get', 'user.name'])
+      if (!nameRes.ok || !nameRes.stdout.trim()) {
+        await runGitCommand(['config', '--local', 'user.name', 'auto_iterate'])
+      }
+    } catch {}
+    try {
+      const emailRes = await runGitCommand(['config', '--get', 'user.email'])
+      if (!emailRes.ok || !emailRes.stdout.trim()) {
+        await runGitCommand(['config', '--local', 'user.email', 'bot@github.com'])
+      }
+    } catch {}
+  }
+
   async function commitIterationChanges ({ summary, reasonLabel }) {
     const status = await gitStatusSnapshot()
     if (!status) {
@@ -214,18 +233,32 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       logger.warn('[iterate] git add failed:', addRes.stderr || addRes.stdout || addRes.code)
       return
     }
+    await runGitCommand(['reset', '--', 'open_fire'])
+    const stagedDiff = await runGitCommand(['diff', '--cached', '--quiet'])
+    if (stagedDiff.code === 0) {
+      logger.info('[iterate] no staged changes after filtering; skip auto commit')
+      await runGitCommand(['checkout', '--', 'open_fire'])
+      return
+    }
+    if (stagedDiff.code !== 1) {
+      logger.warn('[iterate] git diff --cached failed:', stagedDiff.stderr || stagedDiff.stdout || stagedDiff.code)
+      return
+    }
     const rawSummary = (summary && summary.trim()) || ''
     const fallback = reasonLabel || 'auto-iterate update'
     const singleLine = (rawSummary || fallback).split('\n').map(s => s.trim()).filter(Boolean).join(' ').slice(0, 72) || 'auto-iterate update'
     const message = `chore(auto-iterate): ${singleLine}`
+    await ensureGitIdentity()
     const commitRes = await runGitCommand(['commit', '-m', message])
     if (!commitRes.ok) {
       logger.warn('[iterate] git commit failed:', commitRes.stderr || commitRes.stdout || commitRes.code)
       // Attempt to unstage to avoid locking future commits
       await runGitCommand(['reset', '--mixed', 'HEAD'])
+      await runGitCommand(['checkout', '--', 'open_fire'])
       return
     }
     logger.info('[iterate] auto commit created:', singleLine)
+    await runGitCommand(['checkout', '--', 'open_fire'])
   }
 
   function currentLogPath () {
@@ -565,10 +598,10 @@ Notes: <可选补充>
       ctrl.lastReason = reasonLabel
       ctrl.persistDirty = true
       const afterStatus = await gitStatusSnapshot()
-      let changed = false
-      if (afterStatus != null) {
-        if (beforeStatus == null) changed = afterStatus.trim().length > 0
-        else changed = beforeStatus !== afterStatus
+      const afterStr = (afterStatus || '').trim()
+      let changed = afterStr.length > 0
+      if (!changed && beforeStatus != null && afterStatus != null && beforeStatus !== afterStatus) {
+        changed = true
       }
       if (ctrl.codexSessionId !== (sessionId || null)) {
         ctrl.codexSessionId = sessionId || null
@@ -664,6 +697,8 @@ Notes: <可选补充>
     try {
       if (!bot || typeof bot.chat !== 'function') return
       if (!state.hasSpawned) return
+      const minuteKey = Math.floor(Date.now() / 60000)
+      if (ctrl.lastAnnounceMinute === minuteKey) return
       const now = new Date()
       const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
       let message = `现在是 ${timeStr}，祝大家玩得开心~`
@@ -672,6 +707,8 @@ Notes: <可选补充>
         message = `现在是 ${timeStr}，线上有 ${count} 位伙伴~`
       }
       bot.chat(message)
+      ctrl.lastAnnounceMinute = minuteKey
+      ctrl.persistDirty = true
     } catch {}
   }
 

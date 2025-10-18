@@ -41,9 +41,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // Route dlog through namespaced logger if present
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
   state.sleepingInProgress = state.sleepingInProgress || false
+  state.sleepNoBedLastNotified = state.sleepNoBedLastNotified || 0
   let timer = null
   let lastAttemptAt = 0
   const COOLDOWN_MS = 3000
+  const NO_BED_NOTIFY_INTERVAL_MS = 60000
+
+  function hasOtherPlayersNearby () {
+    try {
+      const players = bot.players || {}
+      return Object.values(players).some((p) => p && p.username && p.username !== bot.username && p.entity)
+    } catch {}
+    return false
+  }
 
   async function trySleepNearby () {
     try { if (state?.backInProgress || state?.externalBusy) return } catch {}
@@ -59,7 +69,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
     lastAttemptAt = now
     const bed = findBedAroundBot(bot, 3)
-    if (!bed) { dlog && dlog('sleep: night, no bed nearby (radius=3)') ; return }
+    if (!bed) {
+      dlog && dlog('sleep: night, no bed nearby (radius=3)')
+      if (hasOtherPlayersNearby()) {
+        const notifyGap = now - (state.sleepNoBedLastNotified || 0)
+        if (notifyGap >= NO_BED_NOTIFY_INTERVAL_MS) {
+          state.sleepNoBedLastNotified = now
+          try { bot.chat('我附近没有床，想跳夜的话请带我到床边喵~') } catch {}
+        }
+      }
+      return
+    }
     dlog && dlog('sleep: bed candidate at', bed.position)
     try { await bot.lookAt(bed.position.offset(0.5, 0.5, 0.5), true) } catch {}
     try {
@@ -77,8 +97,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     else dlog && dlog('sleep: watcher started')
   })
 
-  on('sleep', () => { if (log?.info) log.info('sleep: entered'); else dlog && dlog('sleep: entered') })
-  on('wake', () => { if (log?.info) log.info('sleep: woke up'); else dlog && dlog('sleep: woke up') })
+  on('sleep', () => {
+    state.sleepNoBedLastNotified = 0
+    if (log?.info) log.info('sleep: entered')
+    else dlog && dlog('sleep: entered')
+  })
+  on('wake', () => {
+    state.sleepNoBedLastNotified = 0
+    if (log?.info) log.info('sleep: woke up')
+    else dlog && dlog('sleep: woke up')
+  })
 
   on('end', () => {
     try { if (timer) clearInterval(timer) } catch {}
