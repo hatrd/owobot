@@ -175,6 +175,59 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     })
   }
 
+  async function runGitCommand (args, { stdin } = {}) {
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn('git', args, { cwd: process.cwd() })
+        let stdout = ''
+        let stderr = ''
+        proc.stdout.on('data', (d) => { stdout += d.toString() })
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('error', (err) => {
+          resolve({ ok: false, code: null, stdout, stderr: stderr || (err?.message || String(err)) })
+        })
+        proc.on('close', (code) => {
+          resolve({ ok: code === 0, code, stdout, stderr })
+        })
+        if (stdin) {
+          proc.stdin.write(stdin)
+        }
+        proc.stdin.end()
+      } catch (e) {
+        resolve({ ok: false, code: null, stdout: '', stderr: e?.message || String(e) })
+      }
+    })
+  }
+
+  async function commitIterationChanges ({ summary, reasonLabel }) {
+    const status = await gitStatusSnapshot()
+    if (!status) {
+      logger.warn('[iterate] git status unavailable; skip auto commit')
+      return
+    }
+    if (!status.trim()) {
+      logger.info('[iterate] git status clean; no auto commit needed')
+      return
+    }
+    const addRes = await runGitCommand(['add', '-A'])
+    if (!addRes.ok) {
+      logger.warn('[iterate] git add failed:', addRes.stderr || addRes.stdout || addRes.code)
+      return
+    }
+    const rawSummary = (summary && summary.trim()) || ''
+    const fallback = reasonLabel || 'auto-iterate update'
+    const singleLine = (rawSummary || fallback).split('\n').map(s => s.trim()).filter(Boolean).join(' ').slice(0, 72) || 'auto-iterate update'
+    const message = `chore(auto-iterate): ${singleLine}`
+    const commitRes = await runGitCommand(['commit', '-m', message])
+    if (!commitRes.ok) {
+      logger.warn('[iterate] git commit failed:', commitRes.stderr || commitRes.stdout || commitRes.code)
+      // Attempt to unstage to avoid locking future commits
+      await runGitCommand(['reset', '--mixed', 'HEAD'])
+      return
+    }
+    logger.info('[iterate] auto commit created:', singleLine)
+  }
+
   function currentLogPath () {
     try {
       const active = fileLogger.currentPath && fileLogger.currentPath()
@@ -536,6 +589,13 @@ Notes: <可选补充>
       ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: changed ? 'changed' : 'noop', summary: finalSummary || '', broadcast: broadcastMsg || null })
       if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
       ctrl.persistDirty = true
+      if (changed) {
+        try {
+          await commitIterationChanges({ summary: finalSummary, reasonLabel })
+        } catch (e) {
+          logger.warn('[iterate] auto commit error:', e?.message || e)
+        }
+      }
       return { ok: true, changed, summary: finalSummary, broadcast: broadcastMsg }
     })().catch((e) => {
       ctrl.failureCount = (ctrl.failureCount || 0) + 1

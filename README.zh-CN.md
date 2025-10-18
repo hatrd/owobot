@@ -21,6 +21,7 @@
 - 限定 Codex 写入范围：`AUTO_ITERATE_REPO_ROOT=/绝对路径/到/仓库 npm start`
   - 修改后记得执行 `touch open_fire`（或重启进程）以让自动迭代加载新的权限范围。
 - 放宽 Codex 超时：`CODEX_EXEC_TIMEOUT_MS=180000 npm start`（≤0 表示无限制）
+- 自动提交提示：若希望自动迭代后的本地 `git commit` 成功，请先配置 `git config --global user.name "Bot"` 与 `git config --global user.email "bot@example.com"` 等身份信息。
 - 自定义提示词：编辑 `bot_impl/prompts/` 下的文件（改动后 `touch open_fire` 热重载）
 
 ### 文件日志
@@ -68,6 +69,7 @@
 ## 功能亮点
 - 修改 `bot_impl/` 可热重载逻辑，尽量不掉线；共享状态在重载间保留。
 - DeepSeek 接入：以触发词开头的消息走 AI，AI 通过 TOOL 调用安全工具集。
+- 自动迭代在检测到文件改动后会自动 `git add` + `git commit`（不推送），commit 标题取自 Codex 提供的 summary。
 
 ## 内置能力
 - 自动游泳、自动进食、自动装备、自动合成盔甲、自动种植、自动钓鱼、铁粒跟随、火源灭火、世界轻感知。

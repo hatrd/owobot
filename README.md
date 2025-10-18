@@ -21,6 +21,7 @@ Mineflayer bot with hot reload and optional AI chat.
 - Scope Codex write access: `AUTO_ITERATE_REPO_ROOT=/absolute/path/to/repo npm start`
   - Remember to `touch open_fire` (or restart) after changing this value so the iterator reloads the new scope.
 - Allow Codex more time: `CODEX_EXEC_TIMEOUT_MS=180000 npm start` (omit or ≤0 for no limit)
+- Auto-iterate commits: ensure `user.name` / `user.email` are configured (`git config --global user.name "Bot"` etc.) if you want the post-run auto commit to succeed.
 - Customize AI prompts: edit files under `bot_impl/prompts/` (hot reload via `touch open_fire`)
 
 - **Codex sandboxing:** auto-iteration grants Codex write access only within `AUTO_ITERATE_REPO_ROOT` (defaults to the current working directory). Double-check the path before enabling to avoid exposing unrelated folders.
@@ -69,6 +70,7 @@ Examples
 ## Highlights
 - Hot reload by editing `bot_impl/`; shared state is preserved across reloads when possible.
 - DeepSeek integration: AI routes via TOOL calls on a safe toolset.
+- Auto-iterate runs automatically stage and `git commit` any changes that Codex writes, using the summary as the commit title (no push).
 
 ## Built‑in Behaviors
 - Auto swim/eat/gear/armor craft/plant/fish; follow by iron nugget; fire watch; lightweight world sense.
