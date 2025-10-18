@@ -75,7 +75,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const notifyGap = now - (state.sleepNoBedLastNotified || 0)
         if (notifyGap >= NO_BED_NOTIFY_INTERVAL_MS) {
           state.sleepNoBedLastNotified = now
-          try { bot.chat('我附近没有床，想跳夜的话请带我到床边喵~') } catch {}
+          // try { bot.chat('我附近没有床，想跳夜的话请带我到床边喵~') } catch {}
         }
       }
       return
