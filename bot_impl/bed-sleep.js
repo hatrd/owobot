@@ -50,6 +50,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const NO_BED_NOTIFY_INTERVAL_MS = 60000
   const DISTURBED_RETRY_COOLDOWN_MS = 15000
   const MIN_SLEEP_DURATION_MS = 4000
+  const POST_WAKE_COOLDOWN_MS = 5000
 
   function hasOtherPlayersNearby () {
     try {
@@ -66,7 +67,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const now = Date.now()
     dlog && dlog('sleep: tick night=', night, 'isSleeping=', Boolean(bot.isSleeping), 'tod=', tod)
     if (!night) {
-      state.sleepCooldownUntil = 0
+      if (state.sleepCooldownUntil && state.sleepCooldownUntil < now) state.sleepCooldownUntil = 0
       return
     }
     if (state.sleepCooldownUntil && now < state.sleepCooldownUntil) {
@@ -119,13 +120,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const now = Date.now()
     const lastStart = state.sleepLastStart || 0
     state.sleepLastStart = 0
-    if (!isNight(bot)) {
-      state.sleepCooldownUntil = 0
-    } else if (lastStart && now - lastStart < MIN_SLEEP_DURATION_MS) {
-      state.sleepCooldownUntil = now + DISTURBED_RETRY_COOLDOWN_MS
+    const night = isNight(bot)
+    let targetCooldown = now + POST_WAKE_COOLDOWN_MS
+    if (night && lastStart && now - lastStart < MIN_SLEEP_DURATION_MS) {
+      targetCooldown = now + DISTURBED_RETRY_COOLDOWN_MS
       const msg = 'sleep: disturbed, delaying retry ' + DISTURBED_RETRY_COOLDOWN_MS + 'ms'
       if (log?.info) log.info(msg)
       else dlog && dlog(msg)
+    } else if (!night) {
+      const msg = 'sleep: post-wake cooldown ' + POST_WAKE_COOLDOWN_MS + 'ms'
+      if (log?.info) log.info(msg)
+      else dlog && dlog(msg)
+    }
+    if (!state.sleepCooldownUntil || state.sleepCooldownUntil < targetCooldown) {
+      state.sleepCooldownUntil = targetCooldown
     }
     if (log?.info) log.info('sleep: woke up')
     else dlog && dlog('sleep: woke up')
