@@ -231,8 +231,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     session = (async () => {
       try {
         try { if (state) state.currentTask = { name: 'auto_fish', source: 'auto', startedAt: Date.now() } } catch {}
-        // suspend auto-look and hand-equip clobber during fishing
-        try { if (state) { state.autoLookSuspended = true; state.holdItemLock = 'fishing_rod'; state.isFishing = true } } catch {}
         // preconditions
         if (S.gen !== GEN) return
         if (!hasFishingRod()) { if (cfg.debug) L.info('skip: no rod'); return }
@@ -258,13 +256,33 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             if (alt) await goto(alt, 0)
           }
         }
+        if (feetInWater()) { if (cfg.debug) L.info('abort: still in water after positioning'); return }
         // Equip rod and fish loop until preconditions break
         const ok = await ensureRodEquipped(); if (!ok) { if (cfg.debug) L.info('equip failed'); return }
+        // suspend auto-look and main-hand churn only once we are safely on land
+        try {
+          if (state) {
+            state.autoLookSuspended = true
+            state.holdItemLock = 'fishing_rod'
+            state.isFishing = true
+          }
+        } catch {}
         while (cfg.enabled && S.gen === GEN) {
           if (state.externalBusy) break
           if (!hasFishingRod()) break
           const here = bot.entity?.position; if (!here) break
           if (!isNearbyWater(here, 3)) { if (cfg.debug) L.info('stop: water no longer nearby'); break }
+          if (feetInWater()) {
+            if (cfg.debug) L.info('stop: feet in water, yielding for safety')
+            try {
+              if (state) {
+                if (state.holdItemLock === 'fishing_rod') state.holdItemLock = null
+                state.autoLookSuspended = false
+              }
+              try { bot.activateItem() } catch {}
+            } catch {}
+            break
+          }
           // keep rod in hand in case other modules changed it
           await ensureRodEquipped()
           // orient to nearest water to reduce immediate cancels due to ground
@@ -284,7 +302,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         }
       } finally {
         try { if (state && state.currentTask && state.currentTask.name === 'auto_fish') state.currentTask = null } catch {}
-        try { if (state) { state.holdItemLock = null; state.autoLookSuspended = false; state.isFishing = false } } catch {}
+        try {
+          if (state) {
+            if (state.holdItemLock === 'fishing_rod') state.holdItemLock = null
+            state.autoLookSuspended = false
+            if (state.isFishing) state.isFishing = false
+          }
+        } catch {}
         session = null
         S.running = false
       }
