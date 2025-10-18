@@ -915,12 +915,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             if (speech) return ''
             return H.trimReply(res.msg || '好的', maxReplyLen || 120)
           }
-          const failMsg = H.trimReply(`失败: ${res?.msg || '未知'}`, maxReplyLen || 120)
+          const failText = H.trimReply(res?.msg || '这次没成功！', maxReplyLen || 120)
           if (speech) {
-            try { bot.chat(failMsg) } catch {}
+            try { bot.chat(failText) } catch {}
             return ''
           }
-          return failMsg
+          return failText
         }
       }
       // Usage accounting (if provided), otherwise rough estimate

@@ -238,7 +238,7 @@ ${logs}`,
 要求：
 - 无需额外文本，仅输出JSON。
 - 当没有修改时，actions 为空数组，并在 summary 说明原因。
-- 所有补丁必须是标准 unified diff，可直接用于 \`git apply\`，且仅包含当前仓库内变更。
+- 所有补丁必须是标准 unified diff，可直接用于 \`git apply\`，且仅包含当前仓库内变更。请确保每个 hunk 行写成 \`@@ -旧行,旧数 +新行,新数 @@\`（例如 \`@@ -12,5 +12,7 @@\`），不要只写 \`@@\`。返回前请确认 \`git apply --check\`（dry run）已通过。
 - 如有多处修改，可提供多个 patch 项。
 - 你可以通过 git 命令确定仓库历史、当前状态等。`
     ].join('\n\n')
@@ -370,11 +370,85 @@ ${logs}`,
     const raw = input.replace(/\r\n/g, '\n')
     const lines = raw.split('\n')
     let mutated = false
+    const files = new Map()
+    let currentFile = null
+    let currentOldPath = null
+
+    function parsePath (token) {
+      const trimmed = token.trim()
+      if (trimmed === '/dev/null') return '/dev/null'
+      const part = trimmed.split(/\s+/)[0] || ''
+      return part.replace(/^([ab])\//, '')
+    }
+
+    function getFileInfo (filePath, oldPathHint) {
+      if (!filePath || filePath === '/dev/null') return null
+      if (!files.has(filePath)) {
+        const info = { delta: 0, lastOldStart: 1, content: null, oldPath: oldPathHint }
+        const oldPath = (oldPathHint && oldPathHint !== '/dev/null') ? oldPathHint : filePath
+        const abs = path.resolve(process.cwd(), oldPath)
+        try {
+          if (fs.existsSync(abs)) info.content = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n').split('\n')
+          else info.content = []
+        } catch { info.content = [] }
+        files.set(filePath, info)
+      }
+      const info = files.get(filePath)
+      if (oldPathHint && !info.oldPath) info.oldPath = oldPathHint
+      return info
+    }
+
+    function findOldStart (info, hunkLines) {
+      if (!info) return 1
+      if (!info.content || !info.content.length) return info.lastOldStart || 1
+      const candidates = hunkLines
+        .filter(line => line && (line[0] === ' ' || line[0] === '-'))
+        .map(line => line.slice(1))
+      if (!candidates.length) return info.lastOldStart || 1
+      const maxWindow = Math.min(6, candidates.length)
+      for (let take = maxWindow; take >= 1; take--) {
+        const needle = candidates.slice(0, take)
+        const first = needle[0]
+        for (let idx = 0; idx < info.content.length; idx++) {
+          if (info.content[idx] !== first) continue
+          let match = true
+          for (let k = 1; k < needle.length; k++) {
+            if (info.content[idx + k] !== needle[k]) { match = false; break }
+          }
+          if (match) return idx + 1
+        }
+      }
+      return info.lastOldStart || 1
+    }
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
+      if (line.startsWith('--- ')) {
+        currentOldPath = parsePath(line.slice(4))
+        continue
+      }
+      if (line.startsWith('+++ ')) {
+        currentFile = parsePath(line.slice(4))
+        getFileInfo(currentFile, currentOldPath)
+        continue
+      }
       if (!line.startsWith('@@')) continue
       const trimmed = line.trim()
-      if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(trimmed)) continue
+      if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(trimmed)) {
+        const info = currentFile ? files.get(currentFile) : null
+        if (info) {
+          const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@$/.exec(trimmed)
+          if (m) {
+            const oldStart = parseInt(m[1] || '1', 10) || 1
+            const oldCount = parseInt(m[2] || m[1] || '0', 10) || 0
+            const newCount = parseInt(m[4] || m[3] || '0', 10) || 0
+            info.lastOldStart = oldStart
+            info.delta = (info.delta || 0) + (newCount - oldCount)
+          }
+        }
+        continue
+      }
+      const hunkLines = []
       let removed = 0
       let added = 0
       let context = 0
@@ -384,6 +458,7 @@ ${logs}`,
         const prefix = hunkLine[0]
         if (prefix === 'd' && hunkLine.startsWith('diff --git ')) break
         if (prefix === '@' && hunkLine.startsWith('@@')) break
+        hunkLines.push(hunkLine)
         if (prefix === ' ') { context++; continue }
         if (prefix === '+') { added++; continue }
         if (prefix === '-') { removed++; continue }
@@ -392,8 +467,19 @@ ${logs}`,
       }
       const oldCount = context + removed
       const newCount = context + added
-      const oldStart = oldCount > 0 ? 1 : 0
-      const newStart = newCount > 0 ? 1 : 0
+      const info = currentFile ? getFileInfo(currentFile, currentOldPath) : null
+      let oldStart = oldCount > 0 ? 1 : 0
+      if (info && oldCount > 0) {
+        const guess = findOldStart(info, hunkLines)
+        if (Number.isFinite(guess) && guess > 0) oldStart = guess
+        info.lastOldStart = oldStart
+      }
+      let newStart = newCount > 0 ? Math.max(1, oldStart) : 0
+      if (info) {
+        const delta = info.delta || 0
+        newStart = newCount > 0 ? Math.max(1, oldStart + delta) : Math.max(0, oldStart + delta)
+        info.delta = delta + (newCount - oldCount)
+      }
       lines[i] = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`
       mutated = true
     }

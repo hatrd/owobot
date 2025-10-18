@@ -2972,11 +2972,12 @@ function install (bot, { log, on, registerCleanup }) {
       if (res && res.reason === 'cooldown' && res.until) {
         const waitMs = Math.max(0, res.until - Date.now())
         const waitMin = Math.ceil(waitMs / 60000)
-        return fail(`冷却中，再等${waitMin}分钟哦`)
+        return fail(`还在冷却中哦，再等${waitMin}分钟~`)
       }
-      if (res?.reason === 'codex_missing') return fail('未找到 codex 命令，无法自动迭代')
-      if (res?.reason === 'codex_home_unwritable') return fail('无法创建 codex 工作目录')
-      return fail(res?.detail || res?.reason || '触发失败')
+      if (res?.reason === 'codex_missing') return fail('学习模块缺失X﹏X 能帮我装一下吗')
+      if (res?.reason === 'codex_home_unwritable') return fail('学习模块写入失败')
+      if (log?.warn) log.warn('iterate_feedback failed:', res?.detail || res?.reason || 'unknown')
+      return fail('太复杂了，学不会呀（︶^︶）')
     }
     const msg = res.changed ? '已触发代码迭代（有更新）' : '已触发代码迭代（无更新）'
     return ok(msg, { summary: res.summary || '', broadcast: res.broadcast || null })
