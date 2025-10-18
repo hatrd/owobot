@@ -214,12 +214,15 @@ const DEFAULT_GREETING_ZONES = [
     name: 'siwuxie_wool',
     x: -175,
     y: 64,
-    z: 10,
+    z: 99,
     radius: 50,
-    suffix: 'Siwuxie_log 的十六色羊毛机已经开机啦，现在tpa 我免费领羊毛~',
+    suffix: 'Siwuxie_log 的十六色羊毛机已经开机啦，现在 tpa 我免费领羊毛~',
     enabled: true
   }
 ]
+
+function greetLogEnabled () { try { return Boolean(state?.greetLogEnabled) } catch { return false } }
+function greetLog (...args) { if (greetLogEnabled()) console.log('[GREET]', ...args) }
 
 function initializeGreetingZones () {
   if (!state) return
@@ -235,11 +238,12 @@ function initializeGreetingZones () {
   state.greetZonesSeeded = true
 }
 
-function collectGreetingSuffixes () {
+function collectGreetingSuffixes (opts = {}) {
   try {
     if (!state || !Array.isArray(state.greetZones)) return []
     const pos = bot?.entity?.position
     if (!pos) return []
+    const logIt = Boolean(opts.debug) || greetLogEnabled()
     const suffixes = []
     for (const zone of state.greetZones) {
       if (!zone) continue
@@ -254,9 +258,12 @@ function collectGreetingSuffixes () {
       if (![zx, zy, zz].every(Number.isFinite)) continue
       const center = new Vec3(zx, zy, zz)
       const dist = pos.distanceTo(center)
-      if (!Number.isFinite(dist) || dist > radius) continue
+      const within = Number.isFinite(dist) && dist <= radius
+      if (logIt) greetLog(`zone ${zone.name || '(unnamed)'} enabled=${zone.enabled !== false} radius=${radius} dist=${Number.isFinite(dist) ? dist.toFixed(2) : 'nan'} within=${within}`)
+      if (!within) continue
       suffixes.push(suffix)
     }
+    if (logIt) greetLog('suffix result ->', suffixes)
     return suffixes
   } catch { return [] }
 }
@@ -354,6 +361,41 @@ function handleGreetZoneCli (args = []) {
   console.log('[GREETZONE] 未知子命令，使用 .greetzone help 查看用法')
 }
 
+function handleGreetLogCli (args = []) {
+  const sub = String(args[0] || 'status').toLowerCase()
+  switch (sub) {
+    case 'on':
+    case 'enable':
+      state.greetLogEnabled = true
+      console.log('[GREET] 调试日志已开启')
+      break
+    case 'off':
+    case 'disable':
+      state.greetLogEnabled = false
+      console.log('[GREET] 调试日志已关闭')
+      break
+    case 'status': {
+      const pos = bot?.entity?.position
+      console.log('[GREET] 调试日志状态 =', state.greetLogEnabled ? '开启' : '关闭')
+      if (pos) console.log(`[GREET] 当前位置 = ${pos.x.toFixed(2)},${pos.y.toFixed(2)},${pos.z.toFixed(2)}`)
+      const zones = Array.isArray(state?.greetZones) ? state.greetZones.length : 0
+      console.log('[GREET] 区域配置数量 =', zones)
+      break
+    }
+    case 'sample': {
+      const suffixes = collectGreetingSuffixes({ debug: true })
+      console.log('[GREET] 即时匹配后缀 =', suffixes.length ? suffixes.join(' | ') : '无')
+      break
+    }
+    case 'help':
+      console.log('[GREET] 用法: .greetlog on|off|status|sample')
+      console.log('  sample 会立即计算一次并打印详情')
+      break
+    default:
+      console.log('[GREET] 未知子命令，使用 .greetlog help 查看用法')
+  }
+}
+
 function buildGreeting (username) {
   const now = new Date()
   const hour = now.getHours()
@@ -365,7 +407,9 @@ function buildGreeting (username) {
   else if (hour >= 18 && hour < 23) salutation = '晚上好呀'
   else salutation = '深夜好喔'
 
-  const parts = [GREET_DEFAULT_SUFFIX, ...collectGreetingSuffixes()]
+  const suffixes = collectGreetingSuffixes()
+  greetLog('build greeting for', username, 'suffixes=', suffixes)
+  const parts = [GREET_DEFAULT_SUFFIX, ...suffixes]
   const extra = parts.length ? `，${parts.join(' ')}` : ''
   return `${salutation} ${username}酱~ 这里是${bot.username}${extra}`
 }
@@ -392,18 +436,22 @@ function resolvePlayerUsername (player) {
 }
 
 function scheduleGreeting (username) {
+  greetLog('queue greeting for', username, 'in', `${GREET_INITIAL_DELAY_MS}ms`)
   const timeout = setTimeout(() => {
     state.pendingGreets.delete(username)
     if (state.greetedPlayers.has(username)) {
+      greetLog('skip greet (already greeted at dispatch)', username)
       dlog('Skip greeting (race): already greeted:', username)
       return
     }
     const message = buildGreeting(username)
+    greetLog('send greeting', username, 'message=', message)
     dlog('Sending greeting to', username, 'message =', message)
     try { bot.chat(message) } catch (e) { console.error('Chat error:', e) }
     state.greetedPlayers.add(username)
   }, GREET_INITIAL_DELAY_MS)
 
+  greetLog('scheduled greeting', username)
   dlog(`Scheduled greeting in ${GREET_INITIAL_DELAY_MS}ms for:`, username)
   state.pendingGreets.set(username, timeout)
 }
@@ -480,6 +528,7 @@ function activate (botInstance, options = {}) {
     greetingEnabled: GREET,
     greetZones: [],
     greetZonesSeeded: false,
+    greetLogEnabled: false,
     loginPassword: undefined
   }
 
@@ -487,6 +536,7 @@ function activate (botInstance, options = {}) {
   if (!Number.isFinite(state.externalBusyCount) || state.externalBusyCount < 0) state.externalBusyCount = 0
   if (!Array.isArray(state.greetZones)) state.greetZones = []
   if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
+  if (typeof state.greetLogEnabled !== 'boolean') state.greetLogEnabled = false
   // Ensure greetingEnabled is initialized even when reusing shared state from loader
   if (typeof state.greetingEnabled === 'undefined') state.greetingEnabled = GREET
   // Propagate login password from loader config or env into shared state
@@ -546,8 +596,12 @@ function activate (botInstance, options = {}) {
   })
 
   on('cli', ({ cmd, args }) => {
-    if (String(cmd || '').toLowerCase() !== 'greetzone') return
-    handleGreetZoneCli(Array.isArray(args) ? args : [])
+    const c = String(cmd || '').toLowerCase()
+    if (c === 'greetzone') {
+      handleGreetZoneCli(Array.isArray(args) ? args : [])
+    } else if (c === 'greetlog') {
+      handleGreetLogCli(Array.isArray(args) ? args : [])
+    }
   })
 
   // Feature: sleep when item dropped onto a bed at night
@@ -689,28 +743,35 @@ function activate (botInstance, options = {}) {
     dlog('playerJoined event:', summarizePlayer(player))
     const username = resolvePlayerUsername(player)
     if (!username) {
+      greetLog('skip greet: unresolved username from player payload')
       dlog('Skip greeting: cannot resolve username from player:', player)
       return
     }
+    greetLog('player joined', username, 'pos=', (() => { try { const p = player?.entity?.position; return p ? `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}` : 'unknown' } catch { return 'unknown' } })())
     if (username === bot.username) {
+      greetLog('skip greet: joined player is bot itself', username)
       dlog('Skip greeting: joined player is the bot itself:', username)
       return
     }
     if (!state.readyForGreeting) {
+      greetLog('skip greet: bot not ready (readyForGreeting=false)', username)
       dlog('Skip greeting: not readyForGreeting yet')
       return
     }
     if (state.greetedPlayers.has(username)) {
+      greetLog('skip greet: already greeted', username)
       dlog('Skip greeting: already greeted:', username)
       return
     }
     if (state.pendingGreets.has(username)) {
+      greetLog('skip greet: already pending', username)
       dlog('Skip greeting: already pending:', username)
       return
     }
     if (state.aiRecentReplies instanceof Map) {
       const ts = state.aiRecentReplies.get(username)
       if (Number.isFinite(ts) && Date.now() - ts < RECENT_AI_REPLY_WINDOW_MS) {
+        greetLog('skip greet: recent AI reply exists', username)
         dlog('Skip greeting: recent AI reply for', username)
         state.greetedPlayers.add(username)
         return
@@ -724,13 +785,18 @@ function activate (botInstance, options = {}) {
     if (state && state.greetingEnabled === false) return
     const username = resolvePlayerUsername(player)
     dlog('playerLeft event:', summarizePlayer(player), 'resolved =', username)
-    if (!username) return
+    if (!username) {
+      greetLog('player left but username unresolved (no cleanup)')
+      return
+    }
+    greetLog('player left', username)
     state.greetedPlayers.delete(username)
     if (state.aiRecentReplies instanceof Map) state.aiRecentReplies.delete(username)
     const timeout = state.pendingGreets.get(username)
     if (timeout) {
       clearTimeout(timeout)
       state.pendingGreets.delete(username)
+      greetLog('cancel pending greeting due to leave', username)
       dlog('Cancelled pending greeting for left player:', username)
     }
   })
