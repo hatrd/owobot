@@ -149,6 +149,32 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
 
+  async function gitStatusSnapshot () {
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn('git', ['status', '--porcelain'], { cwd: process.cwd() })
+        let stdout = ''
+        let stderr = ''
+        proc.stdout.on('data', (d) => { stdout += d.toString() })
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('error', (err) => {
+          logger.warn('git status error:', err?.message || err)
+          resolve(null)
+        })
+        proc.on('close', (code) => {
+          if (code === 0) resolve(stdout.replace(/\s+$/, ''))
+          else {
+            logger.warn('git status failed:', stderr || `exit ${code}`)
+            resolve(null)
+          }
+        })
+      } catch (e) {
+        logger.warn('git status exception:', e?.message || e)
+        resolve(null)
+      }
+    })
+  }
+
   function currentLogPath () {
     try {
       const active = fileLogger.currentPath && fileLogger.currentPath()
@@ -220,7 +246,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       : '- 暂无记录'
     return [
       `# 角色
-你是Minecraft机器人项目的协作者，负责根据运行日志提出改进，并在需要时直接给出代码补丁。改进包括不限于修复代码错误、优化玩家体验、增加有趣的功能等`,
+你是Minecraft机器人项目的合作者。根据运行日志，自主分析并直接修改仓库中的代码/配置，以提升稳定性、玩家体验或功能性。`,
       `# 触发信息
 ${summary}
 触发原因：${reason}`,
@@ -228,35 +254,18 @@ ${summary}
 ${historyText}`,
       `# 输入日志
 ${logs}`,
-      `# 输出格式
-请输出一个JSON对象：
-{
-  "summary": "<<=200字摘要>",
-  "actions": [
-    { "kind": "patch"|"note", "detail": "说明", "patch": "统一diff（当kind=patch时必填）" }
-  ],
-  "broadcast": "若有新功能，对玩家的中文播报",
-  "notes": ["可选补充"]
-}
-要求：
-- 无需额外文本，仅输出JSON。
-- 当没有修改时，actions 为空数组，并在 summary 说明原因。
-- 所有补丁必须是标准 unified diff，可直接用于 \`git apply\`，且仅包含当前仓库内变更。请确保每个 hunk 行写成 \`@@ -旧行,旧数 +新行,新数 @@\`（例如 \`@@ -12,5 +12,7 @@\`），不要只写 \`@@\`。返回前请确认 \`git apply --check\`（dry run）已通过。
-- 如有多处修改，可提供多个 patch 项。
-- 你可以通过 git 命令确定仓库历史、当前状态等。`
-    ].join('\n\n')
-  }
+      `# 工作方式
+- 直接在当前仓库中运行命令、编辑文件并检查结果；不要返回补丁或 JSON。
+- 可使用 \`git status\` / \`git diff\` 等命令确认变更，但不要提交、推送或重写历史。
+- 修改范围以日志暴露的问题/改进为主，避免与当前上下文无关的大规模改动。`,
+      `# 输出要求
+完成修改后，请以以下三行结尾（若无内容可留空）：
+Summary: <简短中文总结>
+Broadcast: <给玩家的播报，无则留空>
+Notes: <可选补充>
 
-  function buildResumeMessage ({ failureDetail, attempt }) {
-    const clean = (failureDetail && String(failureDetail).trim()) || '(无错误输出)'
-    return [
-      `# 补丁失败反馈（第${attempt}次重试，最多3次）`,
-      '上一次生成的补丁在执行 `git apply` 时失败，标准错误输出如下：',
-      '```',
-      clean,
-      '```',
-      '请继续沿用既有上下文，基于上述失败原因修正方案，并再次输出完整 JSON 响应（字段格式与初始指令一致）。'
-    ].join('\n')
+如需额外说明，可在上述三行之前自由撰写。`
+    ].join('\n\n')
   }
 
   async function runCodex ({ logChunk, reason, resume }) {
@@ -270,12 +279,13 @@ ${logs}`,
       logger.warn('Failed to create tmp dir for codex:', e?.message || e)
       return { ok: false, reason: 'tmpdir_failed' }
     }
-    const outputPath = path.join(tmpDir, 'last-message.json')
+    const outputPath = path.join(tmpDir, 'last-message.txt')
     const sharedConfigArgs = ['-c', 'task.max_iterations=1', '-c', 'sandbox_permissions=["disk-full-read-access"]', '-c', 'shell_environment_policy.inherit=all']
     const sharedModelArgs = []
     if (codexModel && codexModel.trim()) sharedModelArgs.push('-m', codexModel.trim())
     if (codexExtraArgs.length) sharedModelArgs.push(...codexExtraArgs)
 
+    const optionArgs = ['--json', '--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs]
     const args = ['exec']
     let resumeSessionId = null
     if (resume) {
@@ -285,10 +295,9 @@ ${logs}`,
         logger.warn('runCodex resume requested without session id')
         return { ok: false, reason: 'resume_session_missing', detail: 'missing_session_id' }
       }
-      args.push('resume')
-      args.push('--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs, resumeSessionId, '-')
+      args.push('resume', ...optionArgs, resumeSessionId, '-')
     } else {
-      args.push('--skip-git-repo-check', '--output-last-message', outputPath, ...sharedConfigArgs, ...sharedModelArgs, '-')
+      args.push(...optionArgs, '-')
     }
 
     const env = { ...process.env, HOME: codexHome }
@@ -360,37 +369,60 @@ ${logs}`,
             finish({ ok: false, reason: 'no_output', detail: stdout || stderr })
             return
           }
-          const trimmed = raw.trim()
-          if (!trimmed) {
+          const message = raw.trim()
+          if (!message) {
             finish({ ok: false, reason: 'empty_output', detail: stdout || stderr })
             return
           }
-          let parsed
-          try {
-            parsed = JSON.parse(trimmed)
-          } catch (e) {
-            logger.warn('codex output not JSON:', trimmed.slice(0, 200))
-            finish({ ok: false, reason: 'invalid_json', detail: trimmed.slice(0, 200) })
-            return
+
+          const summaryMatch = Array.from(message.matchAll(/^Summary:\s*(.*)$/gmi)).pop()
+          const broadcastMatch = Array.from(message.matchAll(/^Broadcast:\s*(.*)$/gmi)).pop()
+          const notesMatch = Array.from(message.matchAll(/^Notes:\s*(.*)$/gmi)).pop()
+          const summary = summaryMatch ? summaryMatch[1].trim() : ''
+          const broadcast = broadcastMatch ? broadcastMatch[1].trim() : ''
+          const notes = notesMatch ? notesMatch[1].trim() : ''
+
+          const extractSessionId = (text) => {
+            const lines = text.split(/\r?\n/)
+            for (const line of lines) {
+              const trimmedLine = line.trim()
+              if (!trimmedLine) continue
+              try {
+                const obj = JSON.parse(trimmedLine)
+                const probe = (value) => {
+                  if (!value || typeof value !== 'object') return null
+                  if (typeof value.session_id === 'string' && value.session_id.trim()) return value.session_id.trim()
+                  if (typeof value.sessionId === 'string' && value.sessionId.trim()) return value.sessionId.trim()
+                  for (const key of Object.keys(value)) {
+                    const res = probe(value[key])
+                    if (res) return res
+                  }
+                  return null
+                }
+                const found = probe(obj)
+                if (found) return found
+              } catch {}
+            }
+            const regex = /\"session_id\"\s*:\s*\"([^\"]+)\"/g
+            const match = regex.exec(text)
+            return match ? match[1].trim() : null
           }
-          const summary = String(parsed.summary || '').trim()
-          const broadcast = parsed.broadcast ? String(parsed.broadcast).trim() : null
-          const actions = Array.isArray(parsed.actions) ? parsed.actions : []
-          const notes = Array.isArray(parsed.notes) ? parsed.notes : null
-          const patches = actions.filter(a => a && a.kind === 'patch' && a.patch && String(a.patch).trim()).map(a => ({
-            detail: a.detail ? String(a.detail) : '',
-            patch: String(a.patch).trim()
-          }))
-          const notables = actions.filter(a => !a || a.kind !== 'patch')
-          const sessionIdRaw = parsed.session_id || parsed.sessionId || (parsed.session && (parsed.session.id || parsed.session.session_id || parsed.session.sessionId)) || (parsed.metadata && (parsed.metadata.session_id || parsed.metadata.sessionId))
-          const sessionId = sessionIdRaw ? String(sessionIdRaw).trim() : null
-          const resumeHint = sessionId ? { sessionId } : null
+
+          const sessionId = extractSessionId(stdout) || (resumeSessionId ? resumeSessionId.trim() : null)
           if (resumeSessionId && sessionId && sessionId !== resumeSessionId) {
             logger.warn('resume session mismatch:', resumeSessionId, sessionId)
             finish({ ok: false, reason: 'resume_session_mismatch', detail: `expected ${resumeSessionId} got ${sessionId}` })
             return
           }
-          finish({ ok: true, summary, broadcast, patches, notes, raw: parsed, otherActions: notables, resumeHint })
+          const resumeHint = sessionId ? { sessionId } : null
+          finish({
+            ok: true,
+            summary,
+            broadcast,
+            notes,
+            raw: message,
+            resumeHint
+          })
         })().catch((err) => {
           logger.error('codex post-processing error:', err?.message || err)
           finish({ ok: false, reason: 'processing_error', detail: err?.message || String(err) })
@@ -402,214 +434,6 @@ ${logs}`,
       } catch {}
       try { proc.stdin.end() } catch {}
     })
-  }
-
-  function normalizeUnifiedDiff (input) {
-    if (!input) return input
-    const raw = input.replace(/\r\n/g, '\n')
-    const lines = raw.split('\n')
-    let mutated = false
-    const files = new Map()
-    let currentFile = null
-    let currentOldPath = null
-
-    function parsePath (token) {
-      const trimmed = token.trim()
-      if (trimmed === '/dev/null') return '/dev/null'
-      const part = trimmed.split(/\s+/)[0] || ''
-      return part.replace(/^([ab])\//, '')
-    }
-
-    function getFileInfo (filePath, oldPathHint) {
-      if (!filePath || filePath === '/dev/null') return null
-      if (!files.has(filePath)) {
-        const info = { delta: 0, lastOldStart: 1, content: null, oldPath: oldPathHint }
-        const oldPath = (oldPathHint && oldPathHint !== '/dev/null') ? oldPathHint : filePath
-        const abs = path.resolve(process.cwd(), oldPath)
-        try {
-          if (fs.existsSync(abs)) info.content = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n').split('\n')
-          else info.content = []
-        } catch { info.content = [] }
-        files.set(filePath, info)
-      }
-      const info = files.get(filePath)
-      if (oldPathHint && !info.oldPath) info.oldPath = oldPathHint
-      return info
-    }
-
-    function findOldStart (info, hunkLines) {
-      if (!info) return 1
-      if (!info.content || !info.content.length) return info.lastOldStart || 1
-      const candidates = hunkLines
-        .filter(line => line && (line[0] === ' ' || line[0] === '-'))
-        .map(line => line.slice(1))
-      if (!candidates.length) return info.lastOldStart || 1
-      const maxWindow = Math.min(6, candidates.length)
-      for (let take = maxWindow; take >= 1; take--) {
-        const needle = candidates.slice(0, take)
-        const first = needle[0]
-        for (let idx = 0; idx < info.content.length; idx++) {
-          if (info.content[idx] !== first) continue
-          let match = true
-          for (let k = 1; k < needle.length; k++) {
-            if (info.content[idx + k] !== needle[k]) { match = false; break }
-          }
-          if (match) return idx + 1
-        }
-      }
-      return info.lastOldStart || 1
-    }
-
-    function readHunk (startIdx) {
-      const hunkLines = []
-      for (let j = startIdx; j < lines.length; j++) {
-        const hunkLine = lines[j]
-        if (!hunkLine) break
-        if (hunkLine.startsWith('diff --git ')) break
-        if (hunkLine.startsWith('@@')) break
-        if (hunkLine.startsWith('--- ') || hunkLine.startsWith('+++ ')) break
-        hunkLines.push(hunkLine)
-      }
-      let oldCount = 0
-      let newCount = 0
-      for (const hLine of hunkLines) {
-        const prefix = hLine[0]
-        if (prefix === '-') { oldCount++; continue }
-        if (prefix === '+') { newCount++; continue }
-        if (prefix === ' ') { oldCount++; newCount++; continue }
-        if (prefix === '\\') continue
-      }
-      return { hunkLines, oldCount, newCount }
-    }
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (line.startsWith('--- ')) {
-        currentOldPath = parsePath(line.slice(4))
-        continue
-      }
-      if (line.startsWith('+++ ')) {
-        currentFile = parsePath(line.slice(4))
-        getFileInfo(currentFile, currentOldPath)
-        continue
-      }
-      if (!line.startsWith('@@')) continue
-      const trimmed = line.trim()
-      const { hunkLines, oldCount, newCount } = readHunk(i + 1)
-      const info = currentFile ? getFileInfo(currentFile, currentOldPath) : null
-      const metaMatch = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(trimmed)
-      if (metaMatch) {
-        const oldStart = parseInt(metaMatch[1] || '1', 10) || 1
-        const declaredOldCount = metaMatch[2] ? parseInt(metaMatch[2], 10) : 1
-        const newStart = parseInt(metaMatch[3] || '1', 10) || 1
-        const declaredNewCount = metaMatch[4] ? parseInt(metaMatch[4], 10) : 1
-        const suffix = metaMatch[5] || ''
-        if (info) {
-          info.lastOldStart = oldStart
-          info.delta = (info.delta || 0) + (newCount - oldCount)
-        }
-        if (declaredOldCount !== oldCount || declaredNewCount !== newCount || !metaMatch[2] || !metaMatch[4]) {
-          lines[i] = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@${suffix}`
-          mutated = true
-        }
-        continue
-      }
-      let oldStart = oldCount > 0 ? 1 : 0
-      if (info && oldCount > 0) {
-        const guess = findOldStart(info, hunkLines)
-        if (Number.isFinite(guess) && guess > 0) oldStart = guess
-        info.lastOldStart = oldStart
-      }
-      let newStart = newCount > 0 ? Math.max(1, oldStart) : 0
-      if (info) {
-        const delta = info.delta || 0
-        newStart = newCount > 0 ? Math.max(1, oldStart + delta) : Math.max(0, oldStart + delta)
-        info.delta = delta + (newCount - oldCount)
-      }
-      lines[i] = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`
-      mutated = true
-    }
-    const result = lines.join('\n')
-    const normalized = result.endsWith('\n') ? result : result + '\n'
-    return mutated ? normalized : input
-  }
-
-  async function applyPatch (patchText) {
-    const normalized = normalizeUnifiedDiff(patchText)
-    if (normalized !== patchText) {
-      logger.warn('Normalized diff with missing hunk metadata before apply')
-    }
-    return new Promise((resolve) => {
-      try {
-        const proc = spawn('git', ['apply', '--whitespace=nowarn'], { cwd: process.cwd() })
-        let stderr = ''
-        proc.stdout.on('data', () => {})
-        proc.stderr.on('data', (d) => { stderr += d.toString() })
-        proc.on('error', (err) => {
-          logger.error('git apply error:', err?.message || err)
-          resolve({ ok: false, error: err?.message || String(err) })
-        })
-        proc.on('close', (code) => {
-          if (code === 0) resolve({ ok: true, normalized })
-          else {
-            logger.error('git apply failed:', stderr || `exit ${code}`)
-            resolve({ ok: false, error: stderr || `exit ${code}` })
-          }
-        })
-        proc.stdin.end(normalized)
-      } catch (e) {
-        logger.error('applyPatch exception:', e?.message || e)
-        resolve({ ok: false, error: e?.message || String(e) })
-      }
-    })
-  }
-
-  async function revertNormalizedPatch (normalizedPatch) {
-    return new Promise((resolve) => {
-      try {
-        const proc = spawn('git', ['apply', '-R', '--whitespace=nowarn'], { cwd: process.cwd() })
-        let stderr = ''
-        proc.stdout.on('data', () => {})
-        proc.stderr.on('data', (d) => { stderr += d.toString() })
-        proc.on('error', (err) => {
-          logger.error('git apply -R error:', err?.message || err)
-          resolve({ ok: false, error: err?.message || String(err) })
-        })
-        proc.on('close', (code) => {
-          if (code === 0) resolve({ ok: true })
-          else {
-            logger.error('git apply -R failed:', stderr || `exit ${code}`)
-            resolve({ ok: false, error: stderr || `exit ${code}` })
-          }
-        })
-        proc.stdin.end(normalizedPatch)
-      } catch (e) {
-        logger.error('revertNormalizedPatch exception:', e?.message || e)
-        resolve({ ok: false, error: e?.message || String(e) })
-      }
-    })
-  }
-
-  async function applyPatchSet (patches) {
-    if (!patches || !patches.length) return { ok: true, changed: false }
-    const applied = []
-    for (const item of patches) {
-      ctrl.phase = 'apply_patch'
-      logger.info('[iterate] applying patch:', item.detail || '(no detail)')
-      const res = await applyPatch(item.patch)
-      if (!res.ok) {
-        const revertErrors = []
-        for (let i = applied.length - 1; i >= 0; i--) {
-          const revertRes = await revertNormalizedPatch(applied[i].normalized)
-          if (!revertRes.ok) revertErrors.push(revertRes.error || 'unknown')
-        }
-        let error = res.error || 'unknown'
-        if (revertErrors.length) error += ` | revert_failed: ${revertErrors.join('; ')}`
-        return { ok: false, error }
-      }
-      applied.push({ normalized: res.normalized })
-    }
-    return { ok: true, changed: applied.length > 0 }
   }
 
   async function runIteration (source, opts = {}) {
@@ -632,6 +456,7 @@ ${logs}`,
     const corePromise = (async () => {
       ctrl.phase = 'collect_logs'
       logger.info('[iterate] collecting logs…')
+      const beforeStatus = await gitStatusSnapshot()
       const { text: logChunk } = await readLogSegment()
       ctrl.phase = 'codex'
       logger.info('[iterate] contacting codex…')
@@ -675,83 +500,17 @@ ${logs}`,
         ctrl.codexSessionId = sessionId
         ctrl.persistDirty = true
       }
-      let resumeAttempts = 0
-      let changed = false
-      let broadcastMsg = null
-      let finalSummary = codexRes.summary || ''
+      const finalSummary = codexRes.summary || ''
       ctrl.lastSummary = finalSummary
       ctrl.lastRunAt = Date.now()
       ctrl.lastReason = reasonLabel
       ctrl.persistDirty = true
-      while (true) {
-        const patchResult = await applyPatchSet(codexRes.patches || [])
-        if (patchResult.ok) {
-          changed = patchResult.changed
-          if (codexRes.broadcast && codexRes.broadcast.length) broadcastMsg = codexRes.broadcast
-          finalSummary = codexRes.summary || finalSummary
-          break
-        }
-        const failureDetail = patchResult.error || 'unknown'
-        if (resumeAttempts >= 3) {
-          ctrl.failureCount = (ctrl.failureCount || 0) + 1
-          ctrl.lastRunAt = Date.now()
-          ctrl.lastReason = `${reasonLabel}:patch_failed`
-          ctrl.phase = 'error'
-          ctrl.history = ctrl.history || []
-          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'patch_failed', summary: String(failureDetail), broadcast: null })
-          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
-          ctrl.persistDirty = true
-          return { ok: false, reason: 'patch_failed', detail: failureDetail }
-        }
-        resumeAttempts++
-        ctrl.phase = 'codex_resume'
-        logger.warn('[iterate] git apply failed; attempting resume', resumeAttempts, failureDetail)
-        if (!sessionId) {
-          ctrl.failureCount = (ctrl.failureCount || 0) + 1
-          ctrl.lastRunAt = Date.now()
-          ctrl.lastReason = `${reasonLabel}:resume_unavailable`
-          ctrl.phase = 'error'
-          ctrl.history = ctrl.history || []
-          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'patch_failed', summary: 'resume_unavailable_no_session_id', broadcast: null })
-          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
-          ctrl.persistDirty = true
-          return { ok: false, reason: 'patch_failed', detail: `${failureDetail} | resume_unavailable` }
-        }
-        const resumeMessage = buildResumeMessage({ failureDetail, attempt: resumeAttempts })
-        const resumeRes = await runCodex({ reason: reasonLabel, resume: { message: resumeMessage, hint: { sessionId } } })
-        if (!resumeRes.ok) {
-          ctrl.failureCount = (ctrl.failureCount || 0) + 1
-          ctrl.lastRunAt = Date.now()
-          ctrl.lastReason = `${reasonLabel}:resume_failed`
-          ctrl.phase = 'error'
-          ctrl.history = ctrl.history || []
-          const summary = resumeRes.detail || resumeRes.reason || 'resume_failed'
-          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'resume_failed', summary: String(summary), broadcast: null })
-          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
-          ctrl.persistDirty = true
-          return { ok: false, reason: resumeRes.reason || 'resume_failed', detail: resumeRes.detail || resumeRes.reason || failureDetail }
-        }
-        codexRes = resumeRes
-        const resumedId = codexRes.resumeHint && codexRes.resumeHint.sessionId ? String(codexRes.resumeHint.sessionId).trim() : sessionId
-        if (resumedId && resumedId !== sessionId) {
-          ctrl.failureCount = (ctrl.failureCount || 0) + 1
-          ctrl.lastRunAt = Date.now()
-          ctrl.lastReason = `${reasonLabel}:resume_mismatch`
-          ctrl.phase = 'error'
-          ctrl.history = ctrl.history || []
-          ctrl.history.push({ at: Date.now(), reason: reasonLabel, status: 'resume_failed', summary: 'resume_session_mismatch', broadcast: null })
-          if (ctrl.history.length > 20) ctrl.history.splice(0, ctrl.history.length - 20)
-          ctrl.persistDirty = true
-          return { ok: false, reason: 'resume_session_mismatch', detail: `expected ${sessionId} got ${resumedId}` }
-        }
-        finalSummary = codexRes.summary || finalSummary
-        ctrl.lastSummary = finalSummary
-        ctrl.lastRunAt = Date.now()
-        ctrl.lastReason = `${reasonLabel}:resume${resumeAttempts}`
-        ctrl.persistDirty = true
+      const afterStatus = await gitStatusSnapshot()
+      let changed = false
+      if (afterStatus != null) {
+        if (beforeStatus == null) changed = afterStatus.trim().length > 0
+        else changed = beforeStatus !== afterStatus
       }
-      ctrl.lastSummary = finalSummary
-      ctrl.lastRunAt = Date.now()
       if (ctrl.codexSessionId !== (sessionId || null)) {
         ctrl.codexSessionId = sessionId || null
         ctrl.persistDirty = true
@@ -759,12 +518,11 @@ ${logs}`,
       ctrl.phase = 'post'
       if (source === 'deepseek') ctrl.deepseekCooldownUntil = Date.now() + ctrl.cooldownMs
       if (changed) await touchReloadGate()
-      if (broadcastMsg && broadcastMsg.length) {
-        queueBroadcast(broadcastMsg)
-      } else if (changed) {
+      let broadcastMsg = codexRes.broadcast && codexRes.broadcast.trim() ? codexRes.broadcast.trim() : null
+      if (!broadcastMsg && changed) {
         broadcastMsg = `【迭代完成】新功能上线（来源：${reasonLabel}），快来试试看！`
-        queueBroadcast(broadcastMsg)
       }
+      if (broadcastMsg) queueBroadcast(broadcastMsg)
       ctrl.lastBroadcast = broadcastMsg || null
       ctrl.failureCount = 0
       if (finalSummary) logger.info('[iterate] summary:', finalSummary)
