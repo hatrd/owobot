@@ -176,8 +176,18 @@ function resolveReloadGate () {
 const reloadGatePath = resolveReloadGate()
 let gateWatcher = null
 let pendingReload = false
+const GATE_TRIGGER_DELAY_MS = 60
+const GATE_DUPLICATE_SUPPRESS_MS = 400
+const GATE_SAME_MTIME_RETRY_MS = 1200
 let gateReloadTimer = null
 let lastGateReloadAt = 0
+let lastGateMtimeMs = 0
+if (reloadGatePath) {
+  try {
+    const stat = fs.statSync(reloadGatePath)
+    if (stat && Number.isFinite(stat.mtimeMs)) lastGateMtimeMs = stat.mtimeMs
+  } catch {}
+}
 
 function clearPluginCache() {
   for (const id of Object.keys(require.cache)) {
@@ -242,6 +252,15 @@ function watchReloadGate() {
   try {
     const gateDir = path.dirname(reloadGatePath)
     const gateBase = path.basename(reloadGatePath)
+    const scheduleGateReload = () => {
+      if (gateReloadTimer) return
+      gateReloadTimer = setTimeout(() => {
+        gateReloadTimer = null
+        lastGateReloadAt = Date.now()
+        console.log('Reload gate touched -> applying reload now')
+        loadPlugin()
+      }, GATE_TRIGGER_DELAY_MS)
+    }
     gateWatcher = fs.watch(gateDir, { persistent: true }, (event, filename) => {
       if (!filename) return
       const fname = filename.toString()
@@ -250,13 +269,30 @@ function watchReloadGate() {
       pendingReload = false
       const now = Date.now()
       if (gateReloadTimer) return
-      if (!hadPending && now - lastGateReloadAt < 200) return
-      gateReloadTimer = setTimeout(() => {
-        gateReloadTimer = null
-        lastGateReloadAt = Date.now()
-        console.log('Reload gate touched -> applying reload now')
-        loadPlugin()
-      }, 25)
+      fs.promises.stat(reloadGatePath).then((stat) => {
+        const mtimeMs = Number.isFinite(stat?.mtimeMs) ? stat.mtimeMs : (stat?.mtime instanceof Date ? stat.mtime.getTime() : NaN)
+        if (!hadPending) {
+          if (Number.isFinite(lastGateMtimeMs) && Number.isFinite(mtimeMs)) {
+            if (mtimeMs < lastGateMtimeMs - 1) return
+            if (mtimeMs <= lastGateMtimeMs + 1 && now - lastGateReloadAt < GATE_SAME_MTIME_RETRY_MS) return
+          } else if (now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) {
+            return
+          }
+        }
+        if (Number.isFinite(mtimeMs)) {
+          if (!Number.isFinite(lastGateMtimeMs) || mtimeMs > lastGateMtimeMs) {
+            lastGateMtimeMs = mtimeMs
+          } else {
+            lastGateMtimeMs = Math.max(lastGateMtimeMs, mtimeMs)
+          }
+        } else if (!Number.isFinite(lastGateMtimeMs)) {
+          lastGateMtimeMs = now
+        }
+        scheduleGateReload()
+      }).catch(() => {
+        if (!hadPending && now - lastGateReloadAt < GATE_DUPLICATE_SUPPRESS_MS) return
+        scheduleGateReload()
+      })
     })
     console.log('Hot reload gate enabled at', reloadGatePath, '(touch to reload)')
   } catch (e) {
