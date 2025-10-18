@@ -46,6 +46,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const rawCooldown = Number(state.sleepCooldownUntil)
   state.sleepCooldownUntil = Number.isFinite(rawCooldown) && rawCooldown > 0 ? rawCooldown : 0
   state.sleepFailure = state.sleepFailure || { reason: null, count: 0, lastAt: 0 }
+  state.sleepCooldownLog = (state.sleepCooldownLog && typeof state.sleepCooldownLog === 'object') ? state.sleepCooldownLog : Object.create(null)
   let timer = null
   let lastAttemptAt = 0
   let inFlight = false
@@ -55,6 +56,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const MIN_SLEEP_DURATION_MS = 4000
   const POST_WAKE_COOLDOWN_MS = 5000
   const FAILURE_DECAY_MS = 5 * 60 * 1000
+  const FAILURE_LOG_REPEAT_MS = 3 * 60 * 1000
   const FAILURE_BASE = {
     occupied: 10000,
     too_far: 8000,
@@ -83,9 +85,22 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const target = now + durationMs
     if (!state.sleepCooldownUntil || state.sleepCooldownUntil < target) {
       state.sleepCooldownUntil = target
-      const msg = 'sleep: failure cooldown ' + durationMs + 'ms' + (label ? ' (' + label + ')' : '')
-      if (log?.info) log.info(msg)
-      else dlog && dlog(msg)
+      const key = label || 'generic'
+      const existing = state.sleepCooldownLog[key] || { duration: 0, lastLoggedAt: 0, lastScheduledAt: 0 }
+      const prevDuration = existing.duration
+      const prevLoggedAt = existing.lastLoggedAt
+      const shouldLog = prevDuration !== durationMs || (now - prevLoggedAt) >= FAILURE_LOG_REPEAT_MS
+      existing.duration = durationMs
+      existing.lastScheduledAt = now
+      if (shouldLog) {
+        existing.lastLoggedAt = now
+        const msg = 'sleep: failure cooldown ' + durationMs + 'ms' + (label ? ' (' + label + ')' : '')
+        if (log?.info) log.info(msg)
+        else dlog && dlog(msg)
+      } else {
+        dlog && dlog('sleep: failure cooldown muted ' + durationMs + 'ms' + (label ? ' (' + label + ')' : ''))
+      }
+      state.sleepCooldownLog[key] = existing
     }
   }
 
@@ -122,6 +137,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     state.sleepFailure.reason = null
     state.sleepFailure.count = 0
     state.sleepFailure.lastAt = 0
+    state.sleepCooldownLog = Object.create(null)
   }
 
   function applyFailureCooldown (err) {
