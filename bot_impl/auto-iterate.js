@@ -611,6 +611,10 @@ Notes: <可选补充>
       if (source === 'deepseek') ctrl.deepseekCooldownUntil = Date.now() + ctrl.cooldownMs
       if (changed) await touchReloadGate()
       let broadcastMsg = codexRes.broadcast && codexRes.broadcast.trim() ? codexRes.broadcast.trim() : null
+      if (broadcastMsg && /^notes?\s*:/i.test(broadcastMsg)) {
+        logger.info('[iterate] suppressing broadcast that looks like notes')
+        broadcastMsg = null
+      }
       if (!broadcastMsg && changed) {
         broadcastMsg = `【迭代完成】新功能上线（来源：${reasonLabel}），快来试试看！`
       }
