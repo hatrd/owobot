@@ -615,9 +615,6 @@ Notes: <可选补充>
         logger.info('[iterate] suppressing broadcast that looks like notes')
         broadcastMsg = null
       }
-      if (!broadcastMsg && changed) {
-        broadcastMsg = `【迭代完成】新功能上线（来源：${reasonLabel}），快来试试看！`
-      }
       if (broadcastMsg) queueBroadcast(broadcastMsg)
       ctrl.lastBroadcast = broadcastMsg || null
       ctrl.failureCount = 0
