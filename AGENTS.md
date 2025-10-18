@@ -97,5 +97,7 @@ Notes
 - 专用挖掘类：`break_blocks` / `gather` / `harvest` 自带挖掘流程（无需 `dig:true`），会在内部选择合适工具并执行安全检查。
 - 矿脉挖掘（mine_ore）：为提高效率，使用更激进的 Movements（允许更灵活的跳跃/贴边等）。该策略仅在矿工技能内启用，不影响其他工具的保守寻路。
 
-### GIT 提交
+### 自动迭代
 - 如果你是自动迭代/玩家触发迭代，请你每次修改完后 git add 并 git commit 你的提交。
+- 如果要确保玩家可以通过聊天使用，你需要在 ./bot_impl/prompts/ai-system.txt 以及 ./bot_impl/ai-chat.js 中添加工具调用方式。
+
