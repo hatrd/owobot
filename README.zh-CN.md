@@ -18,6 +18,7 @@
 - 登录方式：`MC_AUTH=offline|microsoft`（如需 `MC_PASSWORD`）
 - 降低日志：`MC_DEBUG=0 npm start`
 - 调整自动迭代频率：`AUTO_ITERATE_INTERVAL_MS=300000 npm start` 或 `npm start -- --iterate-interval 5m`
+- 限定 Codex 写入范围：`AUTO_ITERATE_REPO_ROOT=/绝对路径/到/仓库 npm start`
 - 放宽 Codex 超时：`CODEX_EXEC_TIMEOUT_MS=180000 npm start`（≤0 表示无限制）
 - 自定义提示词：编辑 `bot_impl/prompts/` 下的文件（改动后 `touch open_fire` 热重载）
 
@@ -126,3 +127,4 @@
 运行时环境变量均可被 CLI 覆盖：
 - `--host`、`--port`、`--username|--user`、`--auth`、`--password`、`--greet on|off`
 示例：`npm start -- --host my.server --port 25565 --username MyBot --greet off`
+- **Codex 沙盒警告**：自动迭代只会在 `AUTO_ITERATE_REPO_ROOT` 指定的目录内授予写权限（默认即当前工作目录）。启用前请确认路径准确，避免暴露不相关的文件夹。

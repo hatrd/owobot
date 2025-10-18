@@ -18,9 +18,11 @@ Mineflayer bot with hot reload and optional AI chat.
 - Auth: `MC_AUTH=offline|microsoft` (use `MC_PASSWORD` if needed)
 - Reduce logs: `MC_DEBUG=0 npm start`
 - Adjust auto-iteration cadence: `AUTO_ITERATE_INTERVAL_MS=300000 npm start` or `npm start -- --iterate-interval 5m`
+- Scope Codex write access: `AUTO_ITERATE_REPO_ROOT=/absolute/path/to/repo npm start`
 - Allow Codex more time: `CODEX_EXEC_TIMEOUT_MS=180000 npm start` (omit or ≤0 for no limit)
 - Customize AI prompts: edit files under `bot_impl/prompts/` (hot reload via `touch open_fire`)
 
+- **Codex sandboxing:** auto-iteration grants Codex write access only within `AUTO_ITERATE_REPO_ROOT` (defaults to the current working directory). Double-check the path before enabling to avoid exposing unrelated folders.
 ### File Logging
 - Default path: `logs/bot-YYYY-MM-DD.log` (created automatically).
 - Configure directory: set `MC_LOG_DIR=/path/to/dir`.

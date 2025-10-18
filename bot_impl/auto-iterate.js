@@ -254,6 +254,9 @@ ${summary}
 ${historyText}`,
       `# 输入日志
 ${logs}`,
+      `# 权限与限制
+- 你拥有当前仓库的写入权限及 git 命令（status/diff/checkout 等）执行权限，可直接编辑文件、创建/删除文件、运行脚本。
+- 禁止提交、推送或重写 git 历史；如需撤销请自行使用 \`git checkout -- <file>\` 等命令。`,
       `# 工作方式
 - 直接在当前仓库中运行命令、编辑文件并检查结果；不要返回补丁或 JSON。
 - 可使用 \`git status\` / \`git diff\` 等命令确认变更，但不要提交、推送或重写历史。
@@ -280,7 +283,10 @@ Notes: <可选补充>
       return { ok: false, reason: 'tmpdir_failed' }
     }
     const outputPath = path.join(tmpDir, 'last-message.txt')
-    const sharedConfigArgs = ['-c', 'task.max_iterations=1', '-c', 'sandbox_permissions=["disk-full-read-access"]', '-c', 'shell_environment_policy.inherit=all']
+    const repoEnv = process.env.CODEX_REPO_ROOT || process.env.AUTO_ITERATE_REPO_ROOT || process.env.PROJECT_ROOT || process.cwd()
+    const scopedDir = path.resolve(process.cwd(), repoEnv)
+    const sandboxScope = `disk-full-access:${scopedDir}`
+    const sharedConfigArgs = ['-c', 'task.max_iterations=1', '-c', `sandbox_permissions=["${sandboxScope}"]`, '-c', 'shell_environment_policy.inherit=all']
     const sharedModelArgs = []
     if (codexModel && codexModel.trim()) sharedModelArgs.push('-m', codexModel.trim())
     if (codexExtraArgs.length) sharedModelArgs.push(...codexExtraArgs)
