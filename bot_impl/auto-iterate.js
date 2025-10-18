@@ -551,8 +551,15 @@ Notes: <可选补充>
   }
 
   async function runIteration (source, opts = {}) {
-    if (ctrl.currentRun) {
+    const force = opts && opts.force === true
+    if (ctrl.running && !force) {
+      logger.info('[iterate] skip request while iteration active:', source)
+      return { ok: false, reason: 'busy' }
+    }
+    if (ctrl.currentRun && !force) {
+      logger.info('[iterate] awaiting existing iteration promise before starting new request:', source)
       try { await ctrl.currentRun } catch {}
+      if (ctrl.running) return { ok: false, reason: 'busy' }
     }
     const now = Date.now()
     if (source === 'deepseek' && !opts.force) {
@@ -722,6 +729,8 @@ Notes: <可选补充>
       if (!state.hasSpawned) return
       const minuteKey = Math.floor(Date.now() / 60000)
       if (ctrl.lastAnnounceMinute === minuteKey) return
+      ctrl.lastAnnounceMinute = minuteKey
+      ctrl.persistDirty = true
       const now = new Date()
       const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
       let message = `现在是 ${timeStr}，祝大家玩得开心~`
@@ -730,8 +739,6 @@ Notes: <可选补充>
         message = `现在是 ${timeStr}，线上有 ${count} 位伙伴~`
       }
       bot.chat(message)
-      ctrl.lastAnnounceMinute = minuteKey
-      ctrl.persistDirty = true
     } catch {}
   }
 
