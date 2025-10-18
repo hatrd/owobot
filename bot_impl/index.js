@@ -1,6 +1,8 @@
 // Hot-reloadable bot implementation. The loader (bot.js) will call activate/deactivate
 
 let bot = null
+const fs = require('fs')
+const path = require('path')
 const { Vec3 } = require('vec3')
 const logging = require('./logging')
 const coreLog = logging.getLogger('core')
@@ -209,6 +211,7 @@ function clearAllPendingGreets() {
 
 const GREET_INITIAL_DELAY_MS = 5000
 const GREET_DEFAULT_SUFFIX = '☆ (≧▽≦)ﾉ'
+const GREET_ZONES_FILE = process.env.GREET_ZONES_FILE || path.join(__dirname, '..', 'data', 'greet-zones.json')
 const DEFAULT_GREETING_ZONES = [
   {
     name: 'siwuxie_wool',
@@ -224,16 +227,77 @@ const DEFAULT_GREETING_ZONES = [
 function greetLogEnabled () { try { return Boolean(state?.greetLogEnabled) } catch { return false } }
 function greetLog (...args) { if (greetLogEnabled()) console.log('[GREET]', ...args) }
 
+function normalizeZone (zone) {
+  try {
+    if (!zone) return null
+    const name = String(zone.name || '').trim()
+    if (!name) return null
+    const sx = zone.x ?? zone.cx ?? zone.pos?.x
+    const sy = zone.y ?? zone.cy ?? zone.pos?.y
+    const sz = zone.z ?? zone.cz ?? zone.pos?.z
+    const radius = Number(zone.radius ?? zone.r)
+    const suffix = String(zone.suffix || '').trim()
+    if (![sx, sy, sz].every(v => Number.isFinite(Number(v)))) return null
+    if (!Number.isFinite(radius) || radius <= 0) return null
+    if (!suffix) return null
+    return {
+      name,
+      x: Number(sx),
+      y: Number(sy),
+      z: Number(sz),
+      radius,
+      suffix,
+      enabled: zone.enabled === false ? false : true
+    }
+  } catch { return null }
+}
+
+function readGreetingZonesFromFile () {
+  try {
+    const text = fs.readFileSync(GREET_ZONES_FILE, 'utf8')
+    const raw = JSON.parse(text)
+    if (!Array.isArray(raw)) throw new Error('expected array')
+    const zones = raw.map(normalizeZone).filter(Boolean)
+    return zones.length ? zones : null
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') {
+      console.warn('[GREET] 读取配置失败:', err.message || err)
+    }
+    return null
+  }
+}
+
+function ensureDir (file) {
+  try { fs.mkdirSync(path.dirname(file), { recursive: true }) } catch {}
+}
+
+function writeGreetingZonesToFile (zones) {
+  try {
+    const data = Array.isArray(zones) ? zones.map(normalizeZone).filter(Boolean) : []
+    ensureDir(GREET_ZONES_FILE)
+    fs.writeFileSync(GREET_ZONES_FILE, JSON.stringify(data, null, 2), 'utf8')
+    console.log('[GREET] 已写入配置:', GREET_ZONES_FILE)
+    return true
+  } catch (err) {
+    console.warn('[GREET] 写入配置失败:', err.message || err)
+    return false
+  }
+}
+
 function initializeGreetingZones () {
   if (!state) return
   if (!Array.isArray(state.greetZones)) state.greetZones = []
   if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
   if (state.greetZonesSeeded) return
-  for (const zone of DEFAULT_GREETING_ZONES) {
-    if (!zone || !zone.name) continue
-    const exists = state.greetZones.some((z) => String(z?.name || '').toLowerCase() === String(zone.name).toLowerCase())
-    if (exists) continue
-    state.greetZones.push({ ...zone })
+  const fromFile = readGreetingZonesFromFile()
+  if (fromFile && fromFile.length) {
+    state.greetZones = fromFile.map(z => ({ ...z }))
+    console.log('[GREET] 已加载外部问候区配置:', GREET_ZONES_FILE)
+  } else if (!state.greetZones.length) {
+    for (const zone of DEFAULT_GREETING_ZONES) {
+      const norm = normalizeZone(zone)
+      if (norm) state.greetZones.push(norm)
+    }
   }
   state.greetZonesSeeded = true
 }
@@ -289,16 +353,17 @@ function handleGreetZoneCli (args = []) {
       return
     }
     const name = String(args[1] || '').trim()
-    const x = Number(args[2])
-    const y = Number(args[3])
-    const z = Number(args[4])
-    const radius = Number(args[5])
-    const suffix = args.slice(6).join(' ').trim()
-    if (!name) { console.log('[GREETZONE] 名称不能为空'); return }
-    if (![x, y, z, radius].every(Number.isFinite)) { console.log('[GREETZONE] 坐标或半径需要为数字'); return }
-    if (radius <= 0) { console.log('[GREETZONE] 半径需大于0'); return }
-    if (!suffix) { console.log('[GREETZONE] 后缀不能为空'); return }
-    const zone = { name, x, y, z, radius, suffix, enabled: true }
+    const payload = {
+      name,
+      x: Number(args[2]),
+      y: Number(args[3]),
+      z: Number(args[4]),
+      radius: Number(args[5]),
+      suffix: args.slice(6).join(' ').trim(),
+      enabled: true
+    }
+    const zone = normalizeZone(payload)
+    if (!zone) { console.log('[GREETZONE] 参数无效，请确保名称/坐标/半径/后缀正确'); return }
     const zones = state.greetZones
     const idx = zones.findIndex((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
     if (idx >= 0) zones[idx] = zone
@@ -352,8 +417,30 @@ function handleGreetZoneCli (args = []) {
     return
   }
 
+  if (sub === 'reload') {
+    const zones = readGreetingZonesFromFile()
+    if (zones && zones.length) {
+      state.greetZones = zones.map(z => ({ ...z }))
+      console.log('[GREETZONE] 已重新加载配置文件')
+    } else {
+      console.log('[GREETZONE] 配置文件不存在或内容无效，保持原状态')
+    }
+    return
+  }
+
+  if (sub === 'save') {
+    const ok = writeGreetingZonesToFile(state.greetZones || [])
+    if (!ok) console.log('[GREETZONE] 保存失败（查看日志）')
+    return
+  }
+
+  if (sub === 'file') {
+    console.log('[GREETZONE] 配置文件路径 =', GREET_ZONES_FILE)
+    return
+  }
+
   if (sub === 'help') {
-    console.log('[GREETZONE] 指令: list|add|remove|enable|disable|clear|reset')
+    console.log('[GREETZONE] 指令: list|add|remove|enable|disable|clear|reset|reload|save|file')
     console.log('  add 示例: .greetzone add sheep -175 64 10 40 来领取羊毛呀')
     return
   }
