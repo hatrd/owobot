@@ -176,6 +176,8 @@ function resolveReloadGate () {
 const reloadGatePath = resolveReloadGate()
 let gateWatcher = null
 let pendingReload = false
+let gateReloadTimer = null
+let lastGateReloadAt = 0
 
 function clearPluginCache() {
   for (const id of Object.keys(require.cache)) {
@@ -244,10 +246,17 @@ function watchReloadGate() {
       if (!filename) return
       const fname = filename.toString()
       if (fname !== gateBase) return
-      // Any change (create/modify/rename) triggers reload
-      console.log('Reload gate touched -> applying reload now')
+      const hadPending = pendingReload
       pendingReload = false
-      loadPlugin()
+      const now = Date.now()
+      if (gateReloadTimer) return
+      if (!hadPending && now - lastGateReloadAt < 200) return
+      gateReloadTimer = setTimeout(() => {
+        gateReloadTimer = null
+        lastGateReloadAt = Date.now()
+        console.log('Reload gate touched -> applying reload now')
+        loadPlugin()
+      }, 25)
     })
     console.log('Hot reload gate enabled at', reloadGatePath, '(touch to reload)')
   } catch (e) {
