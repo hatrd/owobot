@@ -793,6 +793,38 @@ function install (bot, { log, on, registerCleanup }) {
     return r.ok ? ok('已取消', r) : fail(r.msg || '取消失败')
   }
 
+  async function sort_chests (args = {}) {
+    const frameState = bot.state?.frameSort
+    if (!frameState || typeof frameState.runSort !== 'function') return fail('分类模块未就绪')
+    const radiusRaw = args?.radius ?? args?.range ?? args?.r ?? undefined
+    let res
+    try {
+      res = await frameState.runSort(radiusRaw)
+    } catch (e) {
+      return fail(`分类失败: ${e?.message || e}`)
+    }
+    if (!res || res.ok === false) {
+      const reason = res?.reason
+      const reasonMsg = (() => {
+        switch (reason) {
+          case 'running': return '分类已在进行中'
+          case 'busy': return '当前忙于其他任务'
+          case 'unready': return '还没准备好'
+          case 'no_framed': return '附近没有展示框指引的箱子'
+          default: return '分类失败'
+        }
+      })()
+      return fail(reasonMsg)
+    }
+    const totalSources = Number.isFinite(res.sourcesTotal) ? res.sourcesTotal : null
+    if (!res.moved || res.reason === 'nothing_to_sort') {
+      return ok('所有箱子已经整理好啦', { moved: false, radius: res.radius, sourcesTotal: totalSources })
+    }
+    const movedCount = Number.isFinite(res.sourcesMoved) ? res.sourcesMoved : null
+    const suffix = movedCount && movedCount > 0 ? `，处理了${movedCount}个源箱` : ''
+    return ok(`整理箱子完成${suffix}`, { moved: true, sourcesMoved: res.sourcesMoved ?? null, sourcesTotal: totalSources, radius: res.radius })
+  }
+
   function normalizeName (name) {
     const n = String(name || '').toLowerCase().trim()
     const aliases = new Map([
@@ -3075,7 +3107,7 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(msg, { summary: res.summary || '', broadcast: res.broadcast || null })
   }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, iterate_feedback }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, iterate_feedback, sort_chests }
 
   async function run (tool, args) {
     const fn = registry[tool]

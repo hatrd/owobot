@@ -622,24 +622,38 @@ function install (bot, { on, state, log }) {
     }
   }
 
-  async function runSort (radius = 50) {
+  async function runSort (radius = 20) {
     if (frameState.running) {
       logger.warn('[frame-sort] 已在运行中')
-      return
+      const result = { ok: false, reason: 'running' }
+      frameState.lastResult = result
+      return result
     }
-    if (state && state.externalBusy) {
+    const busyByOther = (() => {
+      if (!state || !state.externalBusy) return false
+      const cur = state.currentTask && String(state.currentTask.name || '')
+      return cur !== 'sort_chests'
+    })()
+    if (busyByOther) {
       logger.warn('[frame-sort] 当前有外部任务，稍后再试')
-      return
+      const result = { ok: false, reason: 'busy' }
+      frameState.lastResult = result
+      return result
     }
     frameState.running = true
     const actions = actionsMod.install(bot, { log: logger })
-    const rad = Math.max(2, Math.min(80, Number(radius) || 50))
-    const scan = scanFrames(bot, rad)
+    const parsedRadius = Number(radius)
+    const baseRadius = Number.isFinite(parsedRadius) ? parsedRadius : 20
+    const rad = Math.max(2, Math.min(80, baseRadius))
+    const runScan = typeof frameState.scanFn === 'function' ? frameState.scanFn : (r) => scanFrames(bot, r)
+    const scan = runScan(rad)
     frameState.lastScan = scan
     if (!scan.ok) {
       logger.warn('[frame-sort] 扫描失败: bot未就绪')
       frameState.running = false
-      return
+      const result = { ok: false, reason: 'unready' }
+      frameState.lastResult = result
+      return result
     }
     const destMap = new Map()
     for (const chest of scan.framedChests) {
@@ -652,41 +666,69 @@ function install (bot, { on, state, log }) {
     if (!destMap.size) {
       logger.warn('[frame-sort] 区域内没有展示框指引的箱子')
       frameState.running = false
-      return
+      const result = { ok: false, reason: 'no_framed' }
+      frameState.lastResult = result
+      return result
     }
     if (!scan.unframedChests.length) {
       logger.info('[frame-sort] 没有需要整理的箱子')
       frameState.running = false
-      return
+      const result = { ok: true, moved: false, reason: 'nothing_to_sort', radius: scan.radius || rad }
+      frameState.lastResult = result
+      return result
     }
 
     let active = false
+    let sourcesMoved = 0
+    let acquiredLock = false
     try {
       if (state) {
-        try { bot.emit('external:begin', { source: 'cli', tool: 'frame_sort' }) } catch {}
-        state.externalBusy = true
+        const lockedByChat = state.currentTask && String(state.currentTask.name || '') === 'sort_chests'
+        if (!lockedByChat) {
+          try { bot.emit('external:begin', { source: 'cli', tool: 'sort_chests' }) } catch {}
+          state.externalBusy = true
+          acquiredLock = true
+        }
       }
       for (const source of scan.unframedChests) {
         const moved = await processSourceChest(source, destMap, actions)
-        if (moved) active = true
+        if (moved) {
+          active = true
+          sourcesMoved++
+        }
       }
     } finally {
-      if (state) {
+      if (state && acquiredLock) {
         state.externalBusy = false
-        try { bot.emit('external:end', { source: 'cli', tool: 'frame_sort' }) } catch {}
+        try { bot.emit('external:end', { source: 'cli', tool: 'sort_chests' }) } catch {}
       }
       frameState.running = false
     }
     if (!active) logger.info('[frame-sort] 没有可转移的物品')
     else logger.info('[frame-sort] 整理完成')
+    const result = {
+      ok: true,
+      moved: active,
+      sourcesMoved,
+      sourcesTotal: scan.unframedChests.length,
+      radius: scan.radius || rad
+    }
+    frameState.lastResult = result
+    return result
   }
+
+  frameState.scanFn = (radius) => scanFrames(bot, radius)
+  frameState.runSort = runSort
+  frameState.scanVersion = Date.now()
+  frameState.sortVersion = frameState.scanVersion
 
   function handleCli (args = []) {
     const sub = String(args[0] || 'scan').toLowerCase()
     const val = args[1]
     if (sub === 'scan' || sub === 'list') {
       const rad = val != null ? val : undefined
-      const scan = scanFrames(bot, rad)
+      const runScan = typeof frameState.scanFn === 'function' ? frameState.scanFn : (r) => scanFrames(bot, r)
+      const scan = runScan(rad)
       frameState.lastScan = scan
       if (!scan.ok) {
         console.log('[FRAMES] bot 未就绪')
@@ -736,7 +778,7 @@ function install (bot, { on, state, log }) {
 
   on('cli', ({ cmd, args }) => {
     const c = String(cmd || '').toLowerCase()
-    if (c === 'frames' || c === 'frame' || c === 'frame_sort') {
+    if (c === 'frames' || c === 'frame' || c === 'frame_sort' || c === 'sort_chests') {
       handleCli(Array.isArray(args) ? args : [])
     }
   })
