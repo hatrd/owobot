@@ -23,6 +23,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const raw = fs.readFileSync(persistPath, 'utf8')
       const data = JSON.parse(raw)
       if (data && typeof data === 'object') {
+        if (typeof data.enabled === 'boolean') ctrl.enabled = data.enabled
         if (typeof data.lastLogFile === 'string') ctrl.lastLogFile = data.lastLogFile
         if (Number.isFinite(data.lastLogOffset)) ctrl.lastLogOffset = data.lastLogOffset
         if (Array.isArray(data.history)) ctrl.history = data.history.slice(-10)
@@ -40,6 +41,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       fs.mkdirSync(DATA_DIR, { recursive: true })
       const payload = {
         version: 1,
+        enabled: Boolean(ctrl.enabled),
         lastLogFile: ctrl.lastLogFile || null,
         lastLogOffset: ctrl.lastLogOffset || 0,
         history: Array.isArray(ctrl.history) ? ctrl.history.slice(-20) : [],
@@ -75,6 +77,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
   const ctrl = state.autoIter
+  if (typeof ctrl.enabled !== 'boolean') ctrl.enabled = false
   if (typeof ctrl.currentRun === 'undefined') ctrl.currentRun = null
   if (typeof ctrl.nextTickAt === 'undefined') ctrl.nextTickAt = null
   if (typeof ctrl.phase !== 'string') ctrl.phase = 'idle'
@@ -750,6 +753,7 @@ Notes: <可选补充>
 
   async function announceTick () {
     try {
+      if (!ctrl.enabled) return
       if (!bot || typeof bot.chat !== 'function') return
       if (!state.hasSpawned) return
       const minuteKey = Math.floor(Date.now() / 60000)
@@ -768,6 +772,7 @@ Notes: <可选补充>
   }
 
   async function hourlyTick () {
+    if (!ctrl.enabled) { ctrl.phase = 'disabled'; return }
     hourlyTimer = null
     await announceTick()
     await runIteration('hourly')
@@ -778,6 +783,11 @@ Notes: <可选补充>
     if (hourlyTimer) {
       clearTimeout(hourlyTimer)
       hourlyTimer = null
+    }
+    if (!ctrl.enabled) {
+      ctrl.phase = 'disabled'
+      ctrl.nextTickAt = null
+      return
     }
     ctrl.intervalMs = resolveIntervalMs()
     const wait = msUntilNextInterval()
@@ -792,6 +802,7 @@ Notes: <可选补充>
 
   function status () {
     return {
+      enabled: Boolean(ctrl.enabled),
       running: Boolean(ctrl.running),
       lastRunAt: ctrl.lastRunAt,
       lastReason: ctrl.lastReason,
@@ -811,7 +822,8 @@ Notes: <可选补充>
     supervise: (text) => { updateSupervisorNote(text); return ctrl.supervisorNote }
   }
 
-  scheduleNextTick()
+  if (ctrl.enabled) scheduleNextTick()
+  else { ctrl.phase = 'disabled'; ctrl.nextTickAt = null }
 
   function fmtMs (ms) {
     if (!Number.isFinite(ms) || ms <= 0) return '未知'
@@ -826,7 +838,7 @@ Notes: <可选补充>
     const s = status()
     const nextIn = s.nextTickAt ? Math.max(0, s.nextTickAt - Date.now()) : null
     const nextStr = nextIn != null ? `${fmtMs(nextIn)} 后` : '未计划'
-    console.log('[ITERATE]', `状态: ${s.running ? '运行中' : '空闲'}`, '| 阶段:', s.phase || '未知', '| 上次原因:', s.lastReason || '无', '| 当前周期:', fmtMs(s.intervalMs || DEFAULT_INTERVAL_MS), '| 下次:', nextStr)
+    console.log('[ITERATE]', `状态: ${s.running ? '运行中' : '空闲'} | 开关: ${ctrl.enabled ? '开启' : '关闭'} | 阶段: ${s.phase || '未知'} | 上次原因: ${s.lastReason || '无'} | 当前周期: ${fmtMs(s.intervalMs || DEFAULT_INTERVAL_MS)} | 下次: ${nextStr}`)
     if (s.lastSummary) console.log('[ITERATE]', '上次摘要:', s.lastSummary)
     if (s.lastBroadcast) console.log('[ITERATE]', '上次播报:', s.lastBroadcast)
   }
@@ -887,6 +899,26 @@ Notes: <可选补充>
         cliInterval(rest[0])
         return
       }
+      if (cmd === 'enable') {
+        if (ctrl.enabled) { console.log('[ITERATE]', '已开启'); return }
+        ctrl.enabled = true
+        ctrl.persistDirty = true
+        scheduleNextTick()
+        savePersistent()
+        console.log('[ITERATE]', '自动迭代已开启')
+        return
+      }
+      if (cmd === 'disable') {
+        if (!ctrl.enabled) { console.log('[ITERATE]', '已关闭'); return }
+        ctrl.enabled = false
+        ctrl.phase = 'disabled'
+        ctrl.nextTickAt = null
+        if (hourlyTimer) { clearTimeout(hourlyTimer); hourlyTimer = null }
+        ctrl.persistDirty = true
+        savePersistent()
+        console.log('[ITERATE]', '自动迭代已关闭')
+        return
+      }
       if (cmd === 'run' || cmd === 'now') { cliRunNow(); return }
       if (cmd === 'cooldown') {
         if (!rest.length) {
@@ -922,7 +954,7 @@ Notes: <可选补充>
         resetLogCursor().catch((e) => console.log('[ITERATE]', '重置异常:', e?.message || e))
         return
       }
-      console.log('[ITERATE]', '未知子命令，支持: status|interval <值>|run|cooldown <值>')
+      console.log('[ITERATE]', '未知子命令，支持: status|enable|disable|interval <值>|run|cooldown <值>')
     } catch (e) {
       console.log('[ITERATE]', '命令处理异常:', e?.message || e)
     }
