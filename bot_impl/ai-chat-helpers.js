@@ -14,36 +14,35 @@ function trimReply (text, maxLen) {
 }
 
 function buildContextPrompt (username, recent, recentTrig, options = {}) {
-  const ctx = Object.assign({ include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5, trigger: 'owk' }, options)
+  const ctx = Object.assign({ include: true, recentCount: 8, recentWindowSec: 300 }, options)
   if (!ctx.include) return ''
   const now = Date.now()
   const cutoff = now - (Math.max(10, (ctx.recentWindowSec || 300)) * 1000)
   const lines = (Array.isArray(recent) ? recent : [])
-  const trig = String(ctx.trigger || 'owk')
-  const trigRe = new RegExp('\\b' + trig.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\b', 'i')
-  const isTrig = (txt) => trigRe.test(String(txt || ''))
   const recentKept = lines
     .filter(r => (r?.t ?? cutoff) >= cutoff)
     .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
     .slice(-(ctx.recentCount || 0))
-  let trigKept = []
-  if (ctx.includeOwk) {
-    const source = Array.isArray(recentTrig) ? recentTrig : (Array.isArray(recent) ? recent : [])
-    const owkCut = now - (Math.max(10, (ctx.owkWindowSec || 900)) * 1000)
-    trigKept = source
-      .filter(r => (r?.t ?? owkCut) >= owkCut && isTrig(r.text))
-      .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
-    if (ctx.owkMax != null) trigKept = trigKept.slice(-ctx.owkMax)
+  const fmtTime = (ts) => {
+    if (!Number.isFinite(ts)) return ''
+    try {
+      const date = new Date(ts)
+      const hh = String(date.getHours()).padStart(2, '0')
+      const mm = String(date.getMinutes()).padStart(2, '0')
+      return `${hh}:${mm}`
+    } catch { return '' }
   }
-  const chatLines = recentKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
-  const trigLines = trigKept.map(r => `${r.user}: ${String(r.text || '').trim()}`).join(' | ')
-  const parts = [
-    //`环境: 你在Minecraft服务器中操控一个bot, 玩家会随意聊天或询问与MC相关的问题; 你的回答要极其简短.`,
-    `当前对话玩家: ${username}.`,
-    `最近聊天: ${chatLines || '无'}.`,
-    ctx.includeOwk ? `含 ${trig} 的历史: ${trigLines || '无'}.` : ''
-  ].filter(Boolean)
-  return parts.join(' ')
+  const orderedLines = recentKept.map((r, idx) => {
+    const base = String(r?.text || '').trim()
+    const time = fmtTime(r?.t)
+    const prefix = `${idx + 1}. ${r?.user || '??'}:`
+    if (time) return `${prefix} [${time}] ${base}`
+    return `${prefix} ${base}`
+  })
+  const summary = orderedLines.length
+    ? `最近聊天顺序（旧→新）：\n${orderedLines.join('\n')}`
+    : '最近聊天顺序（旧→新）：无'
+  return `当前对话玩家: ${username}。\n${summary}`
 }
 
 function projectedCostForCall (priceInPerKT, priceOutPerKT, promptTok, outTokMax) {

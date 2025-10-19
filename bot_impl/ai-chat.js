@@ -298,6 +298,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!trimmed) return
     try { bot.chat(trimmed) } catch {}
     noteRecentReply(username)
+    try {
+      if (!state.aiPulse) return
+      state.aiPulse.buffer = []
+      state.aiPulse.lastReason = 'user_reply'
+      state.aiPulse.lastFlushAt = now()
+      state.aiPulse.lastMessage = null
+      state.aiPulse.lastMessageAt = now()
+    } catch {}
   }
 
   function maybeFlush (reason) {
