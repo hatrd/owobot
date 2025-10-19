@@ -388,10 +388,23 @@ function scanFrames (bot, radius = 12) {
       continue
     }
     for (const frame of clusterFrames) {
-      const attached = frame.attachedBlock ? clonePos(frame.attachedBlock) : clonePos(openPos)
+      const attached = frame.attachedBlock ? clonePos(frame.attachedBlock) : null
       let open = clonePos(openPos)
-      if (attached && !cluster.some(p => p.x === attached.x && p.y === attached.y && p.z === attached.z)) {
-        open = clonePos(cluster[0])
+      if (attached) {
+        const inCluster = cluster.some(p => p.x === attached.x && p.y === attached.y && p.z === attached.z)
+        let attachIsChest = false
+        try {
+          const blk = bot.blockAt(new Vec3(attached.x, attached.y, attached.z))
+          if (blk) {
+            const nm = String(blk.name || '').toLowerCase()
+            attachIsChest = chestNames.has(nm)
+          }
+        } catch {}
+        if (attachIsChest || inCluster) {
+          open = clonePos(attached)
+        } else {
+          open = clonePos(cluster[0])
+        }
       }
       framedChests.push({
         name: clusterName,
@@ -449,6 +462,7 @@ function extendState (state) {
 function install (bot, { on, state, log }) {
   const logger = log || { info: console.log, warn: console.warn, error: console.error, debug: () => {} }
   const frameState = extendState(state || {})
+  const CHEST_BLOCK_NAMES = new Set(['chest', 'trapped_chest'])
 
   const ensureNear = async (pos, actions, range = 1.6) => {
     const target = new Vec3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
@@ -504,6 +518,8 @@ function install (bot, { on, state, log }) {
     let movedAny = false
     const pos = clonePos(source.openPos || source.position || source)
     const sourcePositions = Array.isArray(source.positions) && source.positions.length ? source.positions.map(clonePos) : [clonePos(pos)]
+    const sourcePosKey = (p) => `${p.x},${p.y},${p.z}`
+    const sourceKeySet = new Set(sourcePositions.map(sourcePosKey))
     while (true) {
       if (!await ensureNear(pos, actions)) {
         logger.warn('[frame-sort] 前往源箱子失败', pos)
@@ -562,33 +578,49 @@ function install (bot, { on, state, log }) {
       let remaining = takeCount
       for (const dest of wanted) {
         if (remaining <= 0) break
-        const destPos = clonePos(dest.openPos || dest.position || (Array.isArray(dest.positions) ? dest.positions[0] : null))
-        if (!destPos) continue
-        const sameCluster = Array.isArray(dest.positions) && dest.positions.some(p =>
-          sourcePositions.some(sp => sp.x === p.x && sp.y === p.y && sp.z === p.z)
-        )
+        const sameCluster = Array.isArray(dest.positions) && dest.positions.some(p => sourceKeySet.has(sourcePosKey(p)))
         if (sameCluster) continue
-        if (!await ensureNear(destPos, actions)) {
-          logger.warn('[frame-sort] 前往目标箱子失败', destPos)
-          continue
+        const candidateRaw = []
+        if (dest.attachedPos) candidateRaw.push(clonePos(dest.attachedPos))
+        if (Array.isArray(dest.positions)) candidateRaw.push(...dest.positions.map(clonePos))
+        if (dest.openPos) candidateRaw.push(clonePos(dest.openPos))
+        if (dest.position) candidateRaw.push(clonePos(dest.position))
+        const seenTargets = new Set()
+        for (const rawPos of candidateRaw) {
+          if (!rawPos) continue
+          const key = `${rawPos.x},${rawPos.y},${rawPos.z}`
+          if (seenTargets.has(key)) continue
+          seenTargets.add(key)
+          let block = null
+          try {
+            block = bot.blockAt(new Vec3(rawPos.x, rawPos.y, rawPos.z))
+          } catch {}
+          if (!block) continue
+          const blockName = String(block.name || '').toLowerCase()
+          if (!CHEST_BLOCK_NAMES.has(blockName)) continue
+          if (!await ensureNear(rawPos, actions)) {
+            logger.warn('[frame-sort] 前往目标箱子失败', rawPos)
+            continue
+          }
+          let destContainer
+          try {
+            destContainer = await openContainerAt(rawPos)
+          } catch (err) {
+            logger.warn('[frame-sort] 打开目标箱子失败', err?.message || err)
+            continue
+          }
+          const before = countInInventory(targetItem)
+          try {
+            await destContainer.deposit(targetItem.type, targetItem.metadata, remaining, targetItem.nbt)
+          } catch (err) {
+            logger.debug && logger.debug('[frame-sort] 目标箱子已满?', err?.message || err)
+          }
+          try { destContainer.close() } catch {}
+          const after = countInInventory(targetItem)
+          const moved = before - after
+          remaining -= moved
+          if (remaining <= 0) break
         }
-        let destContainer
-        try {
-          destContainer = await openContainerAt(destPos)
-        } catch (err) {
-          logger.warn('[frame-sort] 打开目标箱子失败', err?.message || err)
-          continue
-        }
-        const before = countInInventory(targetItem)
-        try {
-          await destContainer.deposit(targetItem.type, targetItem.metadata, remaining, targetItem.nbt)
-        } catch (err) {
-          logger.debug && logger.debug('[frame-sort] 目标箱子已满?', err?.message || err)
-        }
-        try { destContainer.close() } catch {}
-        const after = countInInventory(targetItem)
-        const moved = before - after
-        remaining -= moved
       }
 
       if (remaining > 0) {
