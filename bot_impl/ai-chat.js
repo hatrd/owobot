@@ -17,6 +17,7 @@ const path = require('path')
 const H = require('./ai-chat-helpers')
 const actionsMod = require('./actions')
 const observer = require('./agent/observer')
+const memoryStore = require('./memory-store')
 const PROMPT_DIR = path.join(__dirname, 'prompts')
 
 function loadPrompt (filename, fallback) {
@@ -62,13 +63,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     owkMax: 5,
     recentStoreMax: 200,
     owkStoreMax: 100,
-    game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 }
+    game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 },
+    memory: { include: true, max: 6, storeMax: 200 }
   }
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
     ...DEF_CTX,
     ...state.ai.context,
-    game: { ...DEF_CTX.game, ...(state.ai.context.game || {}) }
+    game: { ...DEF_CTX.game, ...(state.ai.context.game || {}) },
+    memory: { ...DEF_CTX.memory, ...(state.ai.context.memory || {}) }
   }
 
   state.aiPulse = state.aiPulse || { enabled: true, buffer: [], lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
@@ -82,10 +85,22 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   if (!state.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
 
+  const persistedMemory = memoryStore.load()
+
   // global recent chat logs
   state.aiRecent = state.aiRecent || [] // [{t, user, text}]
   state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
-  state.aiLong = state.aiLong || []     // long-term summaries [{t, summary}]
+  if (!Array.isArray(state.aiLong) || state.aiLong.length === 0) {
+    state.aiLong = Array.isArray(persistedMemory.long) ? persistedMemory.long : []
+  } else if (!Array.isArray(state.aiLong)) {
+    state.aiLong = []
+  }
+  state.aiMemory = state.aiMemory || { entries: [] }
+  if (!Array.isArray(state.aiMemory.entries) || state.aiMemory.entries.length === 0) {
+    state.aiMemory.entries = Array.isArray(persistedMemory.memories) ? persistedMemory.memories : []
+  }
+  if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
+  if (typeof state.aiMemory.storeMax !== 'number') state.aiMemory.storeMax = state.ai.context?.memory?.storeMax || 200
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
   state.aiSpend = state.aiSpend || { day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }, month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }, total: { inTok: 0, outTok: 0, cost: 0 } }
 
@@ -764,6 +779,139 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return H.buildContextPrompt(username, state.aiRecent, state.aiOwk, { ...ctx, trigger: triggerWord() })
   }
 
+  function normalizeMemoryText (text) {
+    if (typeof text !== 'string') return ''
+    try { return text.normalize('NFKC').replace(/\s+/g, ' ').trim() } catch { return text.replace(/\s+/g, ' ').trim() }
+  }
+
+  function ensureMemoryEntries () {
+    if (!state.aiMemory || typeof state.aiMemory !== 'object') state.aiMemory = { entries: [] }
+    if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
+    const arr = state.aiMemory.entries
+    const nowTs = now()
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr[i]
+      if (!item || typeof item !== 'object') {
+        arr.splice(i, 1)
+        i--
+        continue
+      }
+      if (typeof item.text === 'string') item.text = normalizeMemoryText(item.text)
+      if (!item.text) {
+        arr.splice(i, 1)
+        i--
+        continue
+      }
+      if (!Number.isFinite(item.count) || item.count <= 0) item.count = 1
+      if (!Number.isFinite(item.createdAt)) item.createdAt = nowTs
+      if (!Number.isFinite(item.updatedAt)) item.updatedAt = item.createdAt
+    }
+    return arr
+  }
+
+  function memoryStoreLimit () {
+    const cfg = state.ai.context?.memory
+    const limit = cfg?.storeMax
+    if (Number.isFinite(limit) && limit > 0) return limit
+    if (Number.isFinite(state.aiMemory?.storeMax) && state.aiMemory.storeMax > 0) return state.aiMemory.storeMax
+    return 200
+  }
+
+  function persistMemoryState () {
+    try {
+      memoryStore.save({ long: Array.isArray(state.aiLong) ? state.aiLong : [], memories: ensureMemoryEntries() })
+    } catch {}
+  }
+
+  function pruneMemories () {
+    const entries = ensureMemoryEntries()
+    const limit = memoryStoreLimit()
+    if (entries.length <= limit) return
+    entries
+      .sort((a, b) => {
+        const cb = (a?.count || 1) - (b?.count || 1)
+        if (cb !== 0) return cb
+        return (a?.updatedAt || a?.createdAt || 0) - (b?.updatedAt || b?.createdAt || 0)
+      })
+    while (entries.length > limit) entries.shift()
+  }
+
+  function addMemoryEntry ({ text, author, source, importance } = {}) {
+    const entries = ensureMemoryEntries()
+    const normalized = normalizeMemoryText(text)
+    if (!normalized) return { ok: false, reason: 'empty' }
+    const nowTs = now()
+    const boost = Number.isFinite(importance) ? Math.max(1, Math.floor(importance)) : 1
+    let entry = entries.find(e => normalizeMemoryText(e?.text) === normalized)
+    if (entry) {
+      entry.count = Math.max(1, (entry.count || 1) + boost)
+      entry.updatedAt = nowTs
+      if (author) entry.lastAuthor = author
+      if (source) entry.lastSource = source
+    } else {
+      entry = {
+        text: normalized,
+        count: Math.max(1, boost),
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        firstAuthor: author || null,
+        lastAuthor: author || null,
+        lastSource: source || null
+      }
+      entries.push(entry)
+    }
+    pruneMemories()
+    persistMemoryState()
+    return { ok: true, entry }
+  }
+
+  function topMemories (limit) {
+    const entries = ensureMemoryEntries()
+    if (!entries.length) return []
+    const top = entries.slice().sort((a, b) => {
+      const bc = (b?.count || 1) - (a?.count || 1)
+      if (bc !== 0) return bc
+      return (b?.updatedAt || b?.createdAt || 0) - (a?.updatedAt || a?.createdAt || 0)
+    })
+    if (!Number.isFinite(limit) || limit <= 0) return top
+    return top.slice(0, limit)
+  }
+
+  function buildMemoryContext () {
+    const cfg = state.ai.context?.memory
+    if (cfg && cfg.include === false) return ''
+    const limit = cfg?.max || 6
+    const top = topMemories(Math.max(1, limit))
+    if (!top.length) return ''
+    const parts = top.map((m, idx) => {
+      const base = `${idx + 1}. ${m.text}`
+      const signed = m.lastAuthor || m.firstAuthor
+      return signed ? `${base}（${signed}）` : base
+    })
+    return `长期记忆: ${parts.join(' | ')}`
+  }
+
+  function extractMemoryCommand (content) {
+    if (!content) return null
+    const text = String(content).trim()
+    if (!text) return null
+    const patterns = [
+      /^记住(?:一下)?[:：,，\s]*(.+)$/i,
+      /^(?:帮我|请|要)记住[:：,，\s]*(.+)$/i,
+      /^记得[:：,，\s]*(.+)$/i,
+      /^记一下[:：,，\s]*(.+)$/i,
+      /^帮我记[:：,，\s]*(.+)$/i
+    ]
+    for (const re of patterns) {
+      const m = text.match(re)
+      if (m && m[1]) {
+        const payload = normalizeMemoryText(m[1])
+        if (payload) return payload
+      }
+    }
+    return null
+  }
+
   function recordEvent (type, text) {
     try {
       const entry = { t: now(), type, text: String(text || '').trim() }
@@ -866,10 +1014,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
+    const memoryCtx = buildMemoryContext()
     const messages = [
       { role: 'system', content: systemPrompt() },
       extrasCtx ? { role: 'system', content: extrasCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
+      memoryCtx ? { role: 'system', content: memoryCtx } : null,
       { role: 'system', content: contextPrompt },
       { role: 'user', content }
     ].filter(Boolean)
@@ -879,6 +1029,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try {
         log.info('gameCtx ->', buildGameContext())
         log.info('chatCtx ->', buildContextPrompt(username))
+        log.info('memoryCtx ->', buildMemoryContext())
       } catch {}
     }
 
@@ -957,6 +1108,22 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         let payload = null
         try { payload = JSON.parse(jsonStr) } catch {}
         if (payload && payload.tool) {
+          const toolName = String(payload.tool)
+          if (toolName === 'write_memory') {
+            if (speech) sendDirectReply(username, speech)
+            const normalized = normalizeMemoryText(payload.args?.text || '')
+            if (!normalized) {
+              return H.trimReply('没听懂要记什么呢~', maxReplyLen || 120)
+            }
+            const importanceRaw = Number(payload.args?.importance)
+            const importance = Number.isFinite(importanceRaw) ? importanceRaw : 1
+            const author = payload.args?.author ? String(payload.args.author) : username
+            const source = payload.args?.source ? String(payload.args.source) : 'ai'
+            const added = addMemoryEntry({ text: normalized, author, source, importance })
+            if (state.ai.trace && log?.info) log.info('tool write_memory ->', { text: normalized, author, source, importance, ok: added.ok })
+            if (!added.ok) return H.trimReply('记忆没有保存下来~', maxReplyLen || 120)
+            return speech ? '' : H.trimReply('记住啦~', maxReplyLen || 120)
+          }
           // Heuristic arg completion for some tools
           try {
             if (String(payload.tool) === 'write_text') {
@@ -1075,6 +1242,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       sendDirectReply(username, '好的')
       return
     }
+    const memoryText = extractMemoryCommand(content)
+    if (memoryText) {
+      const added = addMemoryEntry({ text: memoryText, author: username, source: 'player', importance: 1 })
+      if (!added.ok && state.ai.trace && log?.info) {
+        log.info('memory reject ->', added.reason)
+      }
+      sendDirectReply(username, added.ok ? '记住啦~' : '这句太难记住啦~')
+      return
+    }
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
@@ -1166,11 +1342,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
               if (sum) {
                 state.aiLong.push({ t: Date.now(), summary: sum })
                 if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
-                try {
-                  const DATA_DIR = require('path').resolve(process.cwd(), 'data')
-                  require('fs').mkdirSync(DATA_DIR, { recursive: true })
-                  require('fs').writeFileSync(require('path').join(DATA_DIR, 'ai-memory.json'), JSON.stringify({ version: 1, long: state.aiLong }))
-                } catch {}
+                persistMemoryState()
                 if (state.ai.trace && log?.info) log.info('long summary ->', sum)
               }
             }
