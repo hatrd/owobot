@@ -89,7 +89,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const existing = state.sleepCooldownLog[key] || { duration: 0, lastLoggedAt: 0, lastScheduledAt: 0 }
       const prevDuration = existing.duration
       const prevLoggedAt = existing.lastLoggedAt
-      const shouldLog = prevDuration !== durationMs || (now - prevLoggedAt) >= FAILURE_LOG_REPEAT_MS
+      const shouldLog = false
       existing.duration = durationMs
       existing.lastScheduledAt = now
       if (shouldLog) {
