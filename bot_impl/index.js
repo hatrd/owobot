@@ -638,6 +638,10 @@ function activate (botInstance, options = {}) {
 
   initializeGreetingZones()
 
+  if (Array.isArray(state.greetZones)) {
+    writeGreetingZonesToFile(state.greetZones)
+  }
+
   // Optional: dig packet trace/throttle for diagnosing anti-cheat timing
   try { require('./dig-throttle').install(bot, { log: logging.getLogger('dig') }) } catch (e) { coreLog.warn('dig-throttle install error:', e?.message || e) }
 

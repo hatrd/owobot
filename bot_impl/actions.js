@@ -45,8 +45,22 @@ function install (bot, { log, on, registerCleanup }) {
 
   // Go to the nearest block matching names/match within radius
   async function goto_block (args = {}) {
-    const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : (args.name ? [String(args.name).toLowerCase()] : null)
-    const match = args.match ? String(args.match).toLowerCase() : null
+    let names = Array.isArray(args.names)
+      ? args.names.map(n => String(n).toLowerCase().trim()).filter(Boolean)
+      : (args.name ? [String(args.name).toLowerCase().trim()] : null)
+    if (names && !names.length) names = null
+    const match = args.match ? String(args.match).toLowerCase().trim() : null
+    const wantsBedByNames = Array.isArray(names) && names.some(n => n === 'bed' || n.includes('床'))
+    const wantsBedByMatch = typeof match === 'string' && match.length > 0 && (match === 'bed' || match.includes('床'))
+    const wantsBed = wantsBedByNames || wantsBedByMatch
+    const matchIsBed = match === 'bed'
+    const blockMatches = (blockName) => {
+      if (!blockName || blockName === 'air') return false
+      if (names && names.includes(blockName)) return true
+      if (match && match.length && !matchIsBed && blockName.includes(match)) return true
+      if (wantsBed && blockName.endsWith('_bed')) return true
+      return false
+    }
     const radius = Math.max(2, parseInt(args.radius || '64', 10))
     const range = Math.max(1, parseFloat(args.range || '1.5'))
     if (!names && !match) return fail('缺少目标名（name|names|match）')
@@ -74,12 +88,7 @@ function install (bot, { log, on, registerCleanup }) {
         try {
           if (!b) return false
           const n = String(b.name || '').toLowerCase()
-          if (!n || n === 'air') return false
-          if (names && names.length) { if (names.includes(n)) return true }
-          if (match && n.includes(match)) return true
-          // Special shorthands
-          if (!names && match === 'bed') return n.endsWith('_bed')
-          return false
+          return blockMatches(n)
         } catch { return false }
       }
     }) || []
@@ -96,9 +105,7 @@ function install (bot, { log, on, registerCleanup }) {
               const b = bot.blockAt(p)
               if (!b) continue
               const n = String(b.name || '').toLowerCase()
-              if (!n || n === 'air') continue
-              if (names && names.length && !names.includes(n)) continue
-              if (match && !n.includes(match)) continue
+              if (!blockMatches(n)) continue
               candidates.push(p)
               if (candidates.length >= 128) break
             }
