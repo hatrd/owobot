@@ -66,8 +66,12 @@ function initAfterSpawn() {
     const entity = bot.nearestEntity()
     if (entity) {
       try {
-        if (entity.type === 'player') bot.lookAt(entity.position.offset(0, 1.6, 0))
-        else if (entity.type === 'mob') bot.lookAt(entity.position)
+        const name = String(entity.name || entity.displayName || '').toLowerCase()
+        if (entity.type === 'player') {
+          bot.lookAt(entity.position.offset(0, 1.6, 0))
+        } else if (entity.type === 'mob') {
+          if (name !== 'enderman') bot.lookAt(entity.position)
+        }
       } catch {}
     }
   }, 120)
