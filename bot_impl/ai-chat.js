@@ -622,7 +622,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return { kind: 'unknown' } }
   }
 
-  function quickAnswer (intent) {
+  function quickAnswer (intent, content) {
     try {
       if (!intent || intent.kind !== 'info') return ''
       const snap = observer.snapshot(bot, {})
@@ -748,6 +748,31 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         return dr.length ? `附近掉落物${dr.length}个，最近${Number(dr[0].d).toFixed(1)}m` : '附近没有掉落物~'
       }
       if (intent.topic === 'position') {
+        const rawText = String(content || '')
+        const safeTokens = (() => {
+          const set = new Set(['我', '你', '妳', '您', '自己', '咱', '咱们', '我們', '我们', '咱家', '吾'])
+          try {
+            const uname = String(bot?.username || '').toLowerCase()
+            if (uname) set.add(uname)
+            const compact = uname.replace(/[^a-z0-9]/g, '')
+            if (compact && compact !== uname) set.add(compact)
+            const trig = triggerWord()
+            if (trig) set.add(String(trig).toLowerCase())
+          } catch {}
+          return set
+        })()
+        try {
+          const possMatches = [...rawText.matchAll(/([\p{L}\p{N}_-]{1,24})\s*的坐标/gu)]
+          if (possMatches.length) {
+            let targetOther = false
+            for (const match of possMatches) {
+              const tok = String(match[1] || '').trim().toLowerCase()
+              if (!tok) continue
+              if (!safeTokens.has(tok)) { targetOther = true; break }
+            }
+            if (targetOther) return ''
+          }
+        } catch {}
         const p = snap.pos
         if (!p) return ''
         const dim = snap.dim || 'overworld'
@@ -1174,8 +1199,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','equip','toss','pickup','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players','iterate_feedback','sort_chests'])
           // If the intent is informational, disallow world-changing tools; allow info-only tools
           if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(String(payload.tool))) {
-            const ans = quickAnswer(intent)
-            if (ans) return H.trimReply(ans, maxReplyLen || 120)
             return H.trimReply('我这就看看…', maxReplyLen || 120)
           }
           // Prefer mount over follow when user intent mentions right-click/mount
@@ -1285,20 +1308,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     // Quick answers for info questions to avoid unnecessary tools
     const intent = classifyIntent(content)
     if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
-    const quick = quickAnswer(intent)
-    if (quick) {
-      if (state.ai.trace && log?.info) {
-        try {
-          const snap = observer.snapshot(bot, {})
-          log.info('quickAnswer ->', quick)
-          log.info('snapshot.nearby.hostiles =', snap.nearby?.hostiles)
-          log.info('snapshot.nearby.players =', snap.nearby?.players)
-          log.info('snapshot.nearby.drops =', snap.nearby?.drops)
-        } catch {}
-      }
-      sendDirectReply(username, quick)
-      return
-    }
 
     // No chat-side keyword → tool mappings (policy). Let LLM decide tools.
     const acted = await (async () => { return false })()
