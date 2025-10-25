@@ -104,7 +104,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
   state.aiSpend = state.aiSpend || { day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }, month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }, total: { inTok: 0, outTok: 0, cost: 0 } }
 
-  const ctrl = { busy: false, abort: null }
+  const ctrl = { busy: false, abort: null, pending: null }
+  const PENDING_EXPIRE_MS = 8000
+  function queuePending (username, message) {
+    const text = String(message || '')
+    if (!text) return
+    ctrl.pending = { username, message: text, storedAt: now() }
+  }
+  function takePending () {
+    const entry = ctrl.pending
+    if (!entry) return null
+    ctrl.pending = null
+    if (entry.storedAt && (now() - entry.storedAt) > PENDING_EXPIRE_MS) return null
+    return entry
+  }
   const pulseCtrl = { running: false, abort: null }
   let pulseTimer = null
 
@@ -1228,7 +1241,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     content = content.replace(/^[:：,，。.!！\s]+/, '')
     if (!state.ai.enabled) return
     if (!content) return
-    if (ctrl.busy) return // drop if previous still running to avoid flooding
     // Quick dismount (prefer precise tool over full reset)
     {
       const t = content
@@ -1292,6 +1304,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const acted = await (async () => { return false })()
     if (acted) return
 
+    if (ctrl.busy) {
+      queuePending(username, raw)
+      return
+    }
+
     ctrl.busy = true
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', content)
@@ -1311,6 +1328,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
     } finally {
       ctrl.busy = false
+      const next = takePending()
+      if (next) {
+        setTimeout(() => { handleChat(next.username, next.message).catch(() => {}) }, 0)
+      }
     }
   }
 
