@@ -462,6 +462,13 @@ function extendState (state) {
 function install (bot, { on, state, log }) {
   const logger = log || { info: console.log, warn: console.warn, error: console.error, debug: () => {} }
   const frameState = extendState(state || {})
+  const sendInventoryFullNotice = () => {
+    if (frameState.inventoryFullNotified) return
+    frameState.inventoryFullNotified = true
+    try {
+      if (bot && typeof bot.chat === 'function') bot.chat('我的背包满了，箱子分类中断。')
+    } catch {}
+  }
   const CHEST_BLOCK_NAMES = new Set(['chest', 'trapped_chest'])
 
   const ensureNear = async (pos, actions, range = 1.6) => {
@@ -563,6 +570,7 @@ function install (bot, { on, state, log }) {
       if (carryCap <= 0) {
         try { container.close() } catch {}
         logger.warn('[frame-sort] 背包已满，无法搬运更多', targetItem.name)
+        sendInventoryFullNotice()
         return movedAny
       }
       takeCount = Math.min(takeCount, carryCap)
@@ -571,6 +579,8 @@ function install (bot, { on, state, log }) {
       } catch (err) {
         try { container.close() } catch {}
         logger.warn('[frame-sort] 取出物品失败', err?.message || err)
+        const msg = String(err?.message || err || '').toLowerCase()
+        if (msg.includes('inventory is full')) sendInventoryFullNotice()
         return movedAny
       }
       try { container.close() } catch {}
@@ -672,6 +682,7 @@ function install (bot, { on, state, log }) {
       frameState.lastResult = result
       return result
     }
+    frameState.inventoryFullNotified = false
     frameState.running = true
     const actions = actionsMod.install(bot, { log: logger })
     const parsedRadius = Number(radius)
