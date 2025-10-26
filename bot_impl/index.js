@@ -19,6 +19,7 @@ let fireWatcher = null
 let playerWatcher = null
 let explosionCooldownUntil = 0
 const RECENT_AI_REPLY_WINDOW_MS = 20 * 1000
+let teleportResetPromise = null
 function initAfterSpawn() {
   // Reset greeting bookkeeping
   if (!state?.greetedPlayers || typeof state.greetedPlayers.clear !== 'function') {
@@ -118,6 +119,20 @@ async function hardReset (reason) {
   } catch (e) {
     try { console.log('hardReset error:', e?.message || e) } catch {}
   }
+}
+
+function resetBeforeTeleportCommand () {
+  if (teleportResetPromise) return teleportResetPromise
+  teleportResetPromise = (async () => {
+    try {
+      await hardReset('pre-tpa')
+    } catch (err) {
+      try { coreLog.warn('pre-tpa reset error:', err?.message || err) } catch {}
+    } finally {
+      teleportResetPromise = null
+    }
+  })()
+  return teleportResetPromise
 }
 
 async function digAt (pos) {
@@ -657,6 +672,28 @@ function activate (botInstance, options = {}) {
   // expose shared state on bot for modules that only receive bot
   try { bot.state = state } catch {}
 
+  if (!state.chatTeleportPatched) {
+    const originalChat = bot.chat.bind(bot)
+    bot.chat = function patchedChat (...args) {
+      try {
+        const raw = args[0]
+        const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
+        if (/^\/tpa\s+\S+/i.test(text.trim())) {
+          resetBeforeTeleportCommand()
+            .catch(() => {})
+            .finally(() => {
+              try { originalChat(...args) } catch (err) { try { coreLog.warn('chat send error:', err?.message || err) } catch {} }
+            })
+          return
+        }
+      } catch (err) {
+        try { coreLog.warn('chat intercept error:', err?.message || err) } catch {}
+      }
+      return originalChat(...args)
+    }
+    state.chatTeleportPatched = true
+  }
+
   state.greetZonesSeeded = false
   initializeGreetingZones()
 
@@ -938,6 +975,7 @@ function deactivate () {
         try { fn() } catch {}
       }
     }
+    teleportResetPromise = null
   } catch (e) {
     console.error('Error during deactivate:', e)
   }
