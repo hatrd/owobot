@@ -6,6 +6,25 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const S = state.autoPlant = state.autoPlant || {}
   const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 3000, radius: 6, maxPerTick: 4, spacing: 3 }, S.cfg || {})
+  const MIN_SPACING = new Map([
+    ['oak_sapling', 2],
+    ['birch_sapling', 2],
+    ['spruce_sapling', 2],
+    ['jungle_sapling', 2],
+    ['cherry_sapling', 2],
+    ['acacia_sapling', 3],
+    ['dark_oak_sapling', 3],
+    ['mangrove_propagule', 3]
+  ])
+
+  const MIN_SPACING_FALLBACK = 2
+
+  function spacingFor (name) {
+    if (!name) return Math.max(cfg.spacing, MIN_SPACING_FALLBACK)
+    const key = String(name).toLowerCase()
+    if (MIN_SPACING.has(key)) return Math.max(cfg.spacing, MIN_SPACING.get(key))
+    return Math.max(cfg.spacing, MIN_SPACING_FALLBACK)
+  }
   let running = false
   let timer = null
 
@@ -15,7 +34,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const byName = new Map()
       for (const it of inv) {
         const n = String(it?.name || '').toLowerCase()
-        if (!n.endsWith('_sapling')) continue
+        if (!n.endsWith('_sapling') && n !== 'mangrove_propagule') continue
         byName.set(n, (byName.get(n) || 0) + (it.count || 0))
       }
       return Array.from(byName.entries()).map(([name, count]) => ({ name, count }))
@@ -50,8 +69,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           // adaptive radius attempts: cfg.radius -> +6 -> +10
           const attempts = [cfg.radius, cfg.radius + 6, cfg.radius + 10]
           let ok = false
+          const spacing = spacingFor(s.name)
           for (const rad of attempts) {
-            const r = await actions.run('place_blocks', { item: s.name, area: { radius: Math.max(2, rad) }, max: Math.min(remain, 3), spacing: cfg.spacing })
+            const r = await actions.run('place_blocks', { item: s.name, area: { radius: Math.max(2, rad) }, max: Math.min(remain, 3), spacing })
             if (r && r.ok) { ok = true; break }
           }
           if (ok) planted += 1
@@ -88,7 +108,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       case 'interval': cfg.tickMs = Math.max(1500, parseInt(val || '8000', 10)); console.log('[PLANT] tickMs=', cfg.tickMs); try { if (timer) clearInterval(timer) } catch {}; timer = null; start(); break
       case 'radius': cfg.radius = Math.max(2, parseInt(val || '6', 10)); console.log('[PLANT] radius=', cfg.radius); break
       case 'max': cfg.maxPerTick = Math.max(1, parseInt(val || '2', 10)); console.log('[PLANT] maxPerTick=', cfg.maxPerTick); break
-      case 'spacing': cfg.spacing = Math.max(1, parseInt(val || '4', 10)); console.log('[PLANT] spacing=', cfg.spacing); break
+      case 'spacing': {
+        const parsed = Math.max(1, parseInt(val || '4', 10))
+        cfg.spacing = parsed
+        console.log('[PLANT] spacing=', cfg.spacing, '(实际间距≥品种要求)')
+        break
+      }
       default: console.log('[PLANT] usage: .autoplant on|off|status|interval ms|radius N|max N|spacing N')
     }
   })
