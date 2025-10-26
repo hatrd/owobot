@@ -3305,11 +3305,29 @@ function install (bot, { log, on, registerCleanup }) {
           const list = itemsMatchingName(nm, { source: bot.inventory?.items() || [], allowPartial: true, includeArmor: false, includeOffhand: true, includeHeld: true })
           if (!list.length) continue
           if (cnt != null) {
-            const it = list[0]
-            const n = Math.min(cnt, it.count || 0)
-            if (n > 0) { try { await container.deposit(it.type, it.metadata, n, it.nbt); kinds++; total += n } catch {} }
+            let remaining = Math.max(0, Number(cnt))
+            let moved = 0
+            for (const it of list) {
+              if (!remaining) break
+              const stackCount = it.count || 0
+              if (stackCount <= 0) continue
+              const n = Math.min(remaining, stackCount)
+              if (n <= 0) continue
+              try {
+                await container.deposit(it.type, it.metadata, n, it.nbt)
+                moved += n
+                remaining -= n
+              } catch {}
+            }
+            if (moved > 0) { kinds++; total += moved }
           } else {
-            for (const it of list) { const c = it.count || 0; if (c > 0) { try { await container.deposit(it.type, it.metadata, c, it.nbt); kinds++; total += c } catch {} } }
+            let moved = 0
+            for (const it of list) {
+              const c = it.count || 0
+              if (c <= 0) continue
+              try { await container.deposit(it.type, it.metadata, c, it.nbt); moved += c } catch {}
+            }
+            if (moved > 0) { kinds++; total += moved }
           }
         }
       } else {
