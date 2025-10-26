@@ -972,13 +972,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const loc = entry && entry.location
       if (!loc || !Number.isFinite(loc.x) || !Number.isFinite(loc.z)) continue
       const radius = Number.isFinite(loc.radius) && loc.radius > 0 ? loc.radius : 50
-      const suffixSource = (() => {
-        if (typeof entry.greetSuffix === 'string' && entry.greetSuffix.trim()) return entry.greetSuffix
-        if (typeof entry.summary === 'string' && entry.summary.trim()) return entry.summary
-        if (typeof entry.feature === 'string' && entry.feature.trim()) return entry.feature
-        return ''
+      const suffix = (() => {
+        if (typeof entry.greetSuffix !== 'string') return ''
+        const norm = normalizeMemoryText(entry.greetSuffix)
+        return norm.slice(0, 80)
       })()
-      const suffix = normalizeMemoryText(suffixSource).slice(0, 80)
       if (!suffix) continue
       const zone = {
         name: (() => {
@@ -1160,7 +1158,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       existing_triggers: ensureMemoryEntries().map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] })).slice(-10)
     }
     const messages = [
-      { role: 'system', content: '你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象描述应写入的长期记忆。规则：\n1. 若请求安全且信息充分，status=\"ok\"，必须返回 instruction（简洁中文指令）、triggers（字符串数组，如player:Ameyaku、keyword:金合欢）、summary（≤20字概括）、tags（字符串数组）、tone（可选）。\n2. 若内容不应记忆，status=\"reject\"并给出 reason（中文）。\n3. 若信息不足需要玩家补充，status=\"clarify\"并给出 question（中文）。\n4. status=\"ok\" 时，如 payload.memory_context.position 存在或请求描述具体地点，必须附加 location 对象 {"x":int,"y":int?,"z":int,"radius":int?,"dim":string?}，坐标使用玩家提供或 context 中的值，半径默认 context.radius 或 50。\n5. status=\"ok\" 时提供 feature（≤40字、snake_case 或简洁短语）描述该地点用途，可选 greet_suffix（≤40字）作为问候附加语，可选 kind（如world、player）。instruction 和 summary 应包含地点/用途信息。\n6. 输出必须是合法 JSON，不能包含额外文本、注释或Markdown。' },
+      { role: 'system', content: '你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象描述应写入的长期记忆。规则：\n1. 若请求安全且信息充分，status=\"ok\"，必须返回 instruction（简洁中文指令）、triggers（字符串数组，如player:Ameyaku、keyword:金合欢）、summary（≤20字概括）、tags（字符串数组）、tone（可选）。\n2. 若内容不应记忆，status=\"reject\"并给出 reason（中文）。\n3. 若信息不足需要玩家补充，status=\"clarify\"并给出 question（中文）。\n4. status=\"ok\" 时，如 payload.memory_context.position 存在或请求描述具体地点，必须附加 location 对象 {"x":int,"y":int?,"z":int,"radius":int?,"dim":string?}，坐标使用玩家提供或 context 中的值，半径默认 context.radius 或 50。\n5. status=\"ok\" 时提供 feature（≤40字、snake_case 或简洁短语）描述该地点用途，可选 greet_suffix（≤40字）仅在希望对到访玩家打招呼或邀请前往的地点记忆里填写；规则、安全或纯信息类记忆默认省略 greet_suffix，可选 kind（如world、player）。instruction 和 summary 应包含地点/用途信息。\n6. 输出必须是合法 JSON，不能包含额外文本、注释或Markdown。' },
       { role: 'user', content: JSON.stringify(payload) }
     ]
     const body = {

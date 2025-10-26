@@ -1,4 +1,5 @@
 // Auto-plant saplings periodically when inventory has any *_sapling
+const { Vec3 } = require('vec3')
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
@@ -27,6 +28,120 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   let running = false
   let timer = null
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+  let pathfinderPkg = null
+
+  function ensurePathfinder () {
+    try {
+      if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
+      if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder)
+      return true
+    } catch { return false }
+  }
+
+  function getMcData () {
+    if (bot.mcData) return bot.mcData
+    try { return require('minecraft-data')(bot.version) } catch { return null }
+  }
+
+  function isSolidSupport (block) {
+    try {
+      if (!block) return false
+      const name = String(block.name || '').toLowerCase()
+      if (!name || name === 'air') return false
+      if (name.includes('water') || name.includes('lava') || name.includes('bubble_column') || name.includes('fire')) return false
+      if (block.boundingBox && block.boundingBox !== 'block') return false
+      const mcData = getMcData()
+      const info = mcData?.blocks?.[block.type]
+      if (info && info.boundingBox && info.boundingBox !== 'block') return false
+      return true
+    } catch { return false }
+  }
+
+  function isPassable (block) {
+    try {
+      if (!block) return true
+      const name = String(block.name || '').toLowerCase()
+      if (!name || name === 'air' || name === 'cave_air' || name === 'void_air') return true
+      if (block.boundingBox && block.boundingBox === 'empty') return true
+      if (['tall_grass','short_grass','grass','fern','large_fern','dead_bush','seagrass','snow'].includes(name)) return true
+      return false
+    } catch { return false }
+  }
+
+  async function manualBackstep () {
+    if (!bot.entity || !bot.entity.position) return
+    const origin = bot.entity.position.clone()
+    try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
+    try { bot.clearControlStates() } catch {}
+    const strafe = Math.random() < 0.5 ? 'left' : 'right'
+    try {
+      bot.setControlState('back', true)
+      bot.setControlState(strafe, true)
+      const until = Date.now() + 500
+      while (Date.now() < until) {
+        await sleep(60)
+        const pos = bot.entity?.position
+        if (!pos) break
+        if (pos.distanceTo(origin) >= 0.8) break
+      }
+    } finally {
+      try { bot.clearControlStates() } catch {}
+    }
+  }
+
+  async function vacateSaplings (placements) {
+    if (!bot.entity || !bot.entity.position) return
+    if (state.externalBusy) return
+    const last = Array.isArray(placements) && placements.length ? placements[placements.length - 1] : null
+    const block = last?.block
+    const targetPos = block ? new Vec3(block.x, block.y, block.z) : null
+    if (!targetPos) { await manualBackstep(); return }
+    const me = bot.entity.position
+    const saplingCenter = targetPos.offset(0.5, 0, 0.5)
+    if (me.distanceTo(saplingCenter) >= 1.6) return
+    if (!ensurePathfinder()) { await manualBackstep(); return }
+    const { Movements, goals } = pathfinderPkg
+    const mcData = getMcData()
+    const moveProfile = new Movements(bot, mcData)
+    moveProfile.canDig = false
+    moveProfile.allowSprinting = false
+    try { moveProfile.allowParkour = false } catch {}
+    try { moveProfile.allowParkourPlace = false } catch {}
+    try { moveProfile.allow1by1towers = false } catch {}
+    bot.pathfinder.setMovements(moveProfile)
+    const offsets = [[2, 0], [0, 2], [-2, 0], [0, -2], [1, 0], [-1, 0], [0, 1], [0, -1], [2, 1], [-2, 1], [1, 2], [-1, 2], [2, -1], [-2, -1], [1, -2], [-1, -2]]
+    for (const [dx, dz] of offsets) {
+      const foot = targetPos.offset(dx, 0, dz)
+      const support = bot.blockAt(foot.offset(0, -1, 0))
+      if (!isSolidSupport(support)) continue
+      const footBlock = bot.blockAt(foot)
+      if (!isPassable(footBlock)) continue
+      const headBlock = bot.blockAt(foot.offset(0, 1, 0))
+      if (!isPassable(headBlock)) continue
+      const center = foot.offset(0.5, 0, 0.5)
+      try { bot.pathfinder.setGoal(new goals.GoalNear(center.x, center.y, center.z, 0.4), true) } catch { continue }
+      const until = Date.now() + 2000
+      let success = false
+      while (Date.now() < until) {
+        await sleep(100)
+        const pos = bot.entity?.position
+        if (!pos) break
+        if (pos.distanceTo(center) <= 0.7) { success = true; break }
+        if (pos.distanceTo(saplingCenter) >= 1.6) { success = true; break }
+        if (!bot.pathfinder?.goal) {
+          success = pos.distanceTo(center) <= 1.2 || pos.distanceTo(saplingCenter) >= 1.6
+          break
+        }
+      }
+      try { bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      if (success) return
+    }
+    await manualBackstep()
+    const after = bot.entity?.position
+    if (after && after.distanceTo(saplingCenter) < 1.6) await manualBackstep()
+  }
 
   function listSaplings () {
     try {
@@ -69,12 +184,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           // adaptive radius attempts: cfg.radius -> +6 -> +10
           const attempts = [cfg.radius, cfg.radius + 6, cfg.radius + 10]
           let ok = false
+          let lastResult = null
           const spacing = spacingFor(s.name)
           for (const rad of attempts) {
             const r = await actions.run('place_blocks', { item: s.name, area: { radius: Math.max(2, rad) }, max: Math.min(remain, 3), spacing })
-            if (r && r.ok) { ok = true; break }
+            if (r && r.ok) { ok = true; lastResult = r; break }
           }
-          if (ok) planted += 1
+          if (ok) {
+            planted += 1
+            try { await vacateSaplings(lastResult?.placed) } catch {}
+          }
         } catch {}
       }
       if (planted > 0) L.info('auto planted', planted)

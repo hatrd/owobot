@@ -3137,7 +3137,11 @@ function install (bot, { log, on, registerCleanup }) {
         }
       }
       if (placed.length === 0) return fail('未能放置任何方块')
-      return ok(`已放置 ${item} x${placed.length}`)
+      const placedReport = placed.map(p => ({
+        base: { x: p.x, y: p.y, z: p.z },
+        block: { x: p.x, y: p.y + 1, z: p.z }
+      }))
+      return ok(`已放置 ${item} x${placed.length}`, { placed: placedReport })
     } finally {
       try {
         if (lockApplied && bot.state && String(bot.state.holdItemLock || '').toLowerCase() === lockName) bot.state.holdItemLock = null
