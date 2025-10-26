@@ -1275,12 +1275,29 @@ function install (bot, { log, on, registerCleanup }) {
     miningAbort = false
 
     // helpers
-    function matches (b) {
-      const n = String(b?.name || '').toLowerCase()
-      if (!n || n === 'air') return false
-      if (names) return names.includes(n)
-      if (match) return n.includes(match)
-      return true
+  function matches (b) {
+    const n = String(b?.name || '').toLowerCase()
+    if (!n || n === 'air') return false
+    if (names) return names.includes(n)
+    if (match) return n.includes(match)
+    return true
+  }
+    function trunkHeightFromBase (p) {
+      try {
+        const { Vec3 } = require('vec3')
+        let bottom = p.y
+        let cursor = p.y
+        for (let i = 0; i < 32; i++) {
+          const belowPos = new Vec3(p.x, cursor - 1, p.z)
+          const below = bot.blockAt(belowPos)
+          if (!below || !matches(below)) break
+          bottom = cursor - 1
+          cursor -= 1
+        }
+        return p.y - bottom
+      } catch {
+        return 0
+      }
     }
 
     function explosionCooling () { try { return Date.now() < ((bot.state && bot.state.explosionCooldownUntil) || 0) } catch { return false } }
@@ -1297,6 +1314,7 @@ function install (bot, { log, on, registerCleanup }) {
     }
     function isOreNameForSafety (n) { try { const s = String(n || '').toLowerCase(); return !!s && (s.endsWith('_ore') || s === 'ancient_debris') } catch { return false } }
     const skipKeys = new Map()
+    const highUnreachable = []
     const skipRetryMs = Math.max(4000, parseInt(args.retryDelayMs || '8000', 10))
     const posKey = (p) => `${p.x},${p.y},${p.z}`
     const dropSkip = new Map()
@@ -1554,7 +1572,8 @@ function install (bot, { log, on, registerCleanup }) {
           const key = posKey(p)
           const record = skipKeys.get(key)
           if (!record) return true
-          if ((nowTs - record) >= skipRetryMs) {
+          if (record.reason === 'high_unreachable') return false
+          if ((nowTs - record.time) >= skipRetryMs) {
             skipKeys.delete(key)
             return true
           }
@@ -1581,6 +1600,23 @@ function install (bot, { log, on, registerCleanup }) {
       }
       let did = false
       if (candidate) {
+        if (isLogsMode) {
+          const botY = (bot.entity?.position && bot.entity.position.y) || me.y
+          const diffToBot = candidate.y - botY
+          if (diffToBot >= 6) {
+            highUnreachable.push(1)
+            skipKeys.set(posKey(candidate), { time: Date.now(), reason: 'high_unreachable' })
+            chopLog.debug('chop:skip-precheck-high', { target: `${candidate.x},${candidate.y},${candidate.z}`, diff: diffToBot })
+            continue
+          }
+          const heightDiff = trunkHeightFromBase(candidate)
+          if (heightDiff >= 6) {
+            highUnreachable.push(1)
+            skipKeys.set(posKey(candidate), { time: Date.now(), reason: 'high_unreachable' })
+            chopLog.debug('chop:skip-precheck-high', { target: `${candidate.x},${candidate.y},${candidate.z}`, heightDiff })
+            continue
+          }
+        }
         chopLog.debug('chop:try-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, broken })
         const result = await approachAndDig(candidate)
         chopLog.debug('chop:result', { target: `${candidate.x},${candidate.y},${candidate.z}`, result })
@@ -1590,8 +1626,16 @@ function install (bot, { log, on, registerCleanup }) {
           did = true
           if (isLogsMode) currentColumn = { x: candidate.x, z: candidate.z }
         } else if (result === 'unreachable' || result === 'nodig') {
-          skipKeys.set(posKey(candidate), Date.now())
-          chopLog.debug('chop:skip-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, reason: result })
+          const hereNow = bot.entity?.position || me
+          const heightDiff = hereNow ? (candidate.y - hereNow.y) : 0
+          const reason = (result === 'unreachable' && isLogsMode && heightDiff >= 6) ? 'high_unreachable' : result
+          skipKeys.set(posKey(candidate), { time: Date.now(), reason })
+          if (reason === 'high_unreachable') {
+            highUnreachable.push(1)
+            chopLog.debug('chop:skip-target-high', { target: `${candidate.x},${candidate.y},${candidate.z}`, heightDiff })
+          } else {
+            chopLog.debug('chop:skip-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, reason })
+          }
           continue
         }
       }
@@ -1682,7 +1726,10 @@ function install (bot, { log, on, registerCleanup }) {
         }
       }
     } catch {}
-    return ok(`挖掘完成 ${broken}`)
+    const extras = []
+    if (highUnreachable.length) extras.push(`跳过高位原木${highUnreachable.length}个`)
+    const summary = extras.length ? `（${extras.join('，')}）` : ''
+    return ok(`挖掘完成 ${broken}${summary}`, { skippedHigh: highUnreachable })
   }
 
   // Helper: ore detection/unification for gather->mine_ore

@@ -673,25 +673,29 @@ function activate (botInstance, options = {}) {
   try { bot.state = state } catch {}
 
   if (!state.chatTeleportPatched) {
-    const originalChat = bot.chat.bind(bot)
-    bot.chat = function patchedChat (...args) {
-      try {
-        const raw = args[0]
-        const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
-        if (/^\/tpa\s+\S+/i.test(text.trim())) {
-          resetBeforeTeleportCommand()
-            .catch(() => {})
-            .finally(() => {
-              try { originalChat(...args) } catch (err) { try { coreLog.warn('chat send error:', err?.message || err) } catch {} }
-            })
-          return
+    if (!bot || typeof bot.chat !== 'function') {
+      try { coreLog.warn('chat intercept skipped: bot.chat unavailable') } catch {}
+    } else {
+      const originalChat = bot.chat.bind(bot)
+      bot.chat = function patchedChat (...args) {
+        try {
+          const raw = args[0]
+          const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
+          if (/^\/tpa\s+\S+/i.test(text.trim())) {
+            resetBeforeTeleportCommand()
+              .catch(() => {})
+              .finally(() => {
+                try { originalChat(...args) } catch (err) { try { coreLog.warn('chat send error:', err?.message || err) } catch {} }
+              })
+            return
+          }
+        } catch (err) {
+          try { coreLog.warn('chat intercept error:', err?.message || err) } catch {}
         }
-      } catch (err) {
-        try { coreLog.warn('chat intercept error:', err?.message || err) } catch {}
+        return originalChat(...args)
       }
-      return originalChat(...args)
+      state.chatTeleportPatched = true
     }
-    state.chatTeleportPatched = true
   }
 
   state.greetZonesSeeded = false
