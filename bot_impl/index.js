@@ -5,6 +5,8 @@ const fs = require('fs')
 const path = require('path')
 const { Vec3 } = require('vec3')
 const logging = require('./logging')
+const { MODULES } = require('./module-registry')
+const { prepareSharedState } = require('./state')
 const coreLog = logging.getLogger('core')
 
 function dlog (...args) { coreLog.debug(...args) }
@@ -638,35 +640,12 @@ function activate (botInstance, options = {}) {
     return !(v === '0' || v === 'false' || v === 'no' || v === 'off')
   })()
 
-  state = options.sharedState || {
-    pendingGreets: new Map(),
-    greetedPlayers: new Set(),
-    readyForGreeting: false,
-    extinguishing: false,
-    hasSpawned: false,
-    autoLookSuspended: false,
-    cleanups: [],
-    greetingEnabled: GREET,
-    greetZones: [],
-    greetZonesSeeded: false,
-    greetLogEnabled: false,
-    worldMemoryZones: [],
-    loginPassword: undefined
-  }
-
-  if (!Array.isArray(state.cleanups)) state.cleanups = []
-  if (!Number.isFinite(state.externalBusyCount) || state.externalBusyCount < 0) state.externalBusyCount = 0
-  if (!Array.isArray(state.greetZones)) state.greetZones = []
-  if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
-  if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
-  if (typeof state.greetLogEnabled !== 'boolean') state.greetLogEnabled = false
-  // Ensure greetingEnabled is initialized even when reusing shared state from loader
-  if (typeof state.greetingEnabled === 'undefined') state.greetingEnabled = GREET
-  // Propagate login password from loader config or env into shared state
+  let configuredPassword
   try {
-    const cfgPwd = options?.config?.password || process.env.MC_PASSWORD
-    if (cfgPwd) state.loginPassword = cfgPwd
+    configuredPassword = options?.config?.password || process.env.MC_PASSWORD || undefined
   } catch {}
+
+  state = prepareSharedState(options.sharedState, { greetEnabled: GREET, loginPassword: configuredPassword })
   // Bind logging to shared state so .log changes persist across reloads
   try { logging.init(state) } catch {}
   // expose shared state on bot for modules that only receive bot
@@ -751,52 +730,27 @@ function activate (botInstance, options = {}) {
     }
   })
 
-  // Feature: sleep when item dropped onto a bed at night
-  try { require('./bed-sleep').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('sleep') }) } catch (e) { coreLog.warn('bed-sleep install error:', e?.message || e) }
+  function installModule (entry) {
+    if (!entry || entry.enabled === false) return
+    const { id, path: modulePath, logger, description, inject } = entry
+    const label = id || modulePath
+    try {
+      const mod = require(modulePath)
+      if (!mod || typeof mod.install !== 'function') {
+        coreLog.warn(`module ${label} missing install()`)
+        return
+      }
+      const logName = logger || label
+      const baseOptions = { on, dlog, state, registerCleanup, log: logging.getLogger(logName) }
+      const options = inject ? Object.assign({}, baseOptions, inject({ on, dlog, state, registerCleanup, logging })) : baseOptions
+      mod.install(bot, options)
+      if (description) dlog(`Module ready: ${label} - ${description}`)
+    } catch (e) {
+      coreLog.warn(`${label} install error:`, e?.message || e)
+    }
+  }
 
-  // Feature: follow any nearby player holding an Iron Nugget (needs pathfinder)
-  try { require('./follow-iron-nugget').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('follow') }) } catch (e) { coreLog.warn('follow-iron-nugget install error:', e?.message || e) }
-
-  // Feature: auto-eat when hungry
-  try { require('./auto-eat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('eat') }) } catch (e) { coreLog.warn('auto-eat install error:', e?.message || e) }
-  // Feature: auto-back and pickup on death prompt
-  try { require('./auto-back').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('back') }) } catch (e) { coreLog.warn('auto-back install error:', e?.message || e) }
-
-  // Feature: runtime log control via chat
-  try { require('./log-control').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('log') }) } catch (e) { coreLog.warn('log-control install error:', e?.message || e) }
-
-  // Feature: auto-counterattack with cute chat on getting hurt
-  try { require('./auto-counter').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('pvp') }) } catch (e) { coreLog.warn('auto-counter install error:', e?.message || e) }
-
-  // Feature: auto-equip best armor/weapon/shield from inventory
-  try { require('./auto-gear').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('gear') }) } catch (e) { coreLog.warn('auto-gear install error:', e?.message || e) }
-  // Feature: auto-craft iron armor if possible (requires nearby crafting table)
-  try { require('./auto-armor-craft').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('autoarmor') }) } catch (e) { coreLog.warn('auto-armor-craft install error:', e?.message || e) }
-  // Feature: auto-fishing when rod present and near water
-  try { require('./auto-fish').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('fish') }) } catch (e) { coreLog.warn('auto-fish install error:', e?.message || e) }
-  // Feature: auto-swim (float in water)
-  try { require('./auto-swim').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('swim') }) } catch (e) { coreLog.warn('auto-swim install error:', e?.message || e) }
-  // Feature: respond to ".bot here" with "/tpa <username>"
-  try { require('./tpa-here').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('tpa') }) } catch (e) { coreLog.warn('tpa-here install error:', e?.message || e) }
-
-  // (removed) iron-bar tree farm feature
-
-  // Feature: AI chat (owk prefix routed to DeepSeek-compatible API)
-  try { require('./ai-chat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('ai') }) } catch (e) { coreLog.warn('ai-chat install error:', e?.message || e) }
-
-  // Feature: auto-plant saplings when available in inventory
-  try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
-  // Feature: auto-stash when inventory nearly full (default disabled; intended for fishing)
-  try { require('./auto-stash').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('stash') }) } catch (e) { coreLog.warn('auto-stash install error:', e?.message || e) }
-
-  // Feature: inventory compression when space is tight (no tossing)
-  try { require('./inventory-compress').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('compress') }) } catch (e) { coreLog.warn('inventory-compress install error:', e?.message || e) }
-
-  // Feature: frame-based storage sorting tools
-  try { require('./frame-sorter').install(bot, { on, state, log: logging.getLogger('frames') }) } catch (e) { coreLog.warn('frame-sorter install error:', e?.message || e) }
-
-  // Feature: auto-login when server prompts
-  try { require('./auto-login').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('login') }) } catch (e) { coreLog.warn('auto-login install error:', e?.message || e) }
+  MODULES.forEach(installModule)
 
   // Feature removed: random walk (was unstable)
 
@@ -825,18 +779,7 @@ function activate (botInstance, options = {}) {
   } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 
   // Debug: drops scanner CLI
-  try { require('./drops-debug').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('drops') }) } catch (e) { coreLog.warn('drops-debug install error:', e?.message || e) }
-  // CLI: collect dropped items
-  try { require('./collect-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('collect') }) } catch (e) { coreLog.warn('collect-cli install error:', e?.message || e) }
-  // CLI: place blocks/saplings
-  try { require('./place-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('place') }) } catch (e) { coreLog.warn('place-cli install error:', e?.message || e) }
-  try { require('./spawnproof-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('spawnproof') }) } catch (e) { coreLog.warn('spawnproof-cli install error:', e?.message || e) }
-  // CLI: status snapshot
-  try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
-  // CLI: start/stop mining ores
-  try { require('./mine-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('mine') }) } catch (e) { coreLog.warn('mine-cli install error:', e?.message || e) }
-  // CLI: debug helpers (.entities/.animals/.cows/.pos/.inv/.goal/.task/.tools/.hawk)
-  try { require('./debug-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('dbg') }) } catch (e) { coreLog.warn('debug-cli install error:', e?.message || e) }
+  // CLI modules registered via MODULES
 
   on('spawn', () => {
     const host = (bot._client && (bot._client.socketServerHost || bot._client.host)) || 'server'

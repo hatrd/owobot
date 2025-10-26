@@ -10,6 +10,8 @@ let miningAbort = false
 const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
 const { Vec3 } = require('vec3')
 
+const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'toss', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'write_text', 'range_attack', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests']
+
 function install (bot, { log, on, registerCleanup }) {
   const pvp = require('./pvp')
   const observer = require('./agent/observer')
@@ -3687,7 +3689,16 @@ function install (bot, { log, on, registerCleanup }) {
 
   function list () { return Object.keys(registry) }
 
+  if (process.env.MC_DEBUG === '1' || process.env.MC_DEBUG === 'true') {
+    const registeredNames = new Set(Object.keys(registry))
+    const missing = TOOL_NAMES.filter(n => !registeredNames.has(n))
+    const extra = [...registeredNames].filter(n => !TOOL_NAMES.includes(n))
+    if (missing.length || extra.length) {
+      log?.warn && log.warn('TOOL_NAMES mismatch', { missing, extra })
+    }
+  }
+
   return { run, list }
 }
 
-  module.exports = { install }
+module.exports = { install, TOOL_NAMES }

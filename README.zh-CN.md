@@ -121,6 +121,11 @@
 - 新功能优先放在 `bot_impl/`，便于热重载；在 `bot.js` 只做装载/监听。
 - 在 `bot_impl/` 下保存需原子性，避免不完整热重载。
 
+### 开发参考
+- `docs/runtime-map.md` 总结了共享状态结构与关键事件。
+- `bot_impl/module-registry.js` 统一登记所有热重载模块，新增/移除功能时只需修改这里。
+- 运行 `node scripts/list-tools.js` 可输出当前 AI 工具白名单 JSON，帮助提示词与文档保持一致。
+
 ## CLI 覆盖
 运行时环境变量均可被 CLI 覆盖：
 - `--host`、`--port`、`--username|--user`、`--auth`、`--password`、`--greet on|off`
