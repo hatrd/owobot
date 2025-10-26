@@ -17,11 +17,6 @@
 - 设置服务器：`MC_HOST=localhost MC_PORT=25565 npm start` 或 `npm start -- --host localhost --port 25565`
 - 登录方式：`MC_AUTH=offline|microsoft`（如需 `MC_PASSWORD`）
 - 降低日志：`MC_DEBUG=0 npm start`
-- 调整自动迭代频率：`AUTO_ITERATE_INTERVAL_MS=300000 npm start` 或 `npm start -- --iterate-interval 5m`
-- 限定 Codex 写入范围：`AUTO_ITERATE_REPO_ROOT=/绝对路径/到/仓库 npm start`
-  - 修改后记得执行 `touch open_fire`（或重启进程）以让自动迭代加载新的权限范围。
-- 放宽 Codex 超时：`CODEX_EXEC_TIMEOUT_MS=180000 npm start`（≤0 表示无限制）
-- 自动提交提示：若希望自动迭代后的本地 `git commit` 成功，请先配置 `git config --global user.name "Bot"` 与 `git config --global user.email "bot@example.com"` 等身份信息。
 - 自定义提示词：编辑 `bot_impl/prompts/` 下的文件（改动后 `touch open_fire` 热重载）
 
 ### 文件日志
@@ -69,10 +64,10 @@
 ## 功能亮点
 - 修改 `bot_impl/` 可热重载逻辑，尽量不掉线；共享状态在重载间保留。
 - DeepSeek 接入：以触发词开头的消息走 AI，AI 通过 TOOL 调用安全工具集。
-- 自动迭代在检测到文件改动后会自动 `git add` + `git commit`（不推送），commit 标题取自 Codex 提供的 summary。
+- 日常自动化（进食/补装/种植/钓鱼等）可通过 CLI 快速开启或调节。
 
 ## 内置能力
-- 自动游泳、自动进食、自动装备、自动合成盔甲、自动种植、自动钓鱼、铁粒跟随、火源灭火、世界轻感知。
+- 自动进食/回包、自动装备、自动合成盔甲、自动钓鱼/游泳/种植/收纳；铁粒跟随；自动灭火；床上睡觉；库存压缩；物品展示框分类；TPA 辅助；可选 AI 聊天。
 
 ## 就近寻路（方块）
 - 工具：`goto_block{names?|name?|match?, radius?, range?, dig?}`（默认不挖掘）
@@ -104,7 +99,6 @@
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
-- `.iterate status|interval <时长>|run|cooldown <时长>|supervisor <文本>|reset` — 在线调整自动 Codex 迭代周期（支持 ms/s/m/h）；`supervisor` 可设置/清除一次性监督提示，`reset` 将日志游标移动到当前末尾
 - `.pulse status|on|off|now` — 控制自动 DeepSeek 聊天脉冲（定期汇总玩家聊天并主动发言）
 
 ## 种植
@@ -131,4 +125,3 @@
 运行时环境变量均可被 CLI 覆盖：
 - `--host`、`--port`、`--username|--user`、`--auth`、`--password`、`--greet on|off`
 示例：`npm start -- --host my.server --port 25565 --username MyBot --greet off`
-- **Codex 沙盒警告**：自动迭代只会在 `AUTO_ITERATE_REPO_ROOT` 指定的目录内授予写权限（默认即当前工作目录）。启用前请确认路径准确，避免暴露不相关的文件夹；调整后需要热重载或重启以生效。
