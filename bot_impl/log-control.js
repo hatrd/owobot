@@ -33,7 +33,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       ['swim', 'swim'], ['autoswim', 'swim'],
       ['tpa', 'tpa'], ['tp', 'tpa'],
       ['ai', 'ai'], ['owk', 'ai'],
-      ['sense', 'sense'], ['awareness', 'sense'],
       ['drops', 'drops'],
       ['core', 'core'], ['all', 'all']
     ])

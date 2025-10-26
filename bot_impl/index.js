@@ -701,7 +701,7 @@ function activate (botInstance, options = {}) {
   state.greetZonesSeeded = false
   initializeGreetingZones()
 
-  // Track current external task for AI context (source: chat/cli/sense -> player/auto)
+  // Track current external task for AI context (source: chat/cli -> player/auto)
   on('external:begin', (info) => {
     try {
       const src = String(info?.source || '').toLowerCase()
@@ -838,7 +838,7 @@ function activate (botInstance, options = {}) {
   try { require('./status-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('status') }) } catch (e) { coreLog.warn('status-cli install error:', e?.message || e) }
   // CLI: start/stop mining ores
   try { require('./mine-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('mine') }) } catch (e) { coreLog.warn('mine-cli install error:', e?.message || e) }
-  // CLI: debug helpers (.entities/.animals/.cows/.pos/.inv/.goal/.task/.tools/.hawk/.sense)
+  // CLI: debug helpers (.entities/.animals/.cows/.pos/.inv/.goal/.task/.tools/.hawk)
   try { require('./debug-cli').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('dbg') }) } catch (e) { coreLog.warn('debug-cli install error:', e?.message || e) }
 
   on('spawn', () => {

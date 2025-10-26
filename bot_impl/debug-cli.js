@@ -113,13 +113,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch (e) { P('hawk error:', e?.message || e) }
   }
 
-  function printSense () {
-    try {
-      const cfg = state?.sense?.cfg || {}
-      P('sense', cfg)
-    } catch (e) { P('sense error:', e?.message || e) }
-  }
-
   function onCli (payload) {
     try {
       const cmd = String(payload?.cmd || '').toLowerCase()
@@ -135,7 +128,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (cmd === 'task') { printTask(); return }
       if (cmd === 'tools') { printTools(); return }
       if (cmd === 'hawk') { printHawk(); return }
-      if (cmd === 'sense') { printSense(); return }
     } catch (e) { P('dbg error:', e?.message || e) }
   }
 
@@ -144,4 +136,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-
