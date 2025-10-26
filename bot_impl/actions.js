@@ -20,8 +20,8 @@ function install (bot, { log, on, registerCleanup }) {
     try { if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder'); if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder); return true } catch (e) { log && log.warn && log.warn('pathfinder missing'); return false }
   }
 
-  function ok(msg, extra) { return { ok: true, msg, ...extra } }
-  function fail(msg) { return { ok: false, msg } }
+  function ok(msg, extra) { return { ok: true, msg, ...(extra || {}) } }
+  function fail(msg, extra) { return { ok: false, msg, ...(extra || {}) } }
 
   function wait (ms) { return new Promise(r => setTimeout(r, ms)) }
 
@@ -2687,170 +2687,209 @@ function install (bot, { log, on, registerCleanup }) {
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
-    const blockInfo = mcData?.blocks || {}
-    function isSolidSupport (block) {
-      try {
+    const lockName = item
+    if (isMainHandLocked(bot, lockName)) return fail('主手被锁定')
+    let lockApplied = false
+    if (bot.state && !bot.state.holdItemLock) {
+      bot.state.holdItemLock = lockName
+      lockApplied = true
+    }
+
+    try {
+      const blockInfo = mcData?.blocks || {}
+      function isSolidSupport (block) {
+        try {
+          if (!block) return false
+          const n = String(block.name || '').toLowerCase()
+          if (!n || n === 'air') return false
+          if (n.includes('water') || n.includes('lava') || n.includes('bubble_column') || n.includes('fire')) return false
+          if (block.boundingBox && block.boundingBox !== 'block') return false
+          const info = blockInfo[block.type]
+          if (info && info.boundingBox && info.boundingBox !== 'block') return false
+          return true
+        } catch { return false }
+      }
+
+      function baseMatches (block) {
         if (!block) return false
         const n = String(block.name || '').toLowerCase()
-        if (!n || n === 'air') return false
-        if (n.includes('water') || n.includes('lava') || n.includes('bubble_column') || n.includes('fire')) return false
-        if (block.boundingBox && block.boundingBox !== 'block') return false
-        const info = blockInfo[block.type]
-        if (info && info.boundingBox && info.boundingBox !== 'block') return false
-        return true
-      } catch { return false }
-    }
-
-    function baseMatches (block) {
-      if (!block) return false
-      const n = String(block.name || '').toLowerCase()
-      if (baseNames.length > 0 && baseNames.includes(n)) return true
-      if (allowSolid) return isSolidSupport(block)
-      return false
-    }
-
-    const me = bot.entity.position
-    if (debug) {
-      try {
-        console.log('[PLACE] item=', item, 'tops=', baseNames, 'solid=', allowSolid, 'radius=', radius, 'me=', `${me.x},${me.y},${me.z}`)
-      } catch {}
-    }
-    let candidates = bot.findBlocks({
-      maxDistance: Math.max(2, radius),
-      count: 128,
-      matching: (b) => {
-        if (!baseMatches(b)) return false
-        // top must be air/replaceable
-        const pos = b && b.position ? b.position : null
-        if (!pos || typeof pos.offset !== 'function') return false
-        const top = bot.blockAt(pos.offset(0, 1, 0))
-        const tn = String(top?.name || 'air').toLowerCase()
-        if (tn === 'air') return true
-        if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) return true
+        if (baseNames.length > 0 && baseNames.includes(n)) return true
+        if (allowSolid) return isSolidSupport(block)
         return false
       }
-    }) || []
-    if (debug) try { const c0 = candidates[0]; console.log('[PLACE] candidates=', candidates.length, 'first=', c0 ? `${c0.x},${c0.y},${c0.z}` : 'none') } catch {}
-    // Fallback scan if mineflayer findBlocks didn't return candidates
-    if (!candidates.length) {
-      try {
+
+      const me = bot.entity.position
+      if (debug) {
+        try {
+          console.log('[PLACE] item=', item, 'tops=', baseNames, 'solid=', allowSolid, 'radius=', radius, 'me=', `${me.x},${me.y},${me.z}`)
+        } catch {}
+      }
+      let candidates = bot.findBlocks({
+        maxDistance: Math.max(2, radius),
+        count: 128,
+        matching: (b) => {
+          if (!baseMatches(b)) return false
+          // top must be air/replaceable
+          const pos = b && b.position ? b.position : null
+          if (!pos || typeof pos.offset !== 'function') return false
+          const top = bot.blockAt(pos.offset(0, 1, 0))
+          const tn = String(top?.name || 'air').toLowerCase()
+          if (tn === 'air') return true
+          if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) return true
+          return false
+        }
+      }) || []
+      if (debug) try { const c0 = candidates[0]; console.log('[PLACE] candidates=', candidates.length, 'first=', c0 ? `${c0.x},${c0.y},${c0.z}` : 'none') } catch {}
+      // Fallback scan if mineflayer findBlocks didn't return candidates
+      if (!candidates.length) {
+        try {
+          const V = require('vec3').Vec3
+          const center = me.floored ? me.floored() : new V(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z))
+          const r = Math.max(1, radius)
+          const extra = []
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              for (let dy = -1; dy <= 2; dy++) { // scan slight vertical range to handle raised ground
+                const p = new V(center.x + dx, center.y + dy, center.z + dz)
+                const b = bot.blockAt(p)
+                if (!b) continue
+                if (!baseMatches(b)) continue
+                const top = bot.blockAt(p.offset(0, 1, 0))
+                const tn = String(top?.name || 'air').toLowerCase()
+                const replaceable = (tn === 'air') || ['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)
+                if (!replaceable) continue
+                extra.push(p)
+              }
+            }
+          }
+          if (extra.length) {
+            candidates = extra
+            if (debug) try { console.log('[PLACE] fallback candidates=', candidates.length) } catch {}
+          }
+        } catch (e) { if (debug) try { console.log('[PLACE] fallback scan error:', e?.message || e) } catch {} }
+      }
+      if (!candidates.length) return fail('附近没有可放置位置')
+      // sort by distance
+      candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+
+      const placed = []
+      let remaining = Math.min(max, countItemByName(item))
+      if (remaining <= 0) return fail('背包没有该物品')
+
+      async function approach (p) {
+        if (!p) return
         const V = require('vec3').Vec3
-        const center = me.floored ? me.floored() : new V(Math.floor(me.x), Math.floor(me.y), Math.floor(me.z))
-        const r = Math.max(1, radius)
-        const extra = []
-        for (let dx = -r; dx <= r; dx++) {
-          for (let dz = -r; dz <= r; dz++) {
-            for (let dy = -1; dy <= 2; dy++) { // scan slight vertical range to handle raised ground
-              const p = new V(center.x + dx, center.y + dy, center.z + dz)
-              const b = bot.blockAt(p)
-              if (!b) continue
-              if (!baseMatches(b)) continue
-              const top = bot.blockAt(p.offset(0, 1, 0))
-              const tn = String(top?.name || 'air').toLowerCase()
-              const replaceable = (tn === 'air') || ['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)
-              if (!replaceable) continue
-              extra.push(p)
+        const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
+        bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 1), true)
+        const until = Date.now() + 5000
+        let lastD = Infinity
+        let stall = 0
+        while (Date.now() < until) {
+          await wait(100)
+          const me = bot.entity?.position
+          if (!me) break
+          const d = me.distanceTo(pv.offset(0,1,0))
+          if (d <= 1.6) break
+          // detect stall
+          if (Math.abs(lastD - d) < 0.01) { stall++ } else { stall = 0 }
+          lastD = d
+          if (stall >= 10) break
+        }
+        try { bot.pathfinder.setGoal(null) } catch {}
+        try { bot.clearControlStates() } catch {}
+        await wait(50)
+      }
+
+      function farEnough (p) { return placed.every(pp => p.distanceTo(pp) >= spacing) }
+
+      const spacingSq = spacing * spacing
+      const spacingRange = Math.max(1, Math.ceil(spacing))
+      function violatesExistingSpacing (p) {
+        const V = require('vec3').Vec3
+        const target = (p instanceof V ? p : new V(p.x, p.y, p.z)).offset(0, 1, 0)
+        for (let dx = -spacingRange; dx <= spacingRange; dx++) {
+          for (let dz = -spacingRange; dz <= spacingRange; dz++) {
+            for (let dy = -2; dy <= 2; dy++) {
+              if (dx === 0 && dy === 0 && dz === 0) continue
+              const distSq = dx * dx + dy * dy + dz * dz
+              if (distSq >= spacingSq) continue
+              const pos = new V(target.x + dx, target.y + dy, target.z + dz)
+              const block = bot.blockAt(pos)
+              if (!block) continue
+              const name = String(block.name || '').toLowerCase()
+              if (name === item) return true
+              if (name.endsWith('_sapling') && item.endsWith('_sapling')) return true
+              if (name.endsWith('_button') && item.endsWith('_button')) return true
             }
           }
         }
-        if (extra.length) {
-          candidates = extra
-          if (debug) try { console.log('[PLACE] fallback candidates=', candidates.length) } catch {}
-        }
-      } catch (e) { if (debug) try { console.log('[PLACE] fallback scan error:', e?.message || e) } catch {} }
-    }
-    if (!candidates.length) return fail('附近没有可放置位置')
-    // sort by distance
-    candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
-
-    const placed = []
-    let remaining = Math.min(max, countItemByName(item))
-    if (remaining <= 0) return fail('背包没有该物品')
-
-    async function approach (p) {
-      if (!p) return
-      const V = require('vec3').Vec3
-      const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
-      bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 1), true)
-      const until = Date.now() + 5000
-      let lastD = Infinity
-      let stall = 0
-      while (Date.now() < until) {
-        await wait(100)
-        const me = bot.entity?.position
-        if (!me) break
-        const d = me.distanceTo(pv.offset(0,1,0))
-        if (d <= 1.6) break
-        // detect stall
-        if (Math.abs(lastD - d) < 0.01) { stall++ } else { stall = 0 }
-        lastD = d
-        if (stall >= 10) break
-      }
-      try { bot.pathfinder.setGoal(null) } catch {}
-      try { bot.clearControlStates() } catch {}
-      await wait(50)
-    }
-
-    function farEnough (p) { return placed.every(pp => p.distanceTo(pp) >= spacing) }
-
-    function isReplaceable (top) {
-      try {
-        const tn = String(top?.name || 'air').toLowerCase()
-        if (tn === 'air') return true
-        if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) return true
         return false
-      } catch { return false }
-    }
-
-    for (const p of candidates) {
-      if (remaining <= 0) break
-      if (!farEnough(p)) continue
-      try {
-        if (!p) continue
-        const V = require('vec3').Vec3
-        const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
-        const base = bot.blockAt(pv)
-        if (!base) continue
-        const above = pv.offset(0,1,0)
-        const top = bot.blockAt(above)
-        if (debug) try { console.log('[PLACE] try at', `${pv.x},${pv.y},${pv.z}`, 'base=', base?.name, 'top=', top?.name) } catch {}
-        // Skip if already occupied (sapling/leaf/etc.)
-        if (!isReplaceable(top)) continue
-        // clear small plants if any
-        const tn = String(top?.name || 'air').toLowerCase()
-        if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) {
-          try { if (top?.position) await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
-        }
-        await approach(pv)
-        try { await ensureItemEquipped(item) } catch (e) { return fail(String(e?.message || e)) }
-        try {
-          // re-check top right before placing (might have changed)
-          const top2 = bot.blockAt(pv.offset(0,1,0))
-          if (!isReplaceable(top2)) continue
-          await bot.lookAt(pv.offset(0.5, 1.2, 0.5), true)
-          await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0))
-          placed.push(pv)
-          remaining--
-          if (debug) try { console.log('[PLACE] placed at', `${pv.x},${pv.y+1},${pv.z}`) } catch {}
-          if (collect) { try { bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 0), true) } catch {}; await wait(200) }
-        } catch (e) {
-          // try once more after a tiny nudge
-          try { await bot.lookAt(pv.offset(0.5, 1.0, 0.5), true) } catch {}
-          try { await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0)); placed.push(pv); remaining--; if (debug) try { console.log('[PLACE] placed (retry) at', `${pv.x},${pv.y+1},${pv.z}`) } catch {} } catch (e2) { if (debug) try { console.log('[PLACE] place failed:', e2?.message || e2) } catch {} }
-        }
-      } catch (e) {
-        if (debug) try { console.log('[PLACE] attempt error:', e?.message || e) } catch {}
-        // swallow and continue to next candidate
       }
+
+      function isReplaceable (top) {
+        try {
+          const tn = String(top?.name || 'air').toLowerCase()
+          if (tn === 'air') return true
+          if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) return true
+          return false
+        } catch { return false }
+      }
+
+      for (const p of candidates) {
+        if (remaining <= 0) break
+        if (!farEnough(p)) continue
+        if (violatesExistingSpacing(p)) continue
+        try {
+          if (!p) continue
+          const V = require('vec3').Vec3
+          const pv = (p instanceof V) ? p : new V(p.x, p.y, p.z)
+          const base = bot.blockAt(pv)
+          if (!base) continue
+          const above = pv.offset(0,1,0)
+          const top = bot.blockAt(above)
+          if (debug) try { console.log('[PLACE] try at', `${pv.x},${pv.y},${pv.z}`, 'base=', base?.name, 'top=', top?.name) } catch {}
+          // Skip if already occupied (sapling/leaf/etc.)
+          if (!isReplaceable(top)) continue
+          // clear small plants if any
+          const tn = String(top?.name || 'air').toLowerCase()
+          if (['tall_grass','short_grass','grass','fern','large_fern','snow','seagrass','dead_bush'].includes(tn)) {
+            try { if (top?.position) await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
+          }
+          await approach(pv)
+          try { await ensureItemEquipped(item) } catch (e) { return fail(String(e?.message || e)) }
+          try {
+            // re-check top right before placing (might have changed)
+            const top2 = bot.blockAt(pv.offset(0,1,0))
+            if (!isReplaceable(top2)) continue
+            await bot.lookAt(pv.offset(0.5, 1.2, 0.5), true)
+            await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0))
+            placed.push(pv)
+            remaining--
+            if (debug) try { console.log('[PLACE] placed at', `${pv.x},${pv.y+1},${pv.z}`) } catch {}
+            if (collect) { try { bot.pathfinder.setGoal(new goals.GoalNear(pv.x, pv.y + 1, pv.z, 0), true) } catch {}; await wait(200) }
+          } catch (e) {
+            // try once more after a tiny nudge
+            try { await bot.lookAt(pv.offset(0.5, 1.0, 0.5), true) } catch {}
+            try { await bot.placeBlock(base, new (require('vec3').Vec3)(0, 1, 0)); placed.push(pv); remaining--; if (debug) try { console.log('[PLACE] placed (retry) at', `${pv.x},${pv.y+1},${pv.z}`) } catch {} } catch (e2) { if (debug) try { console.log('[PLACE] place failed:', e2?.message || e2) } catch {} }
+          }
+        } catch (e) {
+          if (debug) try { console.log('[PLACE] attempt error:', e?.message || e) } catch {}
+          // swallow and continue to next candidate
+        }
+      }
+      if (placed.length === 0) return fail('未能放置任何方块')
+      return ok(`已放置 ${item} x${placed.length}`)
+    } finally {
+      try {
+        if (lockApplied && bot.state && String(bot.state.holdItemLock || '').toLowerCase() === lockName) bot.state.holdItemLock = null
+      } catch {}
     }
-    if (placed.length === 0) return fail('未能放置任何方块')
-    return ok(`已放置 ${item} x${placed.length}`)
   }
 
   async function light_area (args = {}) {
     if (!bot.entity || !bot.entity.position) return fail('未就绪')
     if (!ensurePathfinder()) return fail('无寻路')
-    if (isMainHandLocked(bot)) return fail('主手被锁定，无法放置火把')
+    if (isMainHandLocked(bot, 'torch')) return fail('主手被锁定，无法放置火把')
 
     const radiusRaw = parseInt(String(args.radius ?? 8), 10)
     const spacingRaw = parseInt(String(args.spacing ?? 6), 10)
@@ -2863,170 +2902,182 @@ function install (bot, { log, on, registerCleanup }) {
     const totalTorches = countItemByName('torch')
     if (totalTorches <= 0) return fail('没有火把')
     const maxTorches = maxRaw != null && Number.isFinite(maxRaw) && maxRaw > 0 ? Math.min(maxRaw, totalTorches) : totalTorches
-
-    const origin = bot.entity.position.clone()
-    const originFloor = new Vec3(Math.floor(origin.x), Math.floor(origin.y), Math.floor(origin.z))
-
-    const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
-    const moveProfile = new Movements(bot, mcData)
-    moveProfile.canDig = false
-    moveProfile.allowSprinting = true
-    try { moveProfile.allowParkour = false } catch {}
-    try { moveProfile.allow1by1towers = false } catch {}
-    bot.pathfinder.setMovements(moveProfile)
-
-    const replaceables = new Set(['air', 'cave_air', 'void_air', 'tall_grass', 'short_grass', 'grass', 'fern', 'large_fern', 'seagrass', 'dead_bush', 'snow'])
-
-    function isSolidSupport (block) {
-      try {
-        if (!block) return false
-        const name = String(block.name || '').toLowerCase()
-        if (!name || name === 'air') return false
-        if (name.includes('water') || name.includes('lava') || name.includes('bubble_column') || name.includes('fire')) return false
-        if (block.boundingBox && block.boundingBox !== 'block') return false
-        return true
-      } catch { return false }
+    const lockName = 'torch'
+    let lockApplied = false
+    if (bot.state && !bot.state.holdItemLock) {
+      bot.state.holdItemLock = lockName
+      lockApplied = true
     }
 
-    function isReplaceable (block) {
-      try { return replaceables.has(String(block?.name || 'air').toLowerCase()) } catch { return false }
-    }
+    try {
+      const origin = bot.entity.position.clone()
+      const originFloor = new Vec3(Math.floor(origin.x), Math.floor(origin.y), Math.floor(origin.z))
 
-    function resolveBase (x, z) {
-      const startY = Math.floor(origin.y)
-      for (let dy = 2; dy >= -4; dy--) {
-        const pos = new Vec3(x, startY + dy, z)
-        const base = bot.blockAt(pos)
-        if (!isSolidSupport(base)) continue
-        const abovePos = pos.offset(0, 1, 0)
-        if (Math.abs(abovePos.y - originFloor.y) > 3) continue
-        const above = bot.blockAt(abovePos)
-        if (!isReplaceable(above)) continue
-        return { base, above }
+      const { Movements, goals } = pathfinderPkg
+      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const moveProfile = new Movements(bot, mcData)
+      moveProfile.canDig = false
+      moveProfile.allowSprinting = true
+      try { moveProfile.allowParkour = false } catch {}
+      try { moveProfile.allow1by1towers = false } catch {}
+      bot.pathfinder.setMovements(moveProfile)
+
+      const replaceables = new Set(['air', 'cave_air', 'void_air', 'tall_grass', 'short_grass', 'grass', 'fern', 'large_fern', 'seagrass', 'dead_bush', 'snow'])
+
+      function isSolidSupport (block) {
+        try {
+          if (!block) return false
+          const name = String(block.name || '').toLowerCase()
+          if (!name || name === 'air') return false
+          if (name.includes('water') || name.includes('lava') || name.includes('bubble_column') || name.includes('fire')) return false
+          if (block.boundingBox && block.boundingBox !== 'block') return false
+          return true
+        } catch { return false }
       }
-      return null
-    }
 
-    async function moveNear (target) {
-      const center = target.offset(0.5, 0, 0.5)
-      bot.pathfinder.setGoal(new goals.GoalNear(center.x, center.y, center.z, 1.4), true)
-      const start = Date.now()
-      let best = Infinity
-      let bestAt = start
-      while (Date.now() - start < 5000) {
-        await wait(100)
-        const here = bot.entity?.position
-        if (!here) continue
-        const d = here.distanceTo(center)
-        if (d <= 1.6) break
-        if (d < best - 0.05) {
-          best = d
-          bestAt = Date.now()
-        } else if (Date.now() - bestAt > 1500) {
-          break
+      function isReplaceable (block) {
+        try { return replaceables.has(String(block?.name || 'air').toLowerCase()) } catch { return false }
+      }
+
+      function resolveBase (x, z) {
+        const startY = Math.floor(origin.y)
+        for (let dy = 2; dy >= -4; dy--) {
+          const pos = new Vec3(x, startY + dy, z)
+          const base = bot.blockAt(pos)
+          if (!isSolidSupport(base)) continue
+          const abovePos = pos.offset(0, 1, 0)
+          if (Math.abs(abovePos.y - originFloor.y) > 3) continue
+          const above = bot.blockAt(abovePos)
+          if (!isReplaceable(above)) continue
+          return { base, above }
         }
+        return null
       }
-      try { bot.pathfinder.setGoal(null) } catch {}
-      try { bot.clearControlStates() } catch {}
-      await wait(60)
-      const here = bot.entity?.position
-      if (!here) return false
-      return here.distanceTo(center) <= 1.8
-    }
 
-    const rawCandidates = []
-    for (let dx = -radius; dx <= radius; dx++) {
-      for (let dz = -radius; dz <= radius; dz++) {
-        const x = originFloor.x + dx
-        const z = originFloor.z + dz
-        const slot = resolveBase(x, z)
-        if (!slot) continue
-        const topName = String(slot.above?.name || 'air').toLowerCase()
-        if (topName.includes('torch')) continue
-        const brightness = Math.max(slot.above?.light || 0, slot.above?.skyLight || 0)
-        if (brightness >= lightThreshold) continue
-        const dist = slot.base.position.distanceTo(origin)
-        rawCandidates.push({ base: slot.base, above: slot.above, brightness, dist })
-      }
-    }
-
-    if (!rawCandidates.length) return ok('范围内已经足够明亮~', { placed: 0, radius })
-
-    rawCandidates.sort((a, b) => {
-      if (a.brightness !== b.brightness) return a.brightness - b.brightness
-      return a.dist - b.dist
-    })
-
-    const selected = []
-    function farFromExisting (pos) {
-      for (const sel of selected) {
-        const dx = sel.x - pos.x
-        const dz = sel.z - pos.z
-        if (Math.sqrt(dx * dx + dz * dz) < spacing) return false
-      }
-      return true
-    }
-
-    for (const cand of rawCandidates) {
-      const pos = cand.base.position
-      if (!farFromExisting(pos)) continue
-      selected.push(pos.clone())
-      if (selected.length >= maxTorches) break
-    }
-
-    if (!selected.length) return ok('附近亮度已经达标了~', { placed: 0, radius })
-
-    let placed = 0
-
-    const getTorchItem = () => {
-      try { return (bot.inventory?.items() || []).find(it => String(it.name || '').toLowerCase() === 'torch') || null } catch { return null }
-    }
-
-    for (const pos of selected) {
-      if (placed >= maxTorches) break
-      const slot = resolveBase(pos.x, pos.z)
-      if (!slot) continue
-      if (!getTorchItem()) break
-      if (!await moveNear(slot.base.position)) continue
-      const above = bot.blockAt(slot.base.position.offset(0, 1, 0))
-      if (!isReplaceable(above)) continue
-      const brightness = Math.max(above?.light || 0, above?.skyLight || 0)
-      if (brightness >= lightThreshold) continue
-      const torch = getTorchItem()
-      if (!torch) break
-      try {
-        await assertCanEquipHand(bot, 'torch')
-        await bot.equip(torch, 'hand')
-      } catch {
-        continue
-      }
-      try {
-        await bot.placeBlock(slot.base, new Vec3(0, 1, 0))
-        placed++
-        await wait(150)
-      } catch {}
-    }
-
-    if (args.returnToOrigin !== false) {
-      try {
-        bot.pathfinder.setMovements(moveProfile)
-        bot.pathfinder.setGoal(new goals.GoalNear(origin.x, origin.y, origin.z, 1.5), true)
-        const until = Date.now() + 4000
-        while (Date.now() < until) {
-          await wait(120)
+      async function moveNear (target) {
+        const center = target.offset(0.5, 0, 0.5)
+        bot.pathfinder.setGoal(new goals.GoalNear(center.x, center.y, center.z, 1.4), true)
+        const start = Date.now()
+        let best = Infinity
+        let bestAt = start
+        while (Date.now() - start < 5000) {
+          await wait(100)
           const here = bot.entity?.position
-          if (!here) break
-          if (here.distanceTo(origin) <= 1.6) break
+          if (!here) continue
+          const d = here.distanceTo(center)
+          if (d <= 1.6) break
+          if (d < best - 0.05) {
+            best = d
+            bestAt = Date.now()
+          } else if (Date.now() - bestAt > 1500) {
+            break
+          }
         }
-      } catch {}
-      try { bot.pathfinder.setGoal(null) } catch {}
-    } else {
-      try { bot.pathfinder.setGoal(null) } catch {}
-    }
+        try { bot.pathfinder.setGoal(null) } catch {}
+        try { bot.clearControlStates() } catch {}
+        await wait(60)
+        const here = bot.entity?.position
+        if (!here) return false
+        return here.distanceTo(center) <= 1.8
+      }
 
-    if (placed === 0) return ok('没有需要补光的地方~', { placed: 0, radius })
-    return ok(`已放置 ${placed} 个火把`, { placed, radius })
+      const rawCandidates = []
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          const x = originFloor.x + dx
+          const z = originFloor.z + dz
+          const slot = resolveBase(x, z)
+          if (!slot) continue
+          const topName = String(slot.above?.name || 'air').toLowerCase()
+          if (topName.includes('torch')) continue
+          const brightness = Math.max(slot.above?.light || 0, slot.above?.skyLight || 0)
+          if (brightness >= lightThreshold) continue
+          const dist = slot.base.position.distanceTo(origin)
+          rawCandidates.push({ base: slot.base, above: slot.above, brightness, dist })
+        }
+      }
+
+      if (!rawCandidates.length) return ok('范围内已经足够明亮~', { placed: 0, radius })
+
+      rawCandidates.sort((a, b) => {
+        if (a.brightness !== b.brightness) return a.brightness - b.brightness
+        return a.dist - b.dist
+      })
+
+      const selected = []
+      function farFromExisting (pos) {
+        for (const sel of selected) {
+          const dx = sel.x - pos.x
+          const dz = sel.z - pos.z
+          if (Math.sqrt(dx * dx + dz * dz) < spacing) return false
+        }
+        return true
+      }
+
+      for (const cand of rawCandidates) {
+        const pos = cand.base.position
+        if (!farFromExisting(pos)) continue
+        selected.push(pos.clone())
+        if (selected.length >= maxTorches) break
+      }
+
+      if (!selected.length) return ok('附近亮度已经达标了~', { placed: 0, radius })
+
+      let placed = 0
+
+      const getTorchItem = () => {
+        try { return (bot.inventory?.items() || []).find(it => String(it.name || '').toLowerCase() === 'torch') || null } catch { return null }
+      }
+
+      for (const pos of selected) {
+        if (placed >= maxTorches) break
+        const slot = resolveBase(pos.x, pos.z)
+        if (!slot) continue
+        if (!getTorchItem()) break
+        if (!await moveNear(slot.base.position)) continue
+        const above = bot.blockAt(slot.base.position.offset(0, 1, 0))
+        if (!isReplaceable(above)) continue
+        const brightness = Math.max(above?.light || 0, above?.skyLight || 0)
+        if (brightness >= lightThreshold) continue
+        const torch = getTorchItem()
+        if (!torch) break
+        try {
+          await assertCanEquipHand(bot, 'torch')
+          await bot.equip(torch, 'hand')
+        } catch {
+          continue
+        }
+        try {
+          await bot.placeBlock(slot.base, new Vec3(0, 1, 0))
+          placed++
+          await wait(150)
+        } catch {}
+      }
+
+      if (args.returnToOrigin !== false) {
+        try {
+          bot.pathfinder.setMovements(moveProfile)
+          bot.pathfinder.setGoal(new goals.GoalNear(origin.x, origin.y, origin.z, 1.5), true)
+          const until = Date.now() + 4000
+          while (Date.now() < until) {
+            await wait(120)
+            const here = bot.entity?.position
+            if (!here) break
+            if (here.distanceTo(origin) <= 1.6) break
+          }
+        } catch {}
+        try { bot.pathfinder.setGoal(null) } catch {}
+      } else {
+        try { bot.pathfinder.setGoal(null) } catch {}
+      }
+
+      if (placed === 0) return ok('没有需要补光的地方~', { placed: 0, radius })
+      return ok(`已放置 ${placed} 个火把`, { placed, radius })
+    } finally {
+      try {
+        if (lockApplied && bot.state && String(bot.state.holdItemLock || '').toLowerCase() === lockName) bot.state.holdItemLock = null
+      } catch {}
+    }
   }
 
   // --- Start or move to auto fishing ---
