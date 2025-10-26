@@ -2878,6 +2878,7 @@ function install (bot, { log, on, registerCleanup }) {
     if (baseNames.length === 0 && !allowSolid) return fail('缺少on.top_of')
     const spacingDefault = (isButton || isPressurePlate) ? 1 : 3
     const maxDefault = (isButton || isPressurePlate) ? 32 : 8
+    const maxCap = item.endsWith('_sapling') ? Number.POSITIVE_INFINITY : 128
     const spacingRaw = (args.spacing != null) ? args.spacing : spacingDefault
     const maxRaw = (args.max != null) ? args.max : maxDefault
     const spacingParsed = parseInt(String(spacingRaw), 10)
@@ -2984,7 +2985,7 @@ function install (bot, { log, on, registerCleanup }) {
       candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
 
       const placed = []
-      let remaining = Math.min(max, countItemByName(item))
+    let remaining = Math.min(Math.min(max, maxCap), countItemByName(item))
       if (remaining <= 0) return fail('背包没有该物品')
 
       async function approach (p) {

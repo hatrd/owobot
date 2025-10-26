@@ -751,6 +751,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const dr = snap.nearby?.drops || []
         return dr.length ? `附近掉落物${dr.length}个，最近${Number(dr[0].d).toFixed(1)}m` : '附近没有掉落物~'
       }
+      if (intent.topic === 'generic') {
+        const memoryAnswer = findLocationMemoryAnswer(content)
+        if (memoryAnswer) return memoryAnswer
+      }
       if (intent.topic === 'position') {
         const rawText = String(content || '')
         const safeTokens = (() => {
@@ -1285,13 +1289,82 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const limit = cfg?.max || 6
     const top = topMemories(Math.max(1, limit))
     if (!top.length) return ''
-    const parts = top.map((m, idx) => {
-      const line = m.summary ? normalizeMemoryText(m.summary) : normalizeMemoryText(m.text)
-      const base = `${idx + 1}. ${line}`
-      const signed = m.lastAuthor || m.firstAuthor
-      return signed ? `${base}（${signed}）` : base
-    })
+    const parts = top.map((m, idx) => memoryLineWithMeta(m, idx))
     return `长期记忆: ${parts.join(' | ')}`
+  }
+
+  function memoryLineWithMeta (entry, idx) {
+    const baseText = normalizeMemoryText(entry.summary || entry.text)
+    const meta = []
+    if (entry.location) {
+      const locLabel = locationLabel(entry.location)
+      if (locLabel) {
+        const dim = entry.location.dim ? String(entry.location.dim).replace(/^minecraft:/, '') : null
+        const radius = Number.isFinite(entry.location.radius) ? `r${entry.location.radius}` : null
+        const pieces = [locLabel, radius, dim].filter(Boolean)
+        if (pieces.length) meta.push(pieces.join(' '))
+      }
+    }
+    if (entry.feature) {
+      const feat = normalizeMemoryText(entry.feature).slice(0, 40)
+      if (feat) meta.push(feat)
+    }
+    const signed = entry.lastAuthor || entry.firstAuthor
+    const parts = [`${idx + 1}. ${baseText}`]
+    if (meta.length) parts[0] += `【${meta.join(' | ')}】`
+    if (signed) parts[0] += `（${signed}）`
+    return parts[0]
+  }
+
+  function formatLocationEntry (entry) {
+    if (!entry || !entry.location) return null
+    const label = locationLabel(entry.location)
+    if (!label) return null
+    const dim = entry.location.dim ? String(entry.location.dim).replace(/^minecraft:/, '') : null
+    const radius = Number.isFinite(entry.location.radius) ? entry.location.radius : null
+    const feature = entry.feature ? normalizeMemoryText(entry.feature) : ''
+    const summary = entry.summary ? normalizeMemoryText(entry.summary) : normalizeMemoryText(entry.text)
+    const parts = [`${summary}`]
+    const locParts = [`坐标 ${label}`]
+    if (radius) locParts.push(`半径 ${radius}`)
+    if (dim) locParts.push(dim)
+    parts.push(locParts.join('，'))
+    if (feature) parts.push(feature)
+    return parts.join('；')
+  }
+
+  function findLocationMemoryAnswer (question) {
+    if (!question) return null
+    const ask = normalizeMemoryText(question)
+    if (!ask) return null
+    if (!/(在哪|哪儿|哪里|位置|坐标)/.test(ask)) return null
+    const stop = new Set(['在哪', '哪里', '哪儿', '位置', '坐标', '你', '我', '那里'])
+    const tokens = Array.from(new Set(ask.split(/[\s,，。!?！?]/g).map(t => t.trim()).filter(t => t.length >= 2 && !stop.has(t))))
+    const entries = ensureMemoryEntries().filter(e => e && e.location)
+    if (!entries.length) return null
+    let best = null
+    for (const entry of entries) {
+      const haystack = [
+        normalizeMemoryText(entry.summary || ''),
+        normalizeMemoryText(entry.text || ''),
+        normalizeMemoryText(entry.feature || '')
+      ].join(' ')
+      if (!haystack) continue
+      if (tokens.length === 0) {
+        best = entry
+        break
+      }
+      if (tokens.every(tok => haystack.includes(tok))) {
+        best = entry
+        break
+      }
+      if (!best && tokens.some(tok => haystack.includes(tok))) {
+        best = entry
+      }
+    }
+    if (!best) return null
+    const formatted = formatLocationEntry(best)
+    return formatted || null
   }
 
   function extractMemoryCommand (content) {
