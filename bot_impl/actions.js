@@ -3677,46 +3677,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  async function iterate_feedback (args = {}) {
-    const iter = bot.autoIter
-    if (!iter || typeof iter.trigger !== 'function') return fail('未启用迭代模块')
-    const force = args.force === true || String(args.force || '').toLowerCase() === 'true'
-    const reason = args.reason ? String(args.reason) : 'deepseek'
-    let announced = false
-    const canListen = bot && typeof bot.on === 'function' && typeof bot.off === 'function'
-    const onStart = (ev) => {
-      try {
-        if (announced) return
-        const src = String(ev?.source || '')
-        if (!src.startsWith('deepseek')) return
-        if (bot && typeof bot.chat === 'function') bot.chat('已严肃学习')
-        announced = true
-        if (canListen) { try { bot.off('autoIter:start', onStart) } catch {} }
-      } catch {}
-    }
-    let res
-    try {
-      if (canListen) { try { bot.on('autoIter:start', onStart) } catch {} }
-      res = await iter.trigger('deepseek', { force, reason })
-    } finally {
-      if (canListen) { try { bot.off('autoIter:start', onStart) } catch {} }
-    }
-    if (!res || !res.ok) {
-      if (res && res.reason === 'cooldown' && res.until) {
-        const waitMs = Math.max(0, res.until - Date.now())
-        const waitMin = Math.ceil(waitMs / 60000)
-        return fail(`还在冷却中哦，再等${waitMin}分钟~`)
-      }
-      if (res?.reason === 'codex_missing') return fail('学习模块缺失X﹏X 能帮我装一下吗')
-      if (res?.reason === 'codex_home_unwritable') return fail('学习模块写入失败')
-      if (log?.warn) log.warn('iterate_feedback failed:', res?.detail || res?.reason || 'unknown')
-      return fail('太复杂了，学不会呀（︶^︶）')
-    }
-    const msg = res.changed ? '已触发代码迭代（有更新）' : '已触发代码迭代（无更新）'
-    return ok(msg, { summary: res.summary || '', broadcast: res.broadcast || null })
-  }
-
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, light_area, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, iterate_feedback, sort_chests }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, light_area, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, sort_chests }
 
   async function run (tool, args) {
     const fn = registry[tool]
