@@ -1234,7 +1234,8 @@ function install (bot, { log, on, registerCleanup }) {
       const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 0)
       try { bot.pathfinder.setGoal(goal, true) } catch {}
       const start = Date.now()
-      let lastDist = Infinity
+      let bestDist = Infinity
+      let bestAt = start
       while (Date.now() - start < timeoutMs) {
         await wait(100)
         const here = bot.entity?.position
@@ -1244,11 +1245,12 @@ function install (bot, { log, on, registerCleanup }) {
           try { bot.pathfinder.setGoal(null) } catch {}
           return true
         }
-        if (dist > lastDist - 0.05) {
-          // detect stall after several cycles
-          if (Date.now() - start > timeoutMs * 0.6) break
+        if (dist < bestDist - 0.05) {
+          bestDist = dist
+          bestAt = Date.now()
+        } else if (Date.now() - bestAt > 1200) {
+          break
         }
-        lastDist = dist
       }
       try { bot.pathfinder.setGoal(null) } catch {}
       return false
@@ -1260,16 +1262,23 @@ function install (bot, { log, on, registerCleanup }) {
       bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
       const until = Date.now() + 6000
       let reached = false
+      let bestDist = Infinity
+      let bestAt = Date.now()
       while (Date.now() < until) {
         await wait(100)
         if (explosionCooling()) return false
         const d = bot.entity.position.distanceTo(p)
         if (d <= 2.3) { reached = true; break }
+        if (d < bestDist - 0.05) {
+          bestDist = d
+          bestAt = Date.now()
+        } else if (Date.now() - bestAt > 1500) {
+          break
+        }
       }
-      if (!reached) return 'unreachable'
-      // stop pathfinder before digging to avoid movement-caused aborts
       try { bot.pathfinder.setGoal(null) } catch {}
       try { bot.clearControlStates() } catch {}
+      if (!reached) return 'unreachable'
       await wait(60)
       let block = bot.blockAt(p)
       if (!block || !matches(block)) return false
@@ -1285,10 +1294,12 @@ function install (bot, { log, on, registerCleanup }) {
         }
       } catch {}
       try { await toolSel.ensureBestToolForBlock(bot, block) } catch {}
+      let digged = false
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
           await bot.dig(block)
+          digged = true
           break
         } catch (e) {
           const msg = String(e?.message || e)
@@ -1301,6 +1312,7 @@ function install (bot, { log, on, registerCleanup }) {
           return false
         }
       }
+      if (!digged) return 'nodig'
       if (collect) {
         // move into spot briefly to pick drops
         try { bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 0), true) } catch {}
@@ -1438,7 +1450,7 @@ function install (bot, { log, on, registerCleanup }) {
           broken++
           did = true
           if (isLogsMode) currentColumn = { x: candidate.x, z: candidate.z }
-        } else if (result === 'unreachable') {
+        } else if (result === 'unreachable' || result === 'nodig') {
           skipKeys.add(posKey(candidate))
           continue
         }
