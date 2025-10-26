@@ -1319,7 +1319,7 @@ function install (bot, { log, on, registerCleanup }) {
       if (explosionCooling()) return false
       // approach
       bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
-      const until = Date.now() + 6000
+      const until = Date.now() + 60000
       let reached = false
       let bestDist = Infinity
       let bestAt = Date.now()
@@ -1331,7 +1331,7 @@ function install (bot, { log, on, registerCleanup }) {
         if (d < bestDist - 0.05) {
           bestDist = d
           bestAt = Date.now()
-        } else if (Date.now() - bestAt > 1500) {
+        } else if (Date.now() - bestAt > 1000) {
           break
         }
       }
@@ -2514,7 +2514,13 @@ function install (bot, { log, on, registerCleanup }) {
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     const radius = Math.max(1, parseInt(args.radius || '20', 10))
-    const max = Math.max(1, parseInt(args.max || '80', 10))
+    const includeNew = (args.includeNew === true)
+    const maxRaw = args.max
+    const max = (() => {
+      if (maxRaw == null) return includeNew ? Infinity : null
+      const parsed = parseInt(String(maxRaw), 10)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : Infinity
+    })()
     const timeoutMs = Math.max(1500, parseInt(args.timeoutMs || '12000', 10))
     const until = String(args.until || 'exhaust').toLowerCase()
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
@@ -2548,11 +2554,26 @@ function install (bot, { log, on, registerCleanup }) {
       } catch { return [] }
     }
 
+    const initialList = nearbyItems()
+    const targetIds = new Set(initialList.map(it => it.id))
+    const collectedIds = new Set()
+    const skippedIds = new Set()
+    const totalTarget = includeNew ? Infinity : (targetIds.size || Infinity)
+
+    const limit = Number.isFinite(max) ? max : totalTarget
+
     while (true) {
-      if (picked >= max) break
+      if (Number.isFinite(limit) && picked >= limit) break
       if (Date.now() - t0 > timeoutMs) break
       let items = nearbyItems()
+      if (!includeNew) {
+        items = items.filter(it => targetIds.has(it.id) && !collectedIds.has(it.id))
+      } else {
+        for (const it of items) { if (!targetIds.has(it.id)) targetIds.add(it.id) }
+        items = items.filter(it => !collectedIds.has(it.id))
+      }
       if (!items.length) {
+        if (!includeNew && collectedIds.size >= targetIds.size) break
         if (until === 'exhaust') break
         await wait(200)
         continue
@@ -2580,13 +2601,25 @@ function install (bot, { log, on, registerCleanup }) {
           if ((invSum() > before)) { success = true; break }
         }
         try { bot.pathfinder.setGoal(null) } catch {}
+        try { bot.clearControlStates() } catch {}
         // short settle to let pickups apply
         await wait(150)
         if (!success && (invSum() > before)) success = true
-        if (success) picked++
+        if (success) {
+          picked++
+          collectedIds.add(target.id)
+          targetIds.delete(target.id)
+        } else if (Date.now() - t0 > timeoutMs) {
+          skippedIds.add(target.id)
+        }
       } catch {}
     }
-    return ok(`已拾取附近掉落 (尝试${picked})`)
+    const finished = !includeNew && collectedIds.size >= targetIds.size
+    const summaryParts = [`拾取${collectedIds.size}个目标`]
+    if (picked !== collectedIds.size) summaryParts.push(`尝试${picked}`)
+    if (skippedIds.size) summaryParts.push(`未成功${skippedIds.size}`)
+    if (finished) summaryParts.push('已完成初始掉落')
+    return ok(summaryParts.join('，'))
   }
 
   // --- Gather resources (high-level wrapper for break_blocks) ---
