@@ -1248,6 +1248,8 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function break_blocks (args = {}) {
     const toolSel = require('./tool-select')
+    const logging = require('./logging')
+    const chopLog = logging.getLogger('chop')
     const match = Array.isArray(args.names) && args.names.length ? null : (args.match ? String(args.match).toLowerCase() : null)
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
     const area = args.area || { shape: 'sphere', radius: 8 }
@@ -1259,7 +1261,16 @@ function install (bot, { log, on, registerCleanup }) {
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
     const m = new Movements(bot, mcData)
-    m.canDig = (args.dig === true); m.allowSprinting = true
+    const wantsLogs = (() => {
+      try {
+        if (Array.isArray(args.names) && args.names.some(n => String(n).toLowerCase().endsWith('_log'))) return true
+        const match = String(args.match || '').toLowerCase()
+        if (match && match.includes('log')) return true
+      } catch {}
+      return false
+    })()
+    m.canDig = (args.dig === true) || wantsLogs
+    m.allowSprinting = true
     bot.pathfinder.setMovements(m)
     miningAbort = false
 
@@ -1285,12 +1296,14 @@ function install (bot, { log, on, registerCleanup }) {
       } catch { return false }
     }
     function isOreNameForSafety (n) { try { const s = String(n || '').toLowerCase(); return !!s && (s.endsWith('_ore') || s === 'ancient_debris') } catch { return false } }
-    const skipKeys = new Set()
+    const skipKeys = new Map()
+    const skipRetryMs = Math.max(4000, parseInt(args.retryDelayMs || '8000', 10))
     const posKey = (p) => `${p.x},${p.y},${p.z}`
-    const dropSkip = new Set()
+    const dropSkip = new Map()
 
     async function moveNearPosition (pos, range = 1.2, timeoutMs = 2500) {
       const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 0)
+      chopLog.debug('approach:start', { goal: `${pos.x},${pos.y},${pos.z}`, range, timeoutMs })
       try { bot.pathfinder.setGoal(goal, true) } catch {}
       const start = Date.now()
       let bestDist = Infinity
@@ -1301,6 +1314,7 @@ function install (bot, { log, on, registerCleanup }) {
         if (!here) break
         const dist = here.distanceTo(pos)
         if (dist <= range) {
+          chopLog.debug('approach:within-range', { dist: dist.toFixed(2) })
           try { bot.pathfinder.setGoal(null) } catch {}
           return true
         }
@@ -1308,6 +1322,7 @@ function install (bot, { log, on, registerCleanup }) {
           bestDist = dist
           bestAt = Date.now()
         } else if (Date.now() - bestAt > 1200) {
+          chopLog.debug('approach:stall', { bestDist: bestDist.toFixed(2) })
           break
         }
       }
@@ -1318,6 +1333,7 @@ function install (bot, { log, on, registerCleanup }) {
     async function approachAndDig (p) {
       if (explosionCooling()) return false
       // approach
+      chopLog.debug('chop:approach', { target: `${p.x},${p.y},${p.z}` })
       bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
       const until = Date.now() + 60000
       let reached = false
@@ -1332,6 +1348,7 @@ function install (bot, { log, on, registerCleanup }) {
           bestDist = d
           bestAt = Date.now()
         } else if (Date.now() - bestAt > 1000) {
+          chopLog.debug('chop:approach-stall', { target: `${p.x},${p.y},${p.z}`, bestDist: bestDist.toFixed(2) })
           break
         }
       }
@@ -1341,7 +1358,10 @@ function install (bot, { log, on, registerCleanup }) {
       if (!hereAfter) return false
       const distAfter = hereAfter.distanceTo(p)
       const canReach = distAfter <= 5.6
-      if (!reached && !canReach) return 'unreachable'
+      if (!reached && !canReach) {
+        chopLog.debug('chop:unreachable', { target: `${p.x},${p.y},${p.z}`, dist: distAfter.toFixed(2) })
+        return 'unreachable'
+      }
       await wait(60)
       let block = bot.blockAt(p)
       if (!block || !matches(block)) return false
@@ -1372,16 +1392,17 @@ function install (bot, { log, on, registerCleanup }) {
             if (!block || !matches(block)) return false
             continue
           }
-          if (/out of reach|too far/i.test(msg)) return 'unreachable'
+          if (/out of reach|too far/i.test(msg)) { chopLog.debug('chop:dig-out-of-reach', { target: `${p.x},${p.y},${p.z}` }) ; return 'unreachable' }
           return false
         }
       }
-      if (!digged) return 'nodig'
+      if (!digged) { chopLog.debug('chop:no-dig', { target: `${p.x},${p.y},${p.z}` }); return 'nodig' }
       if (collect) {
         // move into spot briefly to pick drops
         try { bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 0), true) } catch {}
         await wait(300)
       }
+      chopLog.debug('chop:dig-success', { target: `${p.x},${p.y},${p.z}` })
       return true
     }
 
@@ -1417,6 +1438,8 @@ function install (bot, { log, on, registerCleanup }) {
     // Flush config: if drops pile up, run a short pickup sweep (no digging)
     const flushThreshold = (() => { const v = args.flushThreshold; return v == null ? (collect ? 10 : 0) : Math.max(1, parseInt(v, 10)) })()
     const flushTimeoutMs = Math.max(500, parseInt(args.flushTimeoutMs || '2500', 10))
+    const flushCanDig = (args.flushCanDig !== false)
+    const dropRevisitDistance = Math.max(0.5, parseFloat(args.dropRevisitDistance || '0.6'))
     const flushRadius = Math.max(2, parseInt(args.flushRadius || String(radius), 10))
     function isItemEntity (e) {
       try {
@@ -1435,11 +1458,29 @@ function install (bot, { log, on, registerCleanup }) {
         let c = 0
         for (const e of Object.values(bot.entities || {})) {
           if (!isItemEntity(e)) continue
-          if (dropSkip.has(e.id)) continue
+          if (shouldSkipDrop(e)) continue
           try { if (mep.distanceTo(e.position) <= flushRadius) c++ } catch {}
         }
         return c
       } catch { return 0 }
+    }
+    function shouldSkipDrop (ent) {
+      try {
+        if (!ent || ent.id == null) return false
+        const rec = dropSkip.get(ent.id)
+        if (!rec) return false
+        const pos = ent.position
+        if (!pos) return true
+        const dx = Math.abs(Number(pos.x ?? 0) - rec.x)
+        const dy = Math.abs(Number(pos.y ?? 0) - rec.y)
+        const dz = Math.abs(Number(pos.z ?? 0) - rec.z)
+        const moved = (dx > dropRevisitDistance) || (dy > dropRevisitDistance) || (dz > dropRevisitDistance)
+        if (moved) {
+          dropSkip.delete(ent.id)
+          return false
+        }
+        return true
+      } catch { return false }
     }
     async function doShortPickup () {
       try {
@@ -1448,16 +1489,37 @@ function install (bot, { log, on, registerCleanup }) {
           const mep = bot.entity?.position; if (!mep) break
           const items = Object.values(bot.entities || {}).filter(e => {
             if (!isItemEntity(e)) return false
-            if (dropSkip.has(e.id)) return false
+            if (shouldSkipDrop(e)) return false
             try { return mep.distanceTo(e.position) <= flushRadius } catch { return false }
           })
           if (!items.length) break
           // go to nearest one
           items.sort((a, b) => a.position.distanceTo(mep) - b.position.distanceTo(mep))
           const it = items[0]
-          const ok = await moveNearPosition(it.position, 0.9, 3000)
-          if (!ok && it.id != null) dropSkip.add(it.id)
-          else await wait(160)
+          let ok = await moveNearPosition(it.position, 0.9, 3000)
+          if (!ok && flushCanDig) {
+            try {
+              const block = bot.blockAt(it.position.floored())
+              if (block && block.name && block.name !== 'air' && block.boundingBox !== 'empty') {
+                chopLog.debug('chop:pickup-dig', { drop: it.id, block: block?.name })
+                await toolSel.ensureBestToolForBlock(bot, block)
+                await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
+                await bot.dig(block)
+                ok = true
+              }
+            } catch {}
+          }
+          if (!ok && it.id != null && it.position) {
+            dropSkip.set(it.id, {
+              x: Number(it.position.x ?? 0),
+              y: Number(it.position.y ?? 0),
+              z: Number(it.position.z ?? 0)
+            })
+            chopLog.debug('chop:pickup-skip', { drop: it.id })
+          } else {
+            if (it.id != null) dropSkip.delete(it.id)
+            await wait(160)
+          }
         }
       } catch {}
     }
@@ -1486,10 +1548,20 @@ function install (bot, { log, on, registerCleanup }) {
           return true
         }
       }) || []
+      const nowTs = Date.now()
       if (skipKeys.size) {
-        posList = posList.filter((p) => !skipKeys.has(posKey(p)))
+        posList = posList.filter((p) => {
+          const key = posKey(p)
+          const record = skipKeys.get(key)
+          if (!record) return true
+          if ((nowTs - record) >= skipRetryMs) {
+            skipKeys.delete(key)
+            return true
+          }
+          return false
+        })
       }
-      if (!posList.length) break
+      if (!posList.length) { chopLog.debug('chop:no-targets'); break }
       // Selection: if logs and we have a current trunk, finish same (x,z) first; else sort by 2D distance then |dy|
       let candidate = null
       if (isLogsMode && currentColumn) {
@@ -1509,13 +1581,17 @@ function install (bot, { log, on, registerCleanup }) {
       }
       let did = false
       if (candidate) {
+        chopLog.debug('chop:try-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, broken })
         const result = await approachAndDig(candidate)
+        chopLog.debug('chop:result', { target: `${candidate.x},${candidate.y},${candidate.z}`, result })
         if (result === true) {
           broken++
+          skipKeys.delete(posKey(candidate))
           did = true
           if (isLogsMode) currentColumn = { x: candidate.x, z: candidate.z }
         } else if (result === 'unreachable' || result === 'nodig') {
-          skipKeys.add(posKey(candidate))
+          skipKeys.set(posKey(candidate), Date.now())
+          chopLog.debug('chop:skip-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, reason: result })
           continue
         }
       }
@@ -1534,17 +1610,38 @@ function install (bot, { log, on, registerCleanup }) {
           const items = Object.values(bot.entities || {}).filter(e => {
             try {
               if (!isItemEntity(e)) return false
-              if (dropSkip.has(e.id)) return false
+              if (shouldSkipDrop(e)) return false
               return me.distanceTo(e.position) <= reach
             } catch { return false }
           })
           const untilPick = Date.now() + 2000
           for (const it of items) {
             if (Date.now() > untilPick) break
-            const ok = await moveNearPosition(it.position, 0.9, 2500)
-            if (!ok && it.id != null) dropSkip.add(it.id)
-            else await wait(160)
+          let ok = await moveNearPosition(it.position, 0.9, 2500)
+          if (!ok && flushCanDig) {
+            try {
+              const block = bot.blockAt(it.position.floored())
+              if (block && block.name && block.name !== 'air' && block.boundingBox !== 'empty') {
+                chopLog.debug('chop:pickup-dig-final', { drop: it.id, block: block?.name })
+                await toolSel.ensureBestToolForBlock(bot, block)
+                await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
+                await bot.dig(block)
+                ok = true
+              }
+            } catch {}
           }
+          if (!ok && it.id != null && it.position) {
+            dropSkip.set(it.id, {
+              x: Number(it.position.x ?? 0),
+              y: Number(it.position.y ?? 0),
+              z: Number(it.position.z ?? 0)
+            })
+            chopLog.debug('chop:pickup-skip-final', { drop: it.id })
+          } else {
+            if (it.id != null) dropSkip.delete(it.id)
+            await wait(160)
+          }
+        }
         }
       } catch {}
     }
@@ -2515,6 +2612,7 @@ function install (bot, { log, on, registerCleanup }) {
     bot.pathfinder.setMovements(m)
     const radius = Math.max(1, parseInt(args.radius || '20', 10))
     const includeNew = (args.includeNew === true)
+    const skipCooldownMs = Math.max(5000, parseInt(args.revisitCooldownMs || '7000', 10))
     const maxRaw = args.max
     const max = (() => {
       if (maxRaw == null) return includeNew ? Infinity : null
@@ -2557,7 +2655,7 @@ function install (bot, { log, on, registerCleanup }) {
     const initialList = nearbyItems()
     const targetIds = new Set(initialList.map(it => it.id))
     const collectedIds = new Set()
-    const skippedIds = new Set()
+    const skipped = new Map()
     const totalTarget = includeNew ? Infinity : (targetIds.size || Infinity)
 
     const limit = Number.isFinite(max) ? max : totalTarget
@@ -2567,11 +2665,24 @@ function install (bot, { log, on, registerCleanup }) {
       if (Date.now() - t0 > timeoutMs) break
       let items = nearbyItems()
       if (!includeNew) {
-        items = items.filter(it => targetIds.has(it.id) && !collectedIds.has(it.id))
+        items = items.filter(it => targetIds.has(it.id))
       } else {
         for (const it of items) { if (!targetIds.has(it.id)) targetIds.add(it.id) }
-        items = items.filter(it => !collectedIds.has(it.id))
       }
+      const nowTs = Date.now()
+      items = items.filter(it => {
+        if (collectedIds.has(it.id)) return false
+        const lastSkip = skipped.get(it.id)
+        if (lastSkip && (nowTs - lastSkip.time) < skipCooldownMs) return false
+        if (lastSkip && lastSkip.pos && it.position) {
+          const dx = Math.abs(Number(it.position.x ?? 0) - lastSkip.pos.x)
+          const dy = Math.abs(Number(it.position.y ?? 0) - lastSkip.pos.y)
+          const dz = Math.abs(Number(it.position.z ?? 0) - lastSkip.pos.z)
+          const moved = dx > 0.5 || dy > 0.5 || dz > 0.5
+          if (!moved) return false
+        }
+        return true
+      })
       if (!items.length) {
         if (!includeNew && collectedIds.size >= targetIds.size) break
         if (until === 'exhaust') break
@@ -2609,15 +2720,24 @@ function install (bot, { log, on, registerCleanup }) {
           picked++
           collectedIds.add(target.id)
           targetIds.delete(target.id)
-        } else if (Date.now() - t0 > timeoutMs) {
-          skippedIds.add(target.id)
+          skipped.delete(target.id)
+        } else {
+          skipped.set(target.id, {
+            time: Date.now(),
+            pos: target.position ? {
+              x: Number(target.position.x ?? 0),
+              y: Number(target.position.y ?? 0),
+              z: Number(target.position.z ?? 0)
+            } : null
+          })
         }
       } catch {}
     }
     const finished = !includeNew && collectedIds.size >= targetIds.size
     const summaryParts = [`拾取${collectedIds.size}个目标`]
     if (picked !== collectedIds.size) summaryParts.push(`尝试${picked}`)
-    if (skippedIds.size) summaryParts.push(`未成功${skippedIds.size}`)
+    const skippedCount = skipped.size
+    if (skippedCount) summaryParts.push(`暂存${skippedCount}`)
     if (finished) summaryParts.push('已完成初始掉落')
     return ok(summaryParts.join('，'))
   }
@@ -3557,4 +3677,4 @@ function install (bot, { log, on, registerCleanup }) {
   return { run, list }
 }
 
-module.exports = { install }
+  module.exports = { install }
