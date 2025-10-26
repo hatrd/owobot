@@ -84,7 +84,7 @@
 提示：靠近床会自动尝试睡觉。
 
 默认挖掘策略（精简版）
-- 大多数工具默认不挖掘，除非传入 `dig:true`：`goto`、`goto_block`、`follow_player`、`collect|pickup`、`mount_near`、`mount_player`、`flee_trap`、`place_blocks`、`cull_hostiles`。
+- 大多数工具默认不挖掘，除非传入 `dig:true`：`goto`、`goto_block`、`follow_player`、`collect|pickup`、`mount_near`、`mount_player`、`place_blocks`、`cull_hostiles`。
 - 专用采集工具内部自带挖掘：`break_blocks`、`gather`、`harvest` 会自行选工具并做安全检查。
 - 矿脉挖掘技能为提高效率，使用更激进的寻路/移动策略；其它工具保持保守策略。
 

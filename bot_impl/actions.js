@@ -3677,7 +3677,7 @@ function install (bot, { log, on, registerCleanup }) {
 
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, light_area, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, sort_chests }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, light_area, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, sort_chests }
 
   async function run (tool, args) {
     const fn = registry[tool]
