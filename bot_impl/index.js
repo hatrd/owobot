@@ -787,9 +787,6 @@ function activate (botInstance, options = {}) {
   // Feature: AI chat (owk prefix routed to DeepSeek-compatible API)
   try { require('./ai-chat').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('ai') }) } catch (e) { coreLog.warn('ai-chat install error:', e?.message || e) }
 
-  // Feature: world sensing -> local heuristics (no AI)
-  try { require('./world-sense').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('sense') }) } catch (e) { coreLog.warn('world-sense install error:', e?.message || e) }
-
   // Feature: auto-plant saplings when available in inventory
   try { require('./auto-plant').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('plant') }) } catch (e) { coreLog.warn('auto-plant install error:', e?.message || e) }
   // Feature: auto-stash when inventory nearly full (default disabled; intended for fishing)
