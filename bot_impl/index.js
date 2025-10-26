@@ -701,9 +701,6 @@ function activate (botInstance, options = {}) {
   state.greetZonesSeeded = false
   initializeGreetingZones()
 
-  // Optional: dig packet trace/throttle for diagnosing anti-cheat timing
-  try { require('./dig-throttle').install(bot, { log: logging.getLogger('dig') }) } catch (e) { coreLog.warn('dig-throttle install error:', e?.message || e) }
-
   // Track current external task for AI context (source: chat/cli/sense -> player/auto)
   on('external:begin', (info) => {
     try {
@@ -782,9 +779,6 @@ function activate (botInstance, options = {}) {
   try { require('./auto-fish').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('fish') }) } catch (e) { coreLog.warn('auto-fish install error:', e?.message || e) }
   // Feature: auto-swim (float in water)
   try { require('./auto-swim').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('swim') }) } catch (e) { coreLog.warn('auto-swim install error:', e?.message || e) }
-  // Fun: follow jukebox music and bob head
-  try { require('./jukebox-fan').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('jukebox') }) } catch (e) { coreLog.warn('jukebox-fan install error:', e?.message || e) }
-
   // Feature: respond to ".bot here" with "/tpa <username>"
   try { require('./tpa-here').install(bot, { on, dlog, state, registerCleanup, log: logging.getLogger('tpa') }) } catch (e) { coreLog.warn('tpa-here install error:', e?.message || e) }
 
