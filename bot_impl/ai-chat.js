@@ -102,6 +102,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
   if (typeof state.aiMemory.storeMax !== 'number') state.aiMemory.storeMax = state.ai.context?.memory?.storeMax || 200
   if (!Array.isArray(state.aiMemory.queue)) state.aiMemory.queue = []
+  if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
+  updateWorldMemoryZones()
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
   state.aiSpend = state.aiSpend || { day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }, month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }, total: { inTok: 0, outTok: 0, cost: 0 } }
 
@@ -876,6 +878,41 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return out
   }
 
+  function normalizeLocationValue (value) {
+    if (!value || typeof value !== 'object') return null
+    const src = (typeof value.position === 'object' && value.position) ? value.position : value
+    const toNumber = (raw) => {
+      const n = Number(raw)
+      return Number.isFinite(n) ? n : null
+    }
+    const x = toNumber(src.x)
+    const z = toNumber(src.z)
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null
+    const out = {
+      x: Math.round(x),
+      z: Math.round(z)
+    }
+    const y = toNumber(src.y)
+    if (Number.isFinite(y)) out.y = Math.round(y)
+    const radiusRaw = value.radius ?? src.radius
+    const radius = toNumber(radiusRaw)
+    if (Number.isFinite(radius) && radius > 0) out.radius = Math.max(1, Math.round(radius))
+    const dimRaw = value.dim || value.dimension || value.world || src.dim || src.dimension
+    if (typeof dimRaw === 'string' && dimRaw.trim()) {
+      const dimNorm = normalizeMemoryText(dimRaw)
+      if (dimNorm) out.dim = dimNorm.toLowerCase()
+    }
+    return out
+  }
+
+  function locationLabel (loc) {
+    if (!loc || typeof loc !== 'object') return ''
+    const { x, y, z } = loc
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return ''
+    if (Number.isFinite(y)) return `${x},${y},${z}`
+    return `${x},${z}`
+  }
+
   function ensureMemoryEntries () {
     if (!state.aiMemory || typeof state.aiMemory !== 'object') state.aiMemory = { entries: [] }
     if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
@@ -905,8 +942,69 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (item.instruction) item.instruction = normalizeMemoryText(item.instruction)
       if (!item.instruction) item.instruction = item.text
       item.fromAI = item.fromAI !== false
+      if (item.location) {
+        const loc = normalizeLocationValue(item.location)
+        if (loc) item.location = loc
+        else delete item.location
+      }
+      if (item.feature) {
+        const feat = normalizeMemoryText(item.feature).slice(0, 48)
+        item.feature = feat
+      }
+      if (item.greetSuffix) {
+        item.greetSuffix = normalizeMemoryText(item.greetSuffix).slice(0, 80)
+      }
+      if (item.kind) {
+        item.kind = normalizeMemoryText(item.kind)
+      }
     }
     return arr
+  }
+
+  function buildWorldMemoryZones () {
+    const entries = ensureMemoryEntries()
+    const zones = []
+    for (const entry of entries) {
+      const loc = entry && entry.location
+      if (!loc || !Number.isFinite(loc.x) || !Number.isFinite(loc.z)) continue
+      const radius = Number.isFinite(loc.radius) && loc.radius > 0 ? loc.radius : 50
+      const suffixSource = (() => {
+        if (typeof entry.greetSuffix === 'string' && entry.greetSuffix.trim()) return entry.greetSuffix
+        if (typeof entry.summary === 'string' && entry.summary.trim()) return entry.summary
+        if (typeof entry.feature === 'string' && entry.feature.trim()) return entry.feature
+        return ''
+      })()
+      const suffix = normalizeMemoryText(suffixSource).slice(0, 80)
+      if (!suffix) continue
+      const zone = {
+        name: (() => {
+          if (typeof entry.feature === 'string' && entry.feature.trim()) return normalizeMemoryText(entry.feature)
+          if (typeof entry.summary === 'string' && entry.summary.trim()) return normalizeMemoryText(entry.summary)
+          return `memory-${entry.createdAt || Date.now()}`
+        })(),
+        x: Math.round(loc.x),
+        y: Number.isFinite(loc.y) ? Math.round(loc.y) : 64,
+        z: Math.round(loc.z),
+        radius: Math.max(1, Math.round(radius)),
+        suffix,
+        enabled: true,
+        source: 'memory'
+      }
+      if (loc.dim) zone.dim = loc.dim
+      if (typeof entry.instruction === 'string' && entry.instruction.trim()) zone.memoryInstruction = normalizeMemoryText(entry.instruction)
+      zones.push(zone)
+    }
+    return zones
+  }
+
+  function updateWorldMemoryZones () {
+    try {
+      const zones = buildWorldMemoryZones()
+      if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
+      state.worldMemoryZones = zones
+    } catch (err) {
+      log?.warn && log.warn('world memory zone update error:', err?.message || err)
+    }
   }
 
   function memoryStoreLimit () {
@@ -965,6 +1063,22 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         }
         if (extra.tone) entry.tone = normalizeMemoryText(extra.tone)
         entry.fromAI = extra.fromAI !== false
+        if (extra.location) {
+          const loc = normalizeLocationValue(extra.location)
+          if (loc) entry.location = loc
+        }
+        if (extra.feature) {
+          const feat = normalizeMemoryText(extra.feature).slice(0, 48)
+          if (feat) entry.feature = feat
+        }
+        if (extra.greetSuffix) {
+          const suffix = normalizeMemoryText(extra.greetSuffix).slice(0, 80)
+          if (suffix) entry.greetSuffix = suffix
+        }
+        if (extra.kind) {
+          const kind = normalizeMemoryText(extra.kind)
+          if (kind) entry.kind = kind
+        }
       }
     } else {
       entry = {
@@ -986,11 +1100,28 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         entry.instruction = normalizeMemoryText(extra.instruction)
         entry.text = entry.instruction
       }
+      if (extra?.location) {
+        const loc = normalizeLocationValue(extra.location)
+        if (loc) entry.location = loc
+      }
+      if (extra?.feature) {
+        const feat = normalizeMemoryText(extra.feature).slice(0, 48)
+        if (feat) entry.feature = feat
+      }
+      if (extra?.greetSuffix) {
+        const suffix = normalizeMemoryText(extra.greetSuffix).slice(0, 80)
+        if (suffix) entry.greetSuffix = suffix
+      }
+      if (extra?.kind) {
+        const kind = normalizeMemoryText(extra.kind)
+        if (kind) entry.kind = kind
+      }
       if (!entry.summary) entry.summary = ''
       entries.push(entry)
     }
     pruneMemories()
     persistMemoryState()
+    updateWorldMemoryZones()
     return { ok: true, entry }
   }
 
@@ -1021,10 +1152,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       request: job.text,
       original_message: job.original,
       recent_chat: job.recent,
+      memory_context: job.context || null,
       existing_triggers: ensureMemoryEntries().map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] })).slice(-10)
     }
     const messages = [
-      { role: 'system', content: '你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象来描述应记录的长期记忆。必须遵循以下规则：\n1. 如果请求合理、安全且信息完整，status设为"ok"，给出instruction（机器人要记住的指令，必须为简洁中文）、triggers（字符串数组，描述触发条件，如"player:Ameyaku"、"keyword:金合欢"）、summary（20字内概括）、tags（可为空数组，用于分类，如"player_specific"、"mood"）、tone（可选，描述语气，简短）。\n2. 如果内容不适合记忆或有安全/辱骂风险，status设为"reject"，并提供reason（中文）。\n3. 如果信息不足需要澄清，status设为"clarify"，给出question（中文）。\n4. 输出必须是合法JSON，不得包含额外文本或解释。' },
+      { role: 'system', content: '你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象描述应写入的长期记忆。规则：\n1. 若请求安全且信息充分，status=\"ok\"，必须返回 instruction（简洁中文指令）、triggers（字符串数组，如player:Ameyaku、keyword:金合欢）、summary（≤20字概括）、tags（字符串数组）、tone（可选）。\n2. 若内容不应记忆，status=\"reject\"并给出 reason（中文）。\n3. 若信息不足需要玩家补充，status=\"clarify\"并给出 question（中文）。\n4. status=\"ok\" 时，如 payload.memory_context.position 存在或请求描述具体地点，必须附加 location 对象 {"x":int,"y":int?,"z":int,"radius":int?,"dim":string?}，坐标使用玩家提供或 context 中的值，半径默认 context.radius 或 50。\n5. status=\"ok\" 时提供 feature（≤40字、snake_case 或简洁短语）描述该地点用途，可选 greet_suffix（≤40字）作为问候附加语，可选 kind（如world、player）。instruction 和 summary 应包含地点/用途信息。\n6. 输出必须是合法 JSON，不能包含额外文本、注释或Markdown。' },
       { role: 'user', content: JSON.stringify(payload) }
     ]
     const body = {
@@ -1100,14 +1232,33 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           const tags = uniqueStrings(result.tags || [])
           const summary = result.summary ? normalizeMemoryText(result.summary) : ''
           const tone = result.tone ? normalizeMemoryText(result.tone) : ''
+          let location = normalizeLocationValue(result.location || result.loc || null)
+          if (!location && job.context && job.context.position) {
+            const hint = {
+              x: job.context.position.x,
+              y: job.context.position.y,
+              z: job.context.position.z,
+              radius: job.context.radius,
+              dim: job.context.dimension
+            }
+            location = normalizeLocationValue(hint) || location
+          }
+          const featureRaw = result.feature || result.feature_name || null
+          const greetRaw = result.greet_suffix || result.greetSuffix || null
+          const kindRaw = result.kind || null
+          const extra = { instruction, triggers, tags, summary, tone, fromAI: true }
+          if (location) extra.location = location
+          if (typeof featureRaw === 'string' && featureRaw.trim()) extra.feature = featureRaw
+          if (typeof greetRaw === 'string' && greetRaw.trim()) extra.greetSuffix = greetRaw
+          if (typeof kindRaw === 'string' && kindRaw.trim()) extra.kind = kindRaw
           addMemoryEntry({
             text: instruction,
             author: job.player,
             source: job.source || 'player',
             importance: 1,
-            extra: { instruction, triggers, tags, summary, tone, fromAI: true }
+            extra
           })
-          const confirm = summary || '记住啦~'
+          const confirm = summary || (location ? `记住啦（${locationLabel(location)}）` : '记住啦~')
           sendDirectReply(job.player, confirm)
           continue
         }
@@ -1509,7 +1660,34 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         recent: recentChatSnippet(6),
         createdAt: now(),
         source: 'player',
-        attempts: 0
+        attempts: 0,
+        context: (() => {
+          try {
+            const pos = (() => {
+              const entityPos = bot.entity?.position
+              if (!entityPos) return null
+              return {
+                x: Math.round(entityPos.x),
+                y: Math.round(entityPos.y),
+                z: Math.round(entityPos.z)
+              }
+            })()
+            const dim = (() => {
+              try {
+                const rawDim = bot.game?.dimension
+                if (typeof rawDim === 'string' && rawDim.length) return rawDim
+              } catch {}
+              return null
+            })()
+            if (!pos) return null
+            return {
+              position: pos,
+              dimension: dim,
+              radius: 50,
+              featureHint: memoryText
+            }
+          } catch { return null }
+        })()
       }
       enqueueMemoryJob(job)
       sendDirectReply(username, '收到啦，我整理一下~')

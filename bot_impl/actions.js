@@ -846,6 +846,12 @@ function install (bot, { log, on, registerCleanup }) {
       ['石头', 'stone'],
       ['木棍', 'stick'],
       ['沙子', 'sand'],
+      ['原木', 'log'],
+      ['原木块', 'log'],
+      ['木头', 'log'],
+      ['木头块', 'log'],
+      ['木材', 'log'],
+      ['logs', 'log'],
       // woods (CN -> EN)
       ['橡木原木', 'oak_log'],
       ['云杉原木', 'spruce_log'],
@@ -869,47 +875,99 @@ function install (bot, { log, on, registerCleanup }) {
     return aliases.get(n) || n
   }
 
+  const GROUP_NAME_MATCHERS = new Map([
+    ['log', (value) => {
+      const n = String(value || '').toLowerCase()
+      if (!n) return false
+      if (n.endsWith('_log')) return true
+      if (n.endsWith('_stem')) return true
+      return false
+    }]
+  ])
+
+  function collectInventoryStacks (opts = {}) {
+    const includeArmor = opts.includeArmor === true
+    const includeOffhand = opts.includeOffhand !== false
+    const includeHeld = opts.includeHeld !== false
+    const includeMain = opts.includeMain !== false
+    const includeHotbar = opts.includeHotbar !== false
+    const slots = bot.inventory?.slots || []
+    const out = []
+    let heldSlotIndex = null
+    if (!includeHeld) {
+      try {
+        const quick = (typeof bot.quickBarSlot === 'number') ? bot.quickBarSlot : null
+        if (quick != null) heldSlotIndex = 36 + quick
+      } catch {}
+    }
+    for (let i = 0; i < slots.length; i++) {
+      const it = slots[i]
+      if (!it) continue
+      if (!includeArmor && (i === 5 || i === 6 || i === 7 || i === 8)) continue
+      if (!includeOffhand && i === 45) continue
+      if (heldSlotIndex != null && i === heldSlotIndex) continue
+      if (!includeMain && i >= 9 && i <= 35) continue
+      if (!includeHotbar && i >= 36 && i <= 44) continue
+      out.push(it)
+    }
+    return out
+  }
+
+  function itemsMatchingName (name, opts = {}) {
+    const normalized = normalizeName(name)
+    const source = Array.isArray(opts.source) ? opts.source : collectInventoryStacks({
+      includeArmor: opts.includeArmor === true,
+      includeOffhand: opts.includeOffhand !== false,
+      includeHeld: opts.includeHeld !== false,
+      includeMain: opts.includeMain !== false,
+      includeHotbar: opts.includeHotbar !== false
+    })
+    const allowPartial = opts.allowPartial !== false
+    const matchers = []
+    const loweredNormalized = String(normalized || '').toLowerCase()
+    if (loweredNormalized) matchers.push((value) => value === loweredNormalized)
+    const groupMatcher = GROUP_NAME_MATCHERS.get(loweredNormalized)
+    if (groupMatcher) matchers.push(groupMatcher)
+    const results = []
+    const seen = new Set()
+    function addResult (item) {
+      if (!item) return
+      if (seen.has(item)) return
+      seen.add(item)
+      results.push(item)
+    }
+    for (const it of source) {
+      const itemName = String(it?.name || '').toLowerCase()
+      if (!itemName) continue
+      if (matchers.some(fn => fn(itemName))) addResult(it)
+    }
+    if (results.length || !allowPartial) return results
+    if (loweredNormalized && loweredNormalized.length >= 3) {
+      for (const it of source) {
+        const itemName = String(it?.name || '').toLowerCase()
+        if (!itemName) continue
+        if (itemName.includes(loweredNormalized)) addResult(it)
+      }
+    }
+    return results
+  }
+
   function resolveItemByName (name) {
-    const needle = normalizeName(name)
-    const inv = bot.inventory?.items() || []
-    // include held/offhand explicitly if not listed
-    const extra = []
-    if (bot.heldItem) extra.push(bot.heldItem)
-    const off = bot.inventory?.slots?.[45]
-    if (off) extra.push(off)
-    const all = inv.concat(extra)
-    let exact = all.find(it => String(it.name || '').toLowerCase() === needle)
-    if (exact) return exact
-    const partial = all.filter(it => String(it.name || '').toLowerCase().includes(needle))
-    partial.sort((a, b) => (b.count || 0) - (a.count || 0))
-    return partial[0] || null
+    const matches = itemsMatchingName(name, { includeArmor: true, includeOffhand: true, includeHeld: true })
+    if (!matches.length) return null
+    matches.sort((a, b) => (b.count || 0) - (a.count || 0))
+    return matches[0] || null
   }
 
   function countItemByName (name) {
     try {
-      const needle = normalizeName(name)
-      const inv = bot.inventory?.items() || []
-      return inv.filter(it => String(it.name || '').toLowerCase() === needle).reduce((a, b) => a + (b.count || 0), 0)
+      return itemsMatchingName(name, { includeArmor: true, includeOffhand: true, includeHeld: true })
+        .reduce((sum, it) => sum + (it?.count || 0), 0)
     } catch { return 0 }
   }
 
   function findAllByName (name) {
-    const needle = normalizeName(name)
-    const inv = bot.inventory?.items() || []
-    const extra = []
-    if (bot.heldItem) extra.push(bot.heldItem)
-    const off = bot.inventory?.slots?.[45]
-    if (off) extra.push(off)
-    // include armor slots as candidates
-    try {
-      const slots = bot.inventory?.slots || []
-      for (const idx of [5, 6, 7, 8]) { const it = slots[idx]; if (it && it.name) extra.push(it) }
-    } catch {}
-    const all = inv.concat(extra)
-    const same = all.filter(it => String(it.name || '').toLowerCase() === needle)
-    if (same.length) return same
-    const part = all.filter(it => String(it.name || '').toLowerCase().includes(needle))
-    return part
+    return itemsMatchingName(name, { includeArmor: true, includeOffhand: true, includeHeld: true })
   }
 
   function bestMaterialRank (n) {
@@ -3244,7 +3302,7 @@ function install (bot, { log, on, registerCleanup }) {
           }
           const nm = spec?.name
           if (!nm) continue
-          const list = (bot.inventory?.items() || []).filter(x => String(x?.name || '').toLowerCase() === String(nm).toLowerCase())
+          const list = itemsMatchingName(nm, { source: bot.inventory?.items() || [], allowPartial: true, includeArmor: false, includeOffhand: true, includeHeld: true })
           if (!list.length) continue
           if (cnt != null) {
             const it = list[0]

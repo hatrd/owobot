@@ -308,12 +308,22 @@ function initializeGreetingZones () {
 
 function collectGreetingSuffixes (opts = {}) {
   try {
-    if (!state || !Array.isArray(state.greetZones)) return []
+    if (!state) return []
+    const staticZones = Array.isArray(state.greetZones) ? state.greetZones : []
+    const memoryZones = Array.isArray(state.worldMemoryZones) ? state.worldMemoryZones : []
+    const zones = staticZones.concat(memoryZones)
+    if (!zones.length) return []
     const pos = bot?.entity?.position
     if (!pos) return []
+    const currentDim = (() => {
+      try {
+        const raw = bot.game?.dimension
+        return typeof raw === 'string' ? raw.toLowerCase() : null
+      } catch { return null }
+    })()
     const logIt = Boolean(opts.debug) || greetLogEnabled()
     const suffixes = []
-    for (const zone of state.greetZones) {
+    for (const zone of zones) {
       if (!zone) continue
       if (zone.enabled === false) continue
       const suffix = typeof zone.suffix === 'string' ? zone.suffix.trim() : ''
@@ -327,6 +337,11 @@ function collectGreetingSuffixes (opts = {}) {
       const center = new Vec3(zx, zy, zz)
       const dist = pos.distanceTo(center)
       const within = Number.isFinite(dist) && dist <= radius
+      const zoneDim = typeof zone.dim === 'string' ? zone.dim.toLowerCase() : null
+      if (zoneDim && currentDim && zoneDim !== currentDim) {
+        if (logIt) greetLog(`zone ${zone.name || '(unnamed)'} skipped dim mismatch zoneDim=${zoneDim} currentDim=${currentDim}`)
+        continue
+      }
       if (logIt) greetLog(`zone ${zone.name || '(unnamed)'} enabled=${zone.enabled !== false} radius=${radius} dist=${Number.isFinite(dist) ? dist.toFixed(2) : 'nan'} within=${within}`)
       if (!within) continue
       suffixes.push(suffix)
@@ -620,12 +635,14 @@ function activate (botInstance, options = {}) {
     greetZones: [],
     greetZonesSeeded: false,
     greetLogEnabled: false,
+    worldMemoryZones: [],
     loginPassword: undefined
   }
 
   if (!Array.isArray(state.cleanups)) state.cleanups = []
   if (!Number.isFinite(state.externalBusyCount) || state.externalBusyCount < 0) state.externalBusyCount = 0
   if (!Array.isArray(state.greetZones)) state.greetZones = []
+  if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
   if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
   if (typeof state.greetLogEnabled !== 'boolean') state.greetLogEnabled = false
   // Ensure greetingEnabled is initialized even when reusing shared state from loader
