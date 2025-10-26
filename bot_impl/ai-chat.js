@@ -1224,8 +1224,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
           // Acknowledge in chat succinctly
           if (res && res.ok) {
-            if (speech) return ''
-            return H.trimReply(res.msg || '好的', maxReplyLen || 120)
+            const okText = H.trimReply(res.msg || '好的', maxReplyLen || 120)
+            if (speech) {
+              sendDirectReply(username, okText)
+              return ''
+            }
+            return okText
           }
           const failText = H.trimReply(res?.msg || '这次没成功！', maxReplyLen || 120)
           if (speech) {

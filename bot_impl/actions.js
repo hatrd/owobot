@@ -1226,17 +1226,47 @@ function install (bot, { log, on, registerCleanup }) {
       } catch { return false }
     }
     function isOreNameForSafety (n) { try { const s = String(n || '').toLowerCase(); return !!s && (s.endsWith('_ore') || s === 'ancient_debris') } catch { return false } }
+    const skipKeys = new Set()
+    const posKey = (p) => `${p.x},${p.y},${p.z}`
+    const dropSkip = new Set()
+
+    async function moveNearPosition (pos, range = 1.2, timeoutMs = 2500) {
+      const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 0)
+      try { bot.pathfinder.setGoal(goal, true) } catch {}
+      const start = Date.now()
+      let lastDist = Infinity
+      while (Date.now() - start < timeoutMs) {
+        await wait(100)
+        const here = bot.entity?.position
+        if (!here) break
+        const dist = here.distanceTo(pos)
+        if (dist <= range) {
+          try { bot.pathfinder.setGoal(null) } catch {}
+          return true
+        }
+        if (dist > lastDist - 0.05) {
+          // detect stall after several cycles
+          if (Date.now() - start > timeoutMs * 0.6) break
+        }
+        lastDist = dist
+      }
+      try { bot.pathfinder.setGoal(null) } catch {}
+      return false
+    }
+
     async function approachAndDig (p) {
       if (explosionCooling()) return false
       // approach
       bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
-      const until = Date.now() + 8000
+      const until = Date.now() + 6000
+      let reached = false
       while (Date.now() < until) {
         await wait(100)
         if (explosionCooling()) return false
         const d = bot.entity.position.distanceTo(p)
-        if (d <= 2.3) break
+        if (d <= 2.3) { reached = true; break }
       }
+      if (!reached) return 'unreachable'
       // stop pathfinder before digging to avoid movement-caused aborts
       try { bot.pathfinder.setGoal(null) } catch {}
       try { bot.clearControlStates() } catch {}
@@ -1329,6 +1359,7 @@ function install (bot, { log, on, registerCleanup }) {
         let c = 0
         for (const e of Object.values(bot.entities || {})) {
           if (!isItemEntity(e)) continue
+          if (dropSkip.has(e.id)) continue
           try { if (mep.distanceTo(e.position) <= flushRadius) c++ } catch {}
         }
         return c
@@ -1336,17 +1367,21 @@ function install (bot, { log, on, registerCleanup }) {
     }
     async function doShortPickup () {
       try {
-        const { goals } = pathfinderPkg
         const untilPick = Date.now() + flushTimeoutMs
         while (Date.now() < untilPick) {
           const mep = bot.entity?.position; if (!mep) break
-          const items = Object.values(bot.entities || {}).filter(e => isItemEntity(e) && mep.distanceTo(e.position) <= flushRadius)
+          const items = Object.values(bot.entities || {}).filter(e => {
+            if (!isItemEntity(e)) return false
+            if (dropSkip.has(e.id)) return false
+            try { return mep.distanceTo(e.position) <= flushRadius } catch { return false }
+          })
           if (!items.length) break
           // go to nearest one
           items.sort((a, b) => a.position.distanceTo(mep) - b.position.distanceTo(mep))
           const it = items[0]
-          bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(it.position.x), Math.floor(it.position.y), Math.floor(it.position.z), 0), true)
-          await wait(120)
+          const ok = await moveNearPosition(it.position, 0.9, 3000)
+          if (!ok && it.id != null) dropSkip.add(it.id)
+          else await wait(160)
         }
       } catch {}
     }
@@ -1362,7 +1397,7 @@ function install (bot, { log, on, registerCleanup }) {
     let currentColumn = null // { x, z } of last chopped block; finish trunk before moving
 
     while (!miningAbort && broken < limit) {
-      const posList = bot.findBlocks({
+      let posList = bot.findBlocks({
         point: origin,
         maxDistance: Math.max(2, radius),
         count: 64,
@@ -1375,6 +1410,9 @@ function install (bot, { log, on, registerCleanup }) {
           return true
         }
       }) || []
+      if (skipKeys.size) {
+        posList = posList.filter((p) => !skipKeys.has(posKey(p)))
+      }
       if (!posList.length) break
       // Selection: if logs and we have a current trunk, finish same (x,z) first; else sort by 2D distance then |dy|
       let candidate = null
@@ -1395,7 +1433,15 @@ function install (bot, { log, on, registerCleanup }) {
       }
       let did = false
       if (candidate) {
-        if (await approachAndDig(candidate)) { broken++; did = true; if (isLogsMode) currentColumn = { x: candidate.x, z: candidate.z } }
+        const result = await approachAndDig(candidate)
+        if (result === true) {
+          broken++
+          did = true
+          if (isLogsMode) currentColumn = { x: candidate.x, z: candidate.z }
+        } else if (result === 'unreachable') {
+          skipKeys.add(posKey(candidate))
+          continue
+        }
       }
       if (!did) break
       // Mid-loop flush: if many drops nearby, do a quick pickup pass
@@ -1407,23 +1453,22 @@ function install (bot, { log, on, registerCleanup }) {
     if (collect) {
       try {
         const me = bot.entity?.position
-        const items = Object.values(bot.entities || {}).filter(e => {
-          try {
-            if (!me || !e || !e.position) return false
-            const kind = String(e?.kind || '').toLowerCase()
-            if (kind === 'drops') return me.distanceTo(e.position) <= Math.max(3, (area.radius || 6))
-            const nm = String(e.name || e.displayName || '').toLowerCase()
-            if (nm === 'item' || nm === 'item_entity' || nm === 'dropped_item') return me.distanceTo(e.position) <= Math.max(3, (area.radius || 6))
-            if (e.item) return me.distanceTo(e.position) <= Math.max(3, (area.radius || 6))
-            return false
-          } catch { return false }
-        })
-        const { goals } = pathfinderPkg
-        const untilPick = Date.now() + 1500
-        for (const it of items) {
-          if (Date.now() > untilPick) break
-          bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(it.position.x), Math.floor(it.position.y), Math.floor(it.position.z), 0), true)
-          await wait(120)
+        if (me) {
+          const reach = Math.max(3, (area.radius || 6))
+          const items = Object.values(bot.entities || {}).filter(e => {
+            try {
+              if (!isItemEntity(e)) return false
+              if (dropSkip.has(e.id)) return false
+              return me.distanceTo(e.position) <= reach
+            } catch { return false }
+          })
+          const untilPick = Date.now() + 2000
+          for (const it of items) {
+            if (Date.now() > untilPick) break
+            const ok = await moveNearPosition(it.position, 0.9, 2500)
+            if (!ok && it.id != null) dropSkip.add(it.id)
+            else await wait(160)
+          }
         }
       } catch {}
     }
@@ -2526,6 +2571,31 @@ function install (bot, { log, on, registerCleanup }) {
         const param = (only && only.length === 1) ? only[0] : only
         const res = runner.startSkill('mine_ore', { radius: Math.max(4, radius), only: param }, expected || null)
         const label = oreLabelFromOnly(param)
+        if (res.ok && res.taskId && bot && typeof bot.on === 'function') {
+          const taskId = res.taskId
+          const notify = (status) => {
+            const state = bot.state
+            const allow = (() => {
+              try {
+                if (!state) return true
+                const cur = state.currentTask
+                if (cur && cur.source && cur.source !== 'player') return false
+              } catch {}
+              return true
+            })()
+            if (!allow) return
+            const prefix = `矿物采集${label ? `(${label})` : ''}`
+            const okStatus = String(status || '').toLowerCase()
+            const text = (okStatus === 'succeeded' || okStatus === 'success') ? `${prefix}完成啦~` : `${prefix}失败了…`
+            try { bot.chat(text) } catch {}
+          }
+          const handler = (ev) => {
+            if (!ev || ev.id !== taskId) return
+            try { bot.off('skill:end', handler) } catch {}
+            notify(String(ev.status || 'failed'))
+          }
+          try { bot.on('skill:end', handler) } catch {}
+        }
         return res.ok ? ok(`矿物采集已启动: ${label}`, { taskId: res.taskId }) : fail(res.msg || '启动失败')
       }
     } catch {}
