@@ -1279,7 +1279,11 @@ function install (bot, { log, on, registerCleanup }) {
       }
       try { bot.pathfinder.setGoal(null) } catch {}
       try { bot.clearControlStates() } catch {}
-      if (!reached) return 'unreachable'
+      const hereAfter = bot.entity?.position
+      if (!hereAfter) return false
+      const distAfter = hereAfter.distanceTo(p)
+      const canReach = distAfter <= 5.6
+      if (!reached && !canReach) return 'unreachable'
       await wait(60)
       let block = bot.blockAt(p)
       if (!block || !matches(block)) return false
@@ -1310,6 +1314,7 @@ function install (bot, { log, on, registerCleanup }) {
             if (!block || !matches(block)) return false
             continue
           }
+          if (/out of reach|too far/i.test(msg)) return 'unreachable'
           return false
         }
       }
