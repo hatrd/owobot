@@ -20,6 +20,7 @@ deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?
 sort_chests{radius?}（整理箱子，将物品按照展示框分类搬运）
 pickup{names?|match?,radius?,max?,until?} (拾取掉落物）
 gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?} (破坏、收集方块.例如砍树、收集原木等)
+light_area{radius?,spacing?,lightThreshold?,max?,returnToOrigin?}（在方形范围内补光，低亮度处放置火把）
 feed_animals{species?,item?,radius?,max?}
 autofish{radius?,debug?}
 mount_near{radius?,prefer?}

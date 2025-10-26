@@ -101,6 +101,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
   if (typeof state.aiMemory.storeMax !== 'number') state.aiMemory.storeMax = state.ai.context?.memory?.storeMax || 200
+  if (!Array.isArray(state.aiMemory.queue)) state.aiMemory.queue = []
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
   state.aiSpend = state.aiSpend || { day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }, month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }, total: { inTok: 0, outTok: 0, cost: 0 } }
 
@@ -120,6 +121,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   const pulseCtrl = { running: false, abort: null }
   let pulseTimer = null
+  const memoryCtrl = { running: false }
 
   function now () { return Date.now() }
   function trimWindow (arr, windowMs) { const t = now(); return arr.filter(ts => t - ts <= windowMs) }
@@ -830,6 +832,50 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { return text.normalize('NFKC').replace(/\s+/g, ' ').trim() } catch { return text.replace(/\s+/g, ' ').trim() }
   }
 
+  function delay (ms) { return new Promise(resolve => setTimeout(resolve, Math.max(0, ms || 0))) }
+
+  function extractJsonLoose (raw) {
+    if (!raw) return null
+    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    if (fence && fence[1]) return fence[1].trim()
+    let depth = 0
+    let inString = false
+    let start = -1
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i]
+      if (inString) {
+        if (ch === '"' && raw[i - 1] !== '\\') inString = false
+        continue
+      }
+      if (ch === '"') {
+        inString = true
+        continue
+      }
+      if (ch === '{') {
+        if (depth === 0) start = i
+        depth++
+      } else if (ch === '}') {
+        depth--
+        if (depth === 0 && start !== -1) return raw.slice(start, i + 1)
+      }
+    }
+    return null
+  }
+
+  function uniqueStrings (arr) {
+    if (!Array.isArray(arr)) return []
+    const out = []
+    const seen = new Set()
+    for (const item of arr) {
+      const v = normalizeMemoryText(item)
+      if (!v) continue
+      if (seen.has(v)) continue
+      seen.add(v)
+      out.push(v)
+    }
+    return out
+  }
+
   function ensureMemoryEntries () {
     if (!state.aiMemory || typeof state.aiMemory !== 'object') state.aiMemory = { entries: [] }
     if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
@@ -851,6 +897,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (!Number.isFinite(item.count) || item.count <= 0) item.count = 1
       if (!Number.isFinite(item.createdAt)) item.createdAt = nowTs
       if (!Number.isFinite(item.updatedAt)) item.updatedAt = item.createdAt
+      if (!Array.isArray(item.triggers)) item.triggers = uniqueStrings(item.triggers ? [item.triggers].flat() : [])
+      else item.triggers = uniqueStrings(item.triggers)
+      if (!Array.isArray(item.tags)) item.tags = uniqueStrings(item.tags)
+      if (item.summary) item.summary = normalizeMemoryText(item.summary)
+      if (item.tone) item.tone = normalizeMemoryText(item.tone)
+      if (item.instruction) item.instruction = normalizeMemoryText(item.instruction)
+      if (!item.instruction) item.instruction = item.text
+      item.fromAI = item.fromAI !== false
     }
     return arr
   }
@@ -882,7 +936,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     while (entries.length > limit) entries.shift()
   }
 
-  function addMemoryEntry ({ text, author, source, importance } = {}) {
+  function addMemoryEntry ({ text, author, source, importance, extra } = {}) {
     const entries = ensureMemoryEntries()
     const normalized = normalizeMemoryText(text)
     if (!normalized) return { ok: false, reason: 'empty' }
@@ -894,6 +948,24 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       entry.updatedAt = nowTs
       if (author) entry.lastAuthor = author
       if (source) entry.lastSource = source
+      if (extra) {
+        if (extra.summary) entry.summary = normalizeMemoryText(extra.summary)
+        if (extra.instruction) {
+          entry.instruction = normalizeMemoryText(extra.instruction)
+          entry.text = entry.instruction
+        } else {
+          entry.text = normalized
+          entry.instruction = normalized
+        }
+        if (Array.isArray(extra.triggers)) {
+          entry.triggers = uniqueStrings((entry.triggers || []).concat(extra.triggers))
+        }
+        if (Array.isArray(extra.tags)) {
+          entry.tags = uniqueStrings((entry.tags || []).concat(extra.tags))
+        }
+        if (extra.tone) entry.tone = normalizeMemoryText(extra.tone)
+        entry.fromAI = extra.fromAI !== false
+      }
     } else {
       entry = {
         text: normalized,
@@ -902,8 +974,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         updatedAt: nowTs,
         firstAuthor: author || null,
         lastAuthor: author || null,
-        lastSource: source || null
+        lastSource: source || null,
+        instruction: normalized,
+        triggers: uniqueStrings(extra?.triggers || []),
+        tags: uniqueStrings(extra?.tags || []),
+        summary: extra?.summary ? normalizeMemoryText(extra.summary) : '',
+        tone: extra?.tone ? normalizeMemoryText(extra.tone) : '',
+        fromAI: extra?.fromAI !== false
       }
+      if (extra?.instruction) {
+        entry.instruction = normalizeMemoryText(extra.instruction)
+        entry.text = entry.instruction
+      }
+      if (!entry.summary) entry.summary = ''
       entries.push(entry)
     }
     pruneMemories()
@@ -923,6 +1006,128 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return top.slice(0, limit)
   }
 
+  function recentChatSnippet (count = 5) {
+    const lines = (state.aiRecent || []).slice(-Math.max(1, count))
+    return lines.map(r => ({ user: r.user, text: r.text })).filter(Boolean)
+  }
+
+  async function invokeMemoryRewrite (job) {
+    const { key, baseUrl, path, model } = state.ai || {}
+    if (!key) return { status: 'error', reason: 'no_key' }
+    const url = (baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (path || DEFAULT_PATH)
+    const payload = {
+      job_id: job.id,
+      player: job.player,
+      request: job.text,
+      original_message: job.original,
+      recent_chat: job.recent,
+      existing_triggers: ensureMemoryEntries().map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] })).slice(-10)
+    }
+    const messages = [
+      { role: 'system', content: '你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象来描述应记录的长期记忆。必须遵循以下规则：\n1. 如果请求合理、安全且信息完整，status设为"ok"，给出instruction（机器人要记住的指令，必须为简洁中文）、triggers（字符串数组，描述触发条件，如"player:Ameyaku"、"keyword:金合欢"）、summary（20字内概括）、tags（可为空数组，用于分类，如"player_specific"、"mood"）、tone（可选，描述语气，简短）。\n2. 如果内容不适合记忆或有安全/辱骂风险，status设为"reject"，并提供reason（中文）。\n3. 如果信息不足需要澄清，status设为"clarify"，给出question（中文）。\n4. 输出必须是合法JSON，不得包含额外文本或解释。' },
+      { role: 'user', content: JSON.stringify(payload) }
+    ]
+    const body = {
+      model: model || DEFAULT_MODEL,
+      messages,
+      temperature: 0.2,
+      max_tokens: 220,
+      stream: false
+    }
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${key}`
+        },
+        body: JSON.stringify(body)
+      })
+      if (!res.ok) {
+        const txt = await res.text().catch(() => String(res.status))
+        return { status: 'error', reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` }
+      }
+      const data = await res.json()
+      const reply = data?.choices?.[0]?.message?.content || ''
+      const jsonRaw = extractJsonLoose(reply)
+      if (!jsonRaw) return { status: 'error', reason: 'no_json' }
+      let parsed = null
+      try { parsed = JSON.parse(jsonRaw) } catch (e) { return { status: 'error', reason: 'invalid_json', detail: e?.message } }
+      return parsed
+    } catch (e) {
+      return { status: 'error', reason: e?.message || e }
+    }
+  }
+
+  async function processMemoryQueue () {
+    if (memoryCtrl.running) return
+    if (!Array.isArray(state.aiMemory.queue) || !state.aiMemory.queue.length) return
+    if (!state.ai?.key) return
+    memoryCtrl.running = true
+    try {
+      while (Array.isArray(state.aiMemory.queue) && state.aiMemory.queue.length) {
+        const job = state.aiMemory.queue.shift()
+        if (!job) continue
+        job.attempts = (job.attempts || 0) + 1
+        const result = await invokeMemoryRewrite(job)
+        const status = result && result.status ? String(result.status).toLowerCase() : null
+        if (!result || status === 'error' || !status) {
+          if (job.attempts < 3) {
+            state.aiMemory.queue.push(job)
+            await delay(200)
+          } else {
+            try { sendDirectReply(job.player, '我没能整理好这条记忆，下次再试试~') } catch {}
+          }
+          continue
+        }
+        if (status === 'reject') {
+          const reason = normalizeMemoryText(result.reason || '')
+          sendDirectReply(job.player, reason ? `这句记不住：${reason}` : '这句记不住喵~')
+          continue
+        }
+        if (status === 'clarify') {
+          const q = normalizeMemoryText(result.question || '')
+          sendDirectReply(job.player, q || '要不要再多给我一点提示呀？')
+          continue
+        }
+        if (status === 'ok') {
+          const instruction = normalizeMemoryText(result.instruction || '')
+          if (!instruction) {
+            sendDirectReply(job.player, '这句话有点复杂，先不记啦~')
+            continue
+          }
+          const triggers = uniqueStrings(result.triggers || [])
+          const tags = uniqueStrings(result.tags || [])
+          const summary = result.summary ? normalizeMemoryText(result.summary) : ''
+          const tone = result.tone ? normalizeMemoryText(result.tone) : ''
+          addMemoryEntry({
+            text: instruction,
+            author: job.player,
+            source: job.source || 'player',
+            importance: 1,
+            extra: { instruction, triggers, tags, summary, tone, fromAI: true }
+          })
+          const confirm = summary || '记住啦~'
+          sendDirectReply(job.player, confirm)
+          continue
+        }
+        // unknown status
+        sendDirectReply(job.player, '这句我还没想明白，下次再试试~')
+      }
+    } catch (e) {
+      log?.warn && log.warn('memory queue error:', e?.message || e)
+    } finally {
+      memoryCtrl.running = false
+    }
+  }
+
+  function enqueueMemoryJob (job) {
+    if (!job) return
+    if (!Array.isArray(state.aiMemory.queue)) state.aiMemory.queue = []
+    state.aiMemory.queue.push(job)
+    processMemoryQueue().catch(() => {})
+  }
+
   function buildMemoryContext () {
     const cfg = state.ai.context?.memory
     if (cfg && cfg.include === false) return ''
@@ -930,7 +1135,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const top = topMemories(Math.max(1, limit))
     if (!top.length) return ''
     const parts = top.map((m, idx) => {
-      const base = `${idx + 1}. ${m.text}`
+      const line = m.summary ? normalizeMemoryText(m.summary) : normalizeMemoryText(m.text)
+      const base = `${idx + 1}. ${line}`
       const signed = m.lastAuthor || m.firstAuthor
       return signed ? `${base}（${signed}）` : base
     })
@@ -1196,7 +1402,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           } catch {}
           const tools = actionsMod.install(bot, { log })
           // Enforce an allowlist to avoid exposing unsupported/ambiguous tools
-          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','equip','toss','pickup','gather','harvest','feed_animals','place_blocks','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players','iterate_feedback','sort_chests'])
+          const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','equip','toss','pickup','gather','harvest','feed_animals','place_blocks','light_area','deposit','withdraw','write_text','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players','iterate_feedback','sort_chests'])
           // If the intent is informational, disallow world-changing tools; allow info-only tools
           if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(String(payload.tool))) {
             return H.trimReply('我这就看看…', maxReplyLen || 120)
@@ -1291,11 +1497,22 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
     const memoryText = extractMemoryCommand(content)
     if (memoryText) {
-      const added = addMemoryEntry({ text: memoryText, author: username, source: 'player', importance: 1 })
-      if (!added.ok && state.ai.trace && log?.info) {
-        log.info('memory reject ->', added.reason)
+      if (!state.ai?.key) {
+        sendDirectReply(username, '现在记不住呀，AI 没开~')
+        return
       }
-      sendDirectReply(username, added.ok ? '记住啦~' : '这句太难记住啦~')
+      const job = {
+        id: `mem_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        player: username,
+        text: memoryText,
+        original: raw,
+        recent: recentChatSnippet(6),
+        createdAt: now(),
+        source: 'player',
+        attempts: 0
+      }
+      enqueueMemoryJob(job)
+      sendDirectReply(username, '收到啦，我整理一下~')
       return
     }
     const allowed = canProceed(username)
@@ -1405,6 +1622,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   registerCleanup && registerCleanup(() => { try { bot.off('chat', onChat) } catch {} ; if (ctrl.abort) { try { ctrl.abort.abort() } catch {} } })
   registerCleanup && registerCleanup(() => { try { bot.off('chat', onChatCapture) } catch {} })
   registerCleanup && registerCleanup(() => { try { bot.off('message', onMessage) } catch {} })
+
+  processMemoryQueue().catch(() => {})
 
   // Terminal controls: .ai ...
   function onCli (payload) {

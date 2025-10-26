@@ -8,6 +8,7 @@ let cullInterval = null
 let miningAbort = false
 
 const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
+const { Vec3 } = require('vec3')
 
 function install (bot, { log, on, registerCleanup }) {
   const pvp = require('./pvp')
@@ -2841,6 +2842,188 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(`已放置 ${item} x${placed.length}`)
   }
 
+  async function light_area (args = {}) {
+    if (!bot.entity || !bot.entity.position) return fail('未就绪')
+    if (!ensurePathfinder()) return fail('无寻路')
+    if (isMainHandLocked(bot)) return fail('主手被锁定，无法放置火把')
+
+    const radiusRaw = parseInt(String(args.radius ?? 8), 10)
+    const spacingRaw = parseInt(String(args.spacing ?? 6), 10)
+    const thresholdRaw = parseInt(String(args.lightThreshold ?? 8), 10)
+    const maxRaw = args.max != null ? parseInt(String(args.max), 10) : null
+    const radius = Math.max(2, Number.isFinite(radiusRaw) ? radiusRaw : 8)
+    const spacing = Math.max(3, Number.isFinite(spacingRaw) ? spacingRaw : 6)
+    const lightThreshold = Math.min(14, Math.max(0, Number.isFinite(thresholdRaw) ? thresholdRaw : 8))
+
+    const totalTorches = countItemByName('torch')
+    if (totalTorches <= 0) return fail('没有火把')
+    const maxTorches = maxRaw != null && Number.isFinite(maxRaw) && maxRaw > 0 ? Math.min(maxRaw, totalTorches) : totalTorches
+
+    const origin = bot.entity.position.clone()
+    const originFloor = new Vec3(Math.floor(origin.x), Math.floor(origin.y), Math.floor(origin.z))
+
+    const { Movements, goals } = pathfinderPkg
+    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const moveProfile = new Movements(bot, mcData)
+    moveProfile.canDig = false
+    moveProfile.allowSprinting = true
+    try { moveProfile.allowParkour = false } catch {}
+    try { moveProfile.allow1by1towers = false } catch {}
+    bot.pathfinder.setMovements(moveProfile)
+
+    const replaceables = new Set(['air', 'cave_air', 'void_air', 'tall_grass', 'short_grass', 'grass', 'fern', 'large_fern', 'seagrass', 'dead_bush', 'snow'])
+
+    function isSolidSupport (block) {
+      try {
+        if (!block) return false
+        const name = String(block.name || '').toLowerCase()
+        if (!name || name === 'air') return false
+        if (name.includes('water') || name.includes('lava') || name.includes('bubble_column') || name.includes('fire')) return false
+        if (block.boundingBox && block.boundingBox !== 'block') return false
+        return true
+      } catch { return false }
+    }
+
+    function isReplaceable (block) {
+      try { return replaceables.has(String(block?.name || 'air').toLowerCase()) } catch { return false }
+    }
+
+    function resolveBase (x, z) {
+      const startY = Math.floor(origin.y)
+      for (let dy = 2; dy >= -4; dy--) {
+        const pos = new Vec3(x, startY + dy, z)
+        const base = bot.blockAt(pos)
+        if (!isSolidSupport(base)) continue
+        const abovePos = pos.offset(0, 1, 0)
+        if (Math.abs(abovePos.y - originFloor.y) > 3) continue
+        const above = bot.blockAt(abovePos)
+        if (!isReplaceable(above)) continue
+        return { base, above }
+      }
+      return null
+    }
+
+    async function moveNear (target) {
+      const center = target.offset(0.5, 0, 0.5)
+      bot.pathfinder.setGoal(new goals.GoalNear(center.x, center.y, center.z, 1.4), true)
+      const start = Date.now()
+      let best = Infinity
+      let bestAt = start
+      while (Date.now() - start < 5000) {
+        await wait(100)
+        const here = bot.entity?.position
+        if (!here) continue
+        const d = here.distanceTo(center)
+        if (d <= 1.6) break
+        if (d < best - 0.05) {
+          best = d
+          bestAt = Date.now()
+        } else if (Date.now() - bestAt > 1500) {
+          break
+        }
+      }
+      try { bot.pathfinder.setGoal(null) } catch {}
+      try { bot.clearControlStates() } catch {}
+      await wait(60)
+      const here = bot.entity?.position
+      if (!here) return false
+      return here.distanceTo(center) <= 1.8
+    }
+
+    const rawCandidates = []
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        const x = originFloor.x + dx
+        const z = originFloor.z + dz
+        const slot = resolveBase(x, z)
+        if (!slot) continue
+        const topName = String(slot.above?.name || 'air').toLowerCase()
+        if (topName.includes('torch')) continue
+        const brightness = Math.max(slot.above?.light || 0, slot.above?.skyLight || 0)
+        if (brightness >= lightThreshold) continue
+        const dist = slot.base.position.distanceTo(origin)
+        rawCandidates.push({ base: slot.base, above: slot.above, brightness, dist })
+      }
+    }
+
+    if (!rawCandidates.length) return ok('范围内已经足够明亮~', { placed: 0, radius })
+
+    rawCandidates.sort((a, b) => {
+      if (a.brightness !== b.brightness) return a.brightness - b.brightness
+      return a.dist - b.dist
+    })
+
+    const selected = []
+    function farFromExisting (pos) {
+      for (const sel of selected) {
+        const dx = sel.x - pos.x
+        const dz = sel.z - pos.z
+        if (Math.sqrt(dx * dx + dz * dz) < spacing) return false
+      }
+      return true
+    }
+
+    for (const cand of rawCandidates) {
+      const pos = cand.base.position
+      if (!farFromExisting(pos)) continue
+      selected.push(pos.clone())
+      if (selected.length >= maxTorches) break
+    }
+
+    if (!selected.length) return ok('附近亮度已经达标了~', { placed: 0, radius })
+
+    let placed = 0
+
+    const getTorchItem = () => {
+      try { return (bot.inventory?.items() || []).find(it => String(it.name || '').toLowerCase() === 'torch') || null } catch { return null }
+    }
+
+    for (const pos of selected) {
+      if (placed >= maxTorches) break
+      const slot = resolveBase(pos.x, pos.z)
+      if (!slot) continue
+      if (!getTorchItem()) break
+      if (!await moveNear(slot.base.position)) continue
+      const above = bot.blockAt(slot.base.position.offset(0, 1, 0))
+      if (!isReplaceable(above)) continue
+      const brightness = Math.max(above?.light || 0, above?.skyLight || 0)
+      if (brightness >= lightThreshold) continue
+      const torch = getTorchItem()
+      if (!torch) break
+      try {
+        await assertCanEquipHand(bot, 'torch')
+        await bot.equip(torch, 'hand')
+      } catch {
+        continue
+      }
+      try {
+        await bot.placeBlock(slot.base, new Vec3(0, 1, 0))
+        placed++
+        await wait(150)
+      } catch {}
+    }
+
+    if (args.returnToOrigin !== false) {
+      try {
+        bot.pathfinder.setMovements(moveProfile)
+        bot.pathfinder.setGoal(new goals.GoalNear(origin.x, origin.y, origin.z, 1.5), true)
+        const until = Date.now() + 4000
+        while (Date.now() < until) {
+          await wait(120)
+          const here = bot.entity?.position
+          if (!here) break
+          if (here.distanceTo(origin) <= 1.6) break
+        }
+      } catch {}
+      try { bot.pathfinder.setGoal(null) } catch {}
+    } else {
+      try { bot.pathfinder.setGoal(null) } catch {}
+    }
+
+    if (placed === 0) return ok('没有需要补光的地方~', { placed: 0, radius })
+    return ok(`已放置 ${placed} 个火把`, { placed, radius })
+  }
+
   // --- Start or move to auto fishing ---
   async function autofish (args = {}) {
     const radius = Math.max(3, parseInt(args.radius || '10', 10))
@@ -3196,7 +3379,7 @@ function install (bot, { log, on, registerCleanup }) {
     return ok(msg, { summary: res.summary || '', broadcast: res.broadcast || null })
   }
 
-  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, iterate_feedback, sort_chests }
+  const registry = { goto, goto_block, follow_player, reset, stop, stop_all, say, hunt_player, defend_area, defend_player, equip, toss, break_blocks, place_blocks, light_area, collect, pickup, gather, harvest, feed_animals, cull_hostiles, mount_near, mount_player, dismount, flee_trap, observe_detail, observe_players, deposit, deposit_all, withdraw, withdraw_all, autofish, mine_ore, write_text, range_attack, skill_start, skill_status, skill_cancel, iterate_feedback, sort_chests }
 
   async function run (tool, args) {
     const fn = registry[tool]
