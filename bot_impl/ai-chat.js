@@ -20,6 +20,18 @@ const observer = require('./agent/observer')
 const memoryStore = require('./memory-store')
 const PROMPT_DIR = path.join(__dirname, 'prompts')
 
+const MEMORY_REWRITE_RULES = [
+  '1. 若请求安全且信息充分，status="ok"，必须返回 instruction（简洁中文指令）、triggers（字符串数组，如player:Ameyaku、keyword:金合欢）、summary（≤20字概括）、tags（字符串数组）、tone（可选）。',
+  '2. 若内容不应记忆，status="reject"并给出 reason（中文）。',
+  '3. 若信息不足需要玩家补充，status="clarify"并给出 question（中文）。',
+  '4. status="ok" 时，如 payload.memory_context.position 存在或请求描述具体地点，必须附加 location 对象 {"x":int,"y":int?,"z":int,"radius":int?,"dim":string?}，坐标使用玩家提供或 context 中的值，半径默认 context.radius 或 50。',
+  '5. status="ok" 时提供 feature（≤40字、snake_case 或简洁短语）描述该地点用途，若存在 location 且记忆描述的是可供访客使用、值得推荐或欢迎他人前往的地点/设施/资源，应输出 greet_suffix（≤40字）表达邀请或提示，除非玩家明确说明不要打招呼；仅规则、安全或纯信息类记忆才省略 greet_suffix。可选 kind（如world、player）。instruction 和 summary 应包含地点/用途信息。',
+  '6. 如描述与已有长期记忆在 instruction、feature 或 location 上重合或冲突，应更新原有内容而非新增重复记忆。',
+  '7. 输出必须是合法 JSON，不能包含额外文本、注释或Markdown。'
+]
+
+const MEMORY_REWRITE_SYSTEM_PROMPT = `你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象描述应写入的长期记忆。规则：\n${MEMORY_REWRITE_RULES.join('\n')}`
+
 function loadPrompt (filename, fallback) {
   try {
     const full = path.join(PROMPT_DIR, filename)
@@ -964,6 +976,57 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return arr
   }
 
+  function normalizeFeature (value) {
+    if (typeof value !== 'string') return ''
+    return normalizeMemoryText(value).slice(0, 48)
+  }
+
+  function normalizedSummaryText (value) {
+    if (typeof value !== 'string') return ''
+    return normalizeMemoryText(value)
+  }
+
+  function locationMatches (existing, incoming) {
+    if (!existing || !incoming) return false
+    const ex = Number(existing.x)
+    const ez = Number(existing.z)
+    const ix = Number(incoming.x)
+    const iz = Number(incoming.z)
+    if (!Number.isFinite(ex) || !Number.isFinite(ez) || !Number.isFinite(ix) || !Number.isFinite(iz)) return false
+    const dimA = typeof existing.dim === 'string' ? existing.dim.toLowerCase() : null
+    const dimB = typeof incoming.dim === 'string' ? incoming.dim.toLowerCase() : null
+    if (dimA && dimB && dimA !== dimB) return false
+    const dx = ex - ix
+    const dz = ez - iz
+    const distSq = dx * dx + dz * dz
+    const ra = Number.isFinite(existing.radius) ? existing.radius : 16
+    const rb = Number.isFinite(incoming.radius) ? incoming.radius : 16
+    const thresh = Math.max(4, Math.min(64, Math.max(ra, rb)))
+    return distSq <= (thresh * thresh)
+  }
+
+  function findExistingMemoryEntry (entries, normalizedText, extra) {
+    if (!Array.isArray(entries) || entries.length === 0) return null
+    const instructNorm = normalizedText
+    const featureNorm = normalizeFeature(extra?.feature)
+    const summaryNorm = normalizedSummaryText(extra?.summary)
+    const locationNorm = extra?.location ? normalizeLocationValue(extra.location) : null
+    let match = entries.find(e => normalizeMemoryText(e?.instruction || e?.text) === instructNorm)
+    if (match) return match
+    if (!match && featureNorm) {
+      match = entries.find(e => normalizeFeature(e?.feature) === featureNorm)
+      if (match) return match
+    }
+    if (!match && locationNorm) {
+      match = entries.find(e => locationMatches(e?.location, locationNorm))
+      if (match) return match
+    }
+    if (!match && summaryNorm) {
+      match = entries.find(e => normalizedSummaryText(e?.summary || e?.text) === summaryNorm)
+    }
+    return match || null
+  }
+
   function buildWorldMemoryZones () {
     const entries = ensureMemoryEntries()
     const zones = []
@@ -1041,7 +1104,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!normalized) return { ok: false, reason: 'empty' }
     const nowTs = now()
     const boost = Number.isFinite(importance) ? Math.max(1, Math.floor(importance)) : 1
-    let entry = entries.find(e => normalizeMemoryText(e?.text) === normalized)
+    let entry = findExistingMemoryEntry(entries, normalized, extra)
     if (entry) {
       entry.count = Math.max(1, (entry.count || 1) + boost)
       entry.updatedAt = nowTs
@@ -1157,7 +1220,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       existing_triggers: ensureMemoryEntries().map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] })).slice(-10)
     }
     const messages = [
-      { role: 'system', content: '你是Minecraft服务器机器人的记忆整理助手。根据玩家的请求，输出一个JSON对象描述应写入的长期记忆。规则：\n1. 若请求安全且信息充分，status=\"ok\"，必须返回 instruction（简洁中文指令）、triggers（字符串数组，如player:Ameyaku、keyword:金合欢）、summary（≤20字概括）、tags（字符串数组）、tone（可选）。\n2. 若内容不应记忆，status=\"reject\"并给出 reason（中文）。\n3. 若信息不足需要玩家补充，status=\"clarify\"并给出 question（中文）。\n4. status=\"ok\" 时，如 payload.memory_context.position 存在或请求描述具体地点，必须附加 location 对象 {"x":int,"y":int?,"z":int,"radius":int?,"dim":string?}，坐标使用玩家提供或 context 中的值，半径默认 context.radius 或 50。\n5. status=\"ok\" 时提供 feature（≤40字、snake_case 或简洁短语）描述该地点用途，若存在 location 且记忆描述的是可供访客使用、值得推荐或欢迎他人前往的地点/设施/资源，应输出 greet_suffix（≤40字）表达邀请或提示，除非玩家明确说明不要打招呼；仅规则、安全或纯信息类记忆才省略 greet_suffix。可选 kind（如world、player）。instruction 和 summary 应包含地点/用途信息。\n6. 输出必须是合法 JSON，不能包含额外文本、注释或Markdown。' },
+      { role: 'system', content: MEMORY_REWRITE_SYSTEM_PROMPT },
       { role: 'user', content: JSON.stringify(payload) }
     ]
     const body = {
