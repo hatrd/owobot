@@ -2289,6 +2289,10 @@ function install (bot, { log, on, registerCleanup }) {
       hawkLoaded = !!bot.hawkEye
     } catch {}
     let rangedActive = false
+    let rangedStickUntil = 0
+    let handLockToken = null
+    function lockHand () { try { if (bot.state && !bot.state.holdItemLock) { bot.state.holdItemLock = 'ranged_bow'; handLockToken = 'ranged_bow' } } catch {} }
+    function unlockHand () { try { if (handLockToken && bot.state && bot.state.holdItemLock === handLockToken) bot.state.holdItemLock = null; handLockToken = null } catch {} }
 
     function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
     function invGet (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).find(it => String(it.name||'').toLowerCase() === n) || null } catch { return null } }
@@ -2507,6 +2511,10 @@ function install (bot, { log, on, registerCleanup }) {
       hawkLoaded = !!bot.hawkEye
     } catch {}
     let rangedActive = false
+    let rangedStickUntil = 0
+    let handLockToken = null
+    function lockHand () { try { if (bot.state && !bot.state.holdItemLock) { bot.state.holdItemLock = 'ranged_bow'; handLockToken = 'ranged_bow' } } catch {} }
+    function unlockHand () { try { if (handLockToken && bot.state && bot.state.holdItemLock === handLockToken) bot.state.holdItemLock = null; handLockToken = null } catch {} }
 
     // Local helpers (aligned with defend_area)
     function invHas (nm) { try { const n = String(nm).toLowerCase(); return (bot.inventory?.items()||[]).some(it => String(it.name||'').toLowerCase() === n) } catch { return false } }
