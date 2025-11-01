@@ -2680,10 +2680,15 @@ function install (bot, { log, on, registerCleanup }) {
     const until = String(args.until || 'exhaust').toLowerCase()
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
     const match = args.match ? String(args.match).toLowerCase() : null
+    const softAbort = (args.softAbort === true)
 
     const t0 = Date.now()
     let picked = 0
     const invSum = () => { try { return (bot.inventory?.items()||[]).reduce((a,b)=>a+(b.count||0),0) } catch { return 0 } }
+    const shouldAbort = () => {
+      try { return softAbort && bot.state && bot.state.externalBusy } catch { return softAbort }
+    }
+    if (shouldAbort()) return fail('外部任务中止')
     function isItemEntity (e) {
       try {
         if (!e || !e.position) return false
@@ -2734,6 +2739,7 @@ function install (bot, { log, on, registerCleanup }) {
     const limit = Number.isFinite(max) ? max : totalTarget
 
     while (true) {
+      if (shouldAbort()) return fail('外部任务中止')
       if (Number.isFinite(limit) && picked >= limit) break
       if (Date.now() - t0 > timeoutMs) break
       let items = nearbyItems()
@@ -2765,12 +2771,18 @@ function install (bot, { log, on, registerCleanup }) {
       items.sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
       const target = items[0]
       try {
+        if (shouldAbort()) return fail('外部任务中止')
         const before = invSum()
         let success = false
         // Prefer following the entity tightly to ensure collision
         try { bot.pathfinder.setGoal(new goals.GoalFollow(target, 0.35), true) } catch {}
         const untilArrive = Date.now() + 6000
         while (Date.now() < untilArrive) {
+          if (shouldAbort()) {
+            try { bot.pathfinder.setGoal(null) } catch {}
+            try { bot.clearControlStates() } catch {}
+            return fail('外部任务中止')
+          }
           await wait(80)
           const cur = bot.entities?.[target.id]
           if (!cur) { success = true; break } // picked or despawned

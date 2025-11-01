@@ -255,6 +255,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { if (!bot.entity || !bot.entity.position) return true } catch { return true }
     try { if (bot.isSleeping) return true } catch {}
     try { if (state.externalBusy) return true } catch {}
+    try {
+      const cur = state?.currentTask?.name
+      if (cur && String(cur).toLowerCase() !== 'auto_plant') return true
+    } catch {}
     try { if (bot.pathfinder && bot.pathfinder.goal) return true } catch {}
     return false
   }
@@ -284,7 +288,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             const targetName = drop.name
             if (!targetName) continue
             const maxArg = maxLimit != null ? Math.max(1, maxLimit - pickedCount) : undefined
-            const pickupArgs = { names: [targetName], radius, timeoutMs: timeout, includeNew: true }
+            const pickupArgs = { names: [targetName], radius, timeoutMs: timeout, includeNew: true, softAbort: true }
             if (typeof maxArg === 'number') pickupArgs.max = maxArg
             if (cfg.debug) L.debug('pickup attempt', { drop, args: pickupArgs })
             try {
