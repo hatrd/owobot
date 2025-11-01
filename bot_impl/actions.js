@@ -1396,12 +1396,41 @@ function install (bot, { log, on, registerCleanup }) {
           if (isFluidName(an) || isFallingBlockName(an)) return false
         }
       } catch {}
+      async function clearRayObstruction () {
+        try {
+          if (!bot.world || typeof bot.world.raycast !== 'function') return false
+          const eye = bot.entity?.position?.offset?.(0, bot.entity?.eyeHeight || 1.62, 0)
+          if (!eye) return false
+          const dst = block.position.offset(0.5, 0.5, 0.5)
+          const span = eye.distanceTo(dst)
+          if (!Number.isFinite(span) || span <= 0.01) return false
+          const dir = dst.minus(eye).normalize()
+          const hit = bot.world.raycast(eye, dir, Math.ceil(span) + 1)
+          if (!hit || !hit.position) return false
+          const hp = hit.position
+          if (hp.x === block.position.x && hp.y === block.position.y && hp.z === block.position.z) return false
+          const cover = bot.blockAt(hp)
+          if (!cover || cover.type === 0 || cover.diggable === false) return false
+          try { await toolSel.ensureBestToolForBlock(bot, cover) } catch {}
+          try { await bot.lookAt(cover.position.offset(0.5, 0.5, 0.5), true) } catch {}
+          try {
+            await bot.dig(cover, 'raycast')
+          } catch (err) {
+            const text = String(err?.message || err)
+            if (/not in view|too far|not diggable/i.test(text)) return false
+            throw err
+          }
+          await wait(200)
+          return true
+        } catch { return false }
+      }
+
       try { await toolSel.ensureBestToolForBlock(bot, block) } catch {}
       let digged = false
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           await bot.lookAt(block.position.offset(0.5, 0.5, 0.5), true)
-          await bot.dig(block)
+          await bot.dig(block, 'raycast')
           digged = true
           break
         } catch (e) {
@@ -1411,6 +1440,14 @@ function install (bot, { log, on, registerCleanup }) {
             block = bot.blockAt(p)
             if (!block || !matches(block)) return false
             continue
+          }
+          if (/not in view/i.test(msg)) {
+            const cleared = await clearRayObstruction()
+            block = bot.blockAt(p)
+            if (!block || !matches(block)) return false
+            if (cleared) { await wait(120); continue }
+            chopLog.debug('chop:blocked-ray', { target: `${p.x},${p.y},${p.z}` })
+            return 'blocked'
           }
           if (/out of reach|too far/i.test(msg)) { chopLog.debug('chop:dig-out-of-reach', { target: `${p.x},${p.y},${p.z}` }) ; return 'unreachable' }
           return false
@@ -1638,6 +1675,14 @@ function install (bot, { log, on, registerCleanup }) {
           } else {
             chopLog.debug('chop:skip-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, reason })
           }
+          continue
+        } else if (result === 'blocked') {
+          skipKeys.set(posKey(candidate), { time: Date.now(), reason: 'blocked' })
+          chopLog.debug('chop:skip-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, reason: 'blocked' })
+          continue
+        } else {
+          skipKeys.set(posKey(candidate), { time: Date.now(), reason: 'failed' })
+          chopLog.debug('chop:skip-target', { target: `${candidate.x},${candidate.y},${candidate.z}`, reason: 'failed' })
           continue
         }
       }
