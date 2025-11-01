@@ -3269,8 +3269,12 @@ function install (bot, { log, on, registerCleanup }) {
       const origin = bot.entity.position.clone()
       const originFloor = new Vec3(Math.floor(origin.x), Math.floor(origin.y), Math.floor(origin.z))
       let aborted = false
-      const stopHandler = () => { aborted = true }
-      try { bot.once('agent:stop_all', stopHandler) } catch {}
+      const stopHandler = () => {
+        aborted = true
+        try { bot.pathfinder?.setGoal(null) } catch {}
+        try { bot.clearControlStates() } catch {}
+      }
+      try { bot.on('agent:stop_all', stopHandler) } catch {}
 
       const { Movements, goals } = pathfinderPkg
       const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -3382,30 +3386,55 @@ function install (bot, { log, on, registerCleanup }) {
         return here.distanceTo(center) <= 1.8
       }
 
-      const minX = originFloor.x - radius
-      const maxX = originFloor.x + radius
-      const minZ = originFloor.z - radius
-      const maxZ = originFloor.z + radius
       const candidates = []
+      const radiusSq = radius * radius
+      const visited = new Set()
+      const addCandidate = (x, z) => {
+        if (shouldAbort()) return
+        const dx = x - originFloor.x
+        const dz = z - originFloor.z
+        if ((dx * dx + dz * dz) > radiusSq) return
+        const key = `${x},${z}`
+        if (visited.has(key)) return
+        visited.add(key)
+        if (!isAligned(x, originFloor.x) || !isAligned(z, originFloor.z)) return
+        const slot = resolveBase(x, z)
+        if (!slot) return
+        const basePos = slot.base.position
+        if (torchNearby(basePos)) return
+        candidates.push(slot)
+      }
 
-      for (let x = minX; x <= maxX; x++) {
-        if (shouldAbort()) break
-        if (!isAligned(x, originFloor.x)) continue
-        for (let z = minZ; z <= maxZ; z++) {
-          if (shouldAbort()) break
-          if (!isAligned(z, originFloor.z)) continue
-          const slot = resolveBase(x, z)
-          if (!slot) continue
-          const basePos = slot.base.position
-          if (torchNearby(basePos)) continue
-          candidates.push(slot)
+      addCandidate(originFloor.x, originFloor.z)
+      const dirs = [
+        [GRID_STEP, 0],
+        [0, GRID_STEP],
+        [-GRID_STEP, 0],
+        [0, -GRID_STEP]
+      ]
+      let segLen = 1
+      let cx = originFloor.x
+      let cz = originFloor.z
+      const maxLayers = Math.ceil(radius / GRID_STEP) + 2
+      while (!shouldAbort()) {
+        let placedLayer = false
+        for (let dirIndex = 0; dirIndex < dirs.length; dirIndex++) {
+          const [dx, dz] = dirs[dirIndex]
+          const steps = segLen
+          for (let step = 0; step < steps; step++) {
+            cx += dx
+            cz += dz
+            addCandidate(cx, cz)
+            placedLayer = true
+          }
+          if (dirIndex % 2 === 1) segLen++
         }
+        if (segLen > maxLayers * 2) break
+        if (!placedLayer) break
       }
 
       if (shouldAbort()) return fail('外部任务中止')
       if (!candidates.length) return ok('附近没有需要补光的位置~', { placed: 0, radius })
-
-      candidates.sort((a, b) => origin.distanceTo(a.base.position) - origin.distanceTo(b.base.position))
 
       const placements = []
       let placed = 0
@@ -3450,7 +3479,7 @@ function install (bot, { log, on, registerCleanup }) {
         try {
           await bot.placeBlock(current.base, new Vec3(0, 1, 0))
           placed++
-          plannedTorches.push(basePos.clone())
+          plannedTorches.push(basePos.clone ? basePos.clone() : new Vec3(basePos.x, basePos.y, basePos.z))
           placements.push(basePos.offset(0, 1, 0))
           await wait(150)
         } catch {}
@@ -3477,6 +3506,10 @@ function install (bot, { log, on, registerCleanup }) {
       if (placed === 0) return ok('附近没有需要补光的位置~', { placed: 0, radius })
       return ok(`已放置 ${placed} 个火把`, { placed, radius, torches: placements.map(p => ({ x: p.x, y: p.y, z: p.z })) })
     } finally {
+      try {
+        if (typeof bot.off === 'function') bot.off('agent:stop_all', stopHandler)
+        else if (typeof bot.removeListener === 'function') bot.removeListener('agent:stop_all', stopHandler)
+      } catch {}
       try {
         if (lockApplied && bot.state && String(bot.state.holdItemLock || '').toLowerCase() === lockName) bot.state.holdItemLock = null
       } catch {}
