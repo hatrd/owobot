@@ -2088,8 +2088,10 @@ module.exports = { install }
     try {
       const t = String(text || '').toLowerCase()
       const tCN = String(text || '')
-      if (/(stop|cancel|abort)/i.test(t)) return true
-      if (/停止|停下|别动|取消|终止|不要.*(追|打|攻击)|停止追击|停止攻击|停止清怪/.test(tCN)) return true
+      if (/(don't|do not)\s*reset/.test(t)) return false
+      if (/不要.*重置|别.*重置|不要.*复位|别.*复位/.test(tCN)) return false
+      if (/(stop|cancel|abort|reset)/i.test(t)) return true
+      if (/停止|停下|别动|取消|终止|重置|复位|归位|不要.*(追|打|攻击)|停止追击|停止攻击|停止清怪/.test(tCN)) return true
       return false
     } catch { return false }
   }
