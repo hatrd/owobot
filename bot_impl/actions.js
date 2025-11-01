@@ -2775,11 +2775,17 @@ function install (bot, { log, on, registerCleanup }) {
         const before = invSum()
         let success = false
         // Prefer following the entity tightly to ensure collision
-        try { bot.pathfinder.setGoal(new goals.GoalFollow(target, 0.35), true) } catch {}
+        let followGoal = null
+        try {
+          followGoal = new goals.GoalFollow(target, 0.35)
+          bot.pathfinder.setGoal(followGoal, true)
+        } catch { followGoal = null }
         const untilArrive = Date.now() + 6000
         while (Date.now() < untilArrive) {
           if (shouldAbort()) {
-            try { bot.pathfinder.setGoal(null) } catch {}
+            if (followGoal && bot.pathfinder && bot.pathfinder.goal === followGoal) {
+              try { bot.pathfinder.setGoal(null) } catch {}
+            }
             try { bot.clearControlStates() } catch {}
             return fail('外部任务中止')
           }
@@ -2796,7 +2802,9 @@ function install (bot, { log, on, registerCleanup }) {
           }
           if ((invSum() > before)) { success = true; break }
         }
-        try { bot.pathfinder.setGoal(null) } catch {}
+        if (followGoal && bot.pathfinder && bot.pathfinder.goal === followGoal) {
+          try { bot.pathfinder.setGoal(null) } catch {}
+        }
         try { bot.clearControlStates() } catch {}
         // short settle to let pickups apply
         await wait(150)
