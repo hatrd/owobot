@@ -2695,7 +2695,23 @@ function install (bot, { log, on, registerCleanup }) {
         return false
       } catch { return false }
     }
-    function itemName (e) { try { return String(e?.item?.name || e?.displayName || e?.name || '').toLowerCase() } catch { return '' } }
+    function itemName (e) {
+      try {
+        const drop = (typeof e?.getDroppedItem === 'function') ? e.getDroppedItem() : null
+        if (drop) {
+          if (drop.name) return String(drop.name).toLowerCase()
+          const type = typeof drop.type === 'number' ? drop.type : (typeof drop.id === 'number' ? drop.id : null)
+          if (type != null) {
+            try {
+              const info = mcData?.items?.[type]
+              if (info?.name) return String(info.name).toLowerCase()
+            } catch {}
+          }
+        }
+        const direct = e?.item?.name || e?.displayName || e?.name
+        return direct ? String(direct).toLowerCase() : ''
+      } catch { return '' }
+    }
     function want (e) {
       const n = itemName(e)
       if (names && n) return names.includes(n)

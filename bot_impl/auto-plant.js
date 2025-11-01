@@ -6,7 +6,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[PLANT]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[PLANT]', ...a) }
 
   const S = state.autoPlant = state.autoPlant || {}
-  const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 3000, radius: 6, maxPerTick: 4, spacing: 3 }, S.cfg || {})
+  const cfg = S.cfg = Object.assign({
+    enabled: true,
+    tickMs: 3000,
+    radius: 6,
+    maxPerTick: 4,
+    spacing: 3,
+    pickupRadius: 50,
+    pickupMax: 24,
+    pickupTimeoutMs: 4000,
+    debug: false
+  }, S.cfg || {})
   const MIN_SPACING = new Map([
     ['oak_sapling', 2],
     ['birch_sapling', 2],
@@ -20,11 +30,96 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const MIN_SPACING_FALLBACK = 2
 
+  function isSaplingName (name) {
+    if (!name) return false
+    const key = String(name).toLowerCase()
+    return key.endsWith('_sapling') || key === 'mangrove_propagule'
+  }
+
+  function isLogName (name) {
+    if (!name) return false
+    const key = String(name).toLowerCase()
+    if (key.endsWith('_log') || key.endsWith('_stem') || key.endsWith('_hyphae')) return true
+    if (key.endsWith('_wood')) return true
+    return false
+  }
+
+  function itemNameByType (type) {
+    if (typeof type !== 'number') return ''
+    try {
+      const mcData = getMcData()
+      const info = bot.registry?.items?.[type] || mcData?.items?.[type]
+      if (!info) return ''
+      const name = info.name || info.displayName
+      return name ? String(name).toLowerCase() : ''
+    } catch { return '' }
+  }
+
   function spacingFor (name) {
     if (!name) return Math.max(cfg.spacing, MIN_SPACING_FALLBACK)
     const key = String(name).toLowerCase()
     if (MIN_SPACING.has(key)) return Math.max(cfg.spacing, MIN_SPACING.get(key))
     return Math.max(cfg.spacing, MIN_SPACING_FALLBACK)
+  }
+  function unpackDrop (ent, origin) {
+    try {
+      if (!ent) return { name: '', type: null, count: 0, distance: null }
+      if (typeof ent.getDroppedItem === 'function') {
+        const drop = ent.getDroppedItem()
+        if (drop) {
+          const type = drop.type || (typeof drop.id === 'number' ? drop.id : null)
+          const name = drop.name ? String(drop.name).toLowerCase() : itemNameByType(type)
+          const count = typeof drop.count === 'number' ? drop.count : (typeof drop.itemCount === 'number' ? drop.itemCount : 1)
+          const distance = origin && ent.position ? origin.distanceTo(ent.position) : null
+          if (name) return { name, type, count, distance }
+          return { name: '', type, count, distance }
+        }
+      }
+      const item = ent.item
+      if (item && item.name) {
+        const distance = origin && ent.position ? origin.distanceTo(ent.position) : null
+        return { name: String(item.name).toLowerCase(), type: item.type || null, count: item.count || 1, distance }
+      }
+      const direct = ent.displayName || ent.name
+      if (direct) {
+        const distance = origin && ent.position ? origin.distanceTo(ent.position) : null
+        return { name: String(direct).toLowerCase(), type: null, count: 1, distance }
+      }
+    } catch {}
+    return { name: '', type: null, count: 0, distance: null }
+  }
+
+  function findDrops (radius, predicate) {
+    try {
+      const me = bot.entity?.position
+      if (!me) return []
+      const limit = Math.max(1, radius || 1)
+      const entities = Object.values(bot.entities || {})
+      const drops = []
+      for (const ent of entities) {
+        if (!ent || !ent.position || ent === bot.entity) continue
+        const { name, type, count, distance } = unpackDrop(ent, me)
+        if (!name && type == null) continue
+        if (typeof predicate === 'function' && !predicate(name, type)) continue
+        if (me.distanceTo(ent.position) > limit) continue
+        drops.push({ id: ent.id, name, type, count, distance: distance ?? me.distanceTo(ent.position) })
+      }
+      return drops
+    } catch { return [] }
+  }
+  function findSaplingDrops (radius) {
+    return findDrops(radius, (name, type) => {
+      if (isSaplingName(name)) return true
+      const byType = itemNameByType(type)
+      return isSaplingName(byType)
+    })
+  }
+  function findLogDrops (radius) {
+    return findDrops(radius, (name, type) => {
+      if (isLogName(name)) return true
+      const byType = itemNameByType(type)
+      return isLogName(byType)
+    })
   }
   let running = false
   let timer = null
@@ -167,12 +262,46 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function tick () {
     if (!cfg.enabled || running) return
     if (busy()) { if (cfg.debug) L.debug('skip: busy') ; return }
-    const saplings = listSaplings()
-    if (!saplings.length) { if (cfg.debug) L.debug('skip: no saplings') ; return }
     running = true
     try {
       try { if (state) state.currentTask = { name: 'auto_plant', source: 'auto', startedAt: Date.now() } } catch {}
       const actions = require('./actions').install(bot, { log })
+      if (!state.externalBusy) {
+        const saplingDrops = findSaplingDrops(cfg.pickupRadius)
+        const logDrops = findLogDrops(cfg.pickupRadius)
+        const combined = saplingDrops.concat(logDrops)
+        if (cfg.debug) L.debug('pickup scan', { saplings: saplingDrops.length, logs: logDrops.length, combined })
+        if (combined.length > 0) {
+          combined.sort((a, b) => (a.distance || 0) - (b.distance || 0))
+          const radius = Math.max(2, cfg.pickupRadius || 50)
+          const timeout = Math.max(1500, cfg.pickupTimeoutMs || 4000)
+          const parsedMaxRaw = typeof cfg.pickupMax === 'number' ? cfg.pickupMax : parseInt(cfg.pickupMax || '', 10)
+          const maxLimit = Number.isFinite(parsedMaxRaw) && parsedMaxRaw > 0 ? parsedMaxRaw : null
+          let pickedCount = 0
+          for (const drop of combined) {
+            if (state.externalBusy) break
+            if (maxLimit != null && pickedCount >= maxLimit) break
+            const targetName = drop.name
+            if (!targetName) continue
+            const maxArg = maxLimit != null ? Math.max(1, maxLimit - pickedCount) : undefined
+            const pickupArgs = { names: [targetName], radius, timeoutMs: timeout, includeNew: true }
+            if (typeof maxArg === 'number') pickupArgs.max = maxArg
+            if (cfg.debug) L.debug('pickup attempt', { drop, args: pickupArgs })
+            try {
+              const res = await actions.run('pickup', pickupArgs)
+              if (cfg.debug) L.debug('pickup result', { drop, res })
+              if (res?.ok) pickedCount++
+              if (!res?.ok && cfg.debug) L.debug('pickup not ok', { drop, res })
+            } catch (err) {
+              if (cfg.debug) L.debug('pickup error', { drop, err: err?.message || err })
+            }
+          }
+          if (cfg.debug) L.debug('pickup sweep done', { attempted: combined.length, picked: pickedCount })
+        }
+      }
+      if (busy()) { if (cfg.debug) L.debug('skip: busy (post pickup)') ; return }
+      const saplings = listSaplings()
+      if (!saplings.length) { if (cfg.debug) L.debug('skip: no saplings') ; return }
       let planted = 0
       const total = saplings.reduce((a, s) => a + (s.count || 0), 0)
       const burstMax = total >= 16 ? Math.max(cfg.maxPerTick, 6) : cfg.maxPerTick
@@ -223,7 +352,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     switch (sub) {
       case 'on': cfg.enabled = true; console.log('[PLANT] enabled'); break
       case 'off': cfg.enabled = false; console.log('[PLANT] disabled'); break
-      case 'status': console.log('[PLANT] enabled=', cfg.enabled, 'tickMs=', cfg.tickMs, 'radius=', cfg.radius, 'maxPerTick=', cfg.maxPerTick, 'spacing=', cfg.spacing); break
+      case 'status': console.log('[PLANT] enabled=', cfg.enabled, 'tickMs=', cfg.tickMs, 'radius=', cfg.radius, 'maxPerTick=', cfg.maxPerTick, 'spacing=', cfg.spacing, 'pickupRadius=', cfg.pickupRadius, 'pickupMax=', cfg.pickupMax, 'debug=', cfg.debug); break
       case 'interval': cfg.tickMs = Math.max(1500, parseInt(val || '8000', 10)); console.log('[PLANT] tickMs=', cfg.tickMs); try { if (timer) clearInterval(timer) } catch {}; timer = null; start(); break
       case 'radius': cfg.radius = Math.max(2, parseInt(val || '6', 10)); console.log('[PLANT] radius=', cfg.radius); break
       case 'max': cfg.maxPerTick = Math.max(1, parseInt(val || '2', 10)); console.log('[PLANT] maxPerTick=', cfg.maxPerTick); break
@@ -233,7 +362,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         console.log('[PLANT] spacing=', cfg.spacing, '(实际间距≥品种要求)')
         break
       }
-      default: console.log('[PLANT] usage: .autoplant on|off|status|interval ms|radius N|max N|spacing N')
+      case 'debug': {
+        const mode = String(val || '').toLowerCase()
+        cfg.debug = mode === 'on' || mode === '1' || mode === 'true'
+        console.log('[PLANT] debug=', cfg.debug)
+        break
+      }
+      default: console.log('[PLANT] usage: .autoplant on|off|status|interval ms|radius N|max N|spacing N|debug on|off')
     }
   })
 
