@@ -3246,10 +3246,11 @@ function install (bot, { log, on, registerCleanup }) {
     if (isMainHandLocked(bot, 'torch')) return fail('主手被锁定，无法放置火把')
 
     const radiusRaw = parseInt(String(args.radius ?? 32), 10)
+    const spacingRaw = parseInt(String(args.spacing ?? 6), 10)
     const radius = Math.max(2, Number.isFinite(radiusRaw) ? radiusRaw : 32)
+    const gridStep = Math.max(2, Number.isFinite(spacingRaw) ? spacingRaw : 2)
+    const torchCheckRadius = Math.max(1.2, gridStep / 2)
     const maxRaw = args.max != null ? parseInt(String(args.max), 10) : null
-    const GRID_STEP = 8
-    const TORCH_CHECK_RADIUS = 3.5
     const VERTICAL_SCAN_UP = 12
     const VERTICAL_SCAN_DOWN = 18
 
@@ -3290,7 +3291,7 @@ function install (bot, { log, on, registerCleanup }) {
 
       const isAligned = (value, center) => {
         const diff = value - center
-        const rem = ((diff % GRID_STEP) + GRID_STEP) % GRID_STEP
+        const rem = ((diff % gridStep) + gridStep) % gridStep
         return rem === 0
       }
 
@@ -3335,8 +3336,8 @@ function install (bot, { log, on, registerCleanup }) {
 
       function torchNearby (basePos) {
         if (shouldAbort()) return true
-        const limit = Math.ceil(TORCH_CHECK_RADIUS)
-        const thresholdSq = TORCH_CHECK_RADIUS * TORCH_CHECK_RADIUS
+        const limit = Math.ceil(torchCheckRadius)
+        const thresholdSq = torchCheckRadius * torchCheckRadius
         for (const planned of plannedTorches) {
           const dx = planned.x - basePos.x
           const dz = planned.z - basePos.z
@@ -3407,15 +3408,15 @@ function install (bot, { log, on, registerCleanup }) {
 
       addCandidate(originFloor.x, originFloor.z)
       const dirs = [
-        [GRID_STEP, 0],
-        [0, GRID_STEP],
-        [-GRID_STEP, 0],
-        [0, -GRID_STEP]
+        [gridStep, 0],
+        [0, gridStep],
+        [-gridStep, 0],
+        [0, -gridStep]
       ]
       let segLen = 1
       let cx = originFloor.x
       let cz = originFloor.z
-      const maxLayers = Math.ceil(radius / GRID_STEP) + 2
+      const maxLayers = Math.ceil(radius / gridStep) + 2
       while (!shouldAbort()) {
         let placedLayer = false
         for (let dirIndex = 0; dirIndex < dirs.length; dirIndex++) {
