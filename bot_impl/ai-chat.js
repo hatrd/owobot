@@ -7,7 +7,7 @@ const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
 
 const PULSE_MAX_MESSAGES = 20
-const PULSE_INTERVAL_MS = 8 * 60 * 1000
+const PULSE_INTERVAL_MS = 3 * 60 * 1000
 const PULSE_CHECK_MS = 60 * 1000
 const PULSE_RECENT_REPLY_SUPPRESS_MS = 2 * 60 * 1000
 const PULSE_REPEAT_SUPPRESS_MS = 6 * 60 * 1000
