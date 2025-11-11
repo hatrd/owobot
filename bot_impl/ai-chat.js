@@ -370,7 +370,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   function activateSession (username, reason) {
-    if (!pulseEnabled()) return
     if (!username) return
     cleanupActiveSessions()
     const sessions = ensureActiveSessions()
@@ -2087,41 +2086,40 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
 
-  async function handleChat (username, message) {
-    const raw = String(message || '')
-    const m = raw.trim()
+  function shouldAutoFollowup (username, text) {
+    const trimmed = String(text || '').trim()
+    if (!trimmed) return false
+    if (!state.ai.enabled) return false
+    if (!username || username === bot.username) return false
+    if (!isUserActive(username)) return false
     const trig = triggerWord()
-    // Trigger when the message starts with the 3-letter prefix (no word-boundary required)
+    if (!trig) return true
     const startRe = new RegExp('^' + trig, 'i')
-    if (!startRe.test(m)) return
-    // Strip one or more leading prefix tokens and optional separators (spaces/punctuation)
-    let content = m.replace(new RegExp('^(' + trig + '[:：,，。.!！\\s]*)+', 'i'), '')
-    // Final cleanup of any residual leading punctuation/spaces
-    content = content.replace(/^[:：,，。.!！\s]+/, '')
+    return !startRe.test(trimmed)
+  }
+
+  async function processChatContent (username, content, raw, source) {
     if (!state.ai.enabled) return
-    if (!content) return
-    // Quick dismount (prefer precise tool over full reset)
-    {
-      const t = content
-      if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(t)) {
-        try {
-          const tools = actionsMod.install(bot, { log })
-          const res = await tools.run('dismount', {})
-          sendChatReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), { reason: 'trigger_tool' })
-        } catch {}
-        return
-      }
+    let text = String(content || '').trim()
+    if (!text) return
+    const reasonTag = source === 'followup' ? 'followup' : 'trigger'
+    if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(text)) {
+      try {
+        const tools = actionsMod.install(bot, { log })
+        const res = await tools.run('dismount', {})
+        sendChatReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), { reason: `${reasonTag}_tool` })
+      } catch {}
+      return
     }
-    // Quick stop command handling (hard stop without LLM)
-    if (isStopCommand(content)) {
+    if (isStopCommand(text)) {
       try {
         const tools = actionsMod.install(bot, { log })
         await tools.run('reset', {})
       } catch {}
-      sendChatReply(username, '好的', { reason: 'trigger_stop' })
+      sendChatReply(username, '好的', { reason: `${reasonTag}_stop` })
       return
     }
-    const memoryText = extractMemoryCommand(content)
+    const memoryText = extractMemoryCommand(text)
     if (memoryText) {
       if (!state.ai?.key) {
         sendChatReply(username, '现在记不住呀，AI 没开~', { reason: 'memory_key' })
@@ -2141,11 +2139,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             const pos = (() => {
               const entityPos = bot.entity?.position
               if (!entityPos) return null
-              return {
-                x: Math.round(entityPos.x),
-                y: Math.round(entityPos.y),
-                z: Math.round(entityPos.z)
-              }
+              return { x: Math.round(entityPos.x), y: Math.round(entityPos.y), z: Math.round(entityPos.z) }
             })()
             const dim = (() => {
               try {
@@ -2155,12 +2149,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
               return null
             })()
             if (!pos) return null
-            return {
-              position: pos,
-              dimension: dim,
-              radius: 50,
-              featureHint: memoryText
-            }
+            return { position: pos, dimension: dim, radius: 50, featureHint: memoryText }
           } catch { return null }
         })()
       }
@@ -2175,35 +2164,27 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       return
     }
-    try {
-      state.aiPulse.lastFlushAt = now()
-    } catch {}
-
-    // Quick answers for info questions to avoid unnecessary tools
-    const intent = classifyIntent(content)
+    try { state.aiPulse.lastFlushAt = now() } catch {}
+    const intent = classifyIntent(text)
     if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
-
-    // No chat-side keyword → tool mappings (policy). Let LLM decide tools.
     const acted = await (async () => { return false })()
     if (acted) return
-
     if (ctrl.busy) {
       queuePending(username, raw)
       return
     }
-
     ctrl.busy = true
     try {
-      if (state.ai.trace && log?.info) log.info('ask <-', content)
-      const reply = await callAI(username, content, intent)
+      if (state.ai.trace && log?.info) log.info('ask <-', text)
+      const reply = await callAI(username, text, intent)
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
-        sendChatReply(username, reply, { reason: 'llm_reply' })
+        const replyReason = source === 'followup' ? 'llm_followup' : 'llm_reply'
+        sendChatReply(username, reply, { reason: replyReason })
       }
     } catch (e) {
       dlog('ai error:', e?.message || e)
-      // Optional: notify user softly if misconfigured
       if (/key not configured/i.test(String(e))) {
         sendChatReply(username, 'AI未配置', { reason: 'error_key' })
       } else if (/budget/i.test(String(e)) && state.ai.notifyOnBudget) {
@@ -2216,6 +2197,22 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         setTimeout(() => { handleChat(next.username, next.message).catch(() => {}) }, 0)
       }
     }
+  }
+
+  async function handleChat (username, message) {
+    const raw = String(message || '')
+    const trimmed = raw.trim()
+    const trig = triggerWord()
+    const startRe = new RegExp('^' + trig, 'i')
+    if (!startRe.test(trimmed)) {
+      if (shouldAutoFollowup(username, trimmed)) {
+        await processChatContent(username, trimmed, raw, 'followup')
+      }
+      return
+    }
+    let content = trimmed.replace(new RegExp('^(' + trig + '[:：,，。.!！\s]*)+', 'i'), '')
+    content = content.replace(/^[:：,，。.!！\s]+/, '')
+    await processChatContent(username, content, raw, 'trigger')
   }
 
   const onChat = (username, message) => { handleChat(username, message).catch(() => {}) }

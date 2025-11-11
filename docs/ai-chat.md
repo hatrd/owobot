@@ -28,6 +28,7 @@ This document explains how `bot_impl/ai-chat.js` wires the trigger-based DeepSee
 - **`activateSession(username, reason)`:** Stores `{expiresAt, reason, timer, awaiting}` in `state.aiPulse.activeUsers`. Any new reply clears pending follow-up timers.
 - **`scheduleActiveFollowup(username)`:** When the active player speaks again, enqueue a delayed (5 s) proactive check. If the player keeps talking before the timer fires, it re-schedules to avoid interruption.
 - **Flush behavior:** When the timer fires, `maybeFlush('active', {username})` immediately asks the pulse system to respond using the full transcript (not just the latest line). Successful proactive replies re-arm the session; failures reschedule if needed.
+- **Trigger follow-ups (no pulse needed):** Even with proactive pulses disabled, active sessions enable automatic replies to the same player’s subsequent chats (without trigger words) for 1 minute by directly routing the new message back through the main dialogue stack.
 
 ## 4. Transcript & Context Builders
 - **`pushRecentChatEntry`:** Canonical helper invoked by player capture (`onChatCapture`) and bot chat (`recordBotChat` / `sendDirectReply`). Guarantees monotonically increasing `seq` IDs for later diffing.
