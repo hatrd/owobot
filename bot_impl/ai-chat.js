@@ -267,6 +267,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     state.aiStats.perUser.set(username, recent)
   }
 
+  function traceChat (...args) {
+    if (state.ai?.trace && log?.info) {
+      try { log.info(...args) } catch {}
+    }
+  }
+
   function pulseEnabled () {
     return Boolean(state.aiPulse?.enabled && state.ai.enabled && state.ai.key)
   }
@@ -2088,10 +2094,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function shouldAutoFollowup (username, text) {
     const trimmed = String(text || '').trim()
-    if (!trimmed) return false
-    if (!state.ai.enabled) return false
-    if (!username || username === bot.username) return false
-    if (!isUserActive(username)) return false
+    if (!trimmed) { traceChat('[chat] followup skip empty', { username }); return false }
+    if (!state.ai.enabled) { traceChat('[chat] followup ai-disabled', { username }); return false }
+    if (!username || username === bot.username) { traceChat('[chat] followup self/unknown', { username }); return false }
+    if (!isUserActive(username)) { traceChat('[chat] followup inactive', { username }); return false }
     const trig = triggerWord()
     if (!trig) return true
     const startRe = new RegExp('^' + trig, 'i')
@@ -2102,6 +2108,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!state.ai.enabled) return
     let text = String(content || '').trim()
     if (!text) return
+    traceChat('[chat] process', { source, username, text })
     const reasonTag = source === 'followup' ? 'followup' : 'trigger'
     if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(text)) {
       try {
@@ -2206,12 +2213,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const startRe = new RegExp('^' + trig, 'i')
     if (!startRe.test(trimmed)) {
       if (shouldAutoFollowup(username, trimmed)) {
+        traceChat('[chat] followup trigger', { username, text: trimmed })
         await processChatContent(username, trimmed, raw, 'followup')
+      } else {
+        traceChat('[chat] ignore non-trigger', { username, text: trimmed })
       }
       return
     }
     let content = trimmed.replace(new RegExp('^(' + trig + '[:：,，。.!！\s]*)+', 'i'), '')
     content = content.replace(/^[:：,，。.!！\s]+/, '')
+    traceChat('[chat] trigger matched', { username, text: content })
     await processChatContent(username, content, raw, 'trigger')
   }
 
