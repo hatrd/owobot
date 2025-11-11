@@ -11,6 +11,9 @@ const PULSE_INTERVAL_MS = 3 * 60 * 1000
 const PULSE_CHECK_MS = 60 * 1000
 const PULSE_RECENT_REPLY_SUPPRESS_MS = 2 * 60 * 1000
 const PULSE_REPEAT_SUPPRESS_MS = 6 * 60 * 1000
+const PULSE_PENDING_EXPIRE_MS = 5 * 60 * 1000
+const ACTIVE_CHAT_WINDOW_MS = 60 * 1000
+const ACTIVE_FOLLOW_DELAY_MS = 5 * 1000
 
 const fs = require('fs')
 const path = require('path')
@@ -86,11 +89,27 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     memory: { ...DEF_CTX.memory, ...(state.ai.context.memory || {}) }
   }
 
-  state.aiPulse = state.aiPulse || { enabled: true, buffer: [], lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
-  if (!Array.isArray(state.aiPulse.buffer)) state.aiPulse.buffer = []
+  state.aiPulse = state.aiPulse || { enabled: false, lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
   if (!Number.isFinite(state.aiPulse.lastFlushAt)) state.aiPulse.lastFlushAt = Date.now()
   if (!(state.aiPulse.recentKeys instanceof Map)) state.aiPulse.recentKeys = new Map()
   if (!Number.isFinite(state.aiPulse.lastMessageAt)) state.aiPulse.lastMessageAt = 0
+  if (!(state.aiPulse.pendingByUser instanceof Map)) {
+    const restored = new Map()
+    if (state.aiPulse.pendingByUser && typeof state.aiPulse.pendingByUser === 'object') {
+      for (const [name, info] of Object.entries(state.aiPulse.pendingByUser)) {
+        if (!info) continue
+        const count = Number(info.count) || 0
+        const lastAt = Number(info.lastAt) || 0
+        if (count > 0) restored.set(name, { count, lastAt })
+      }
+    }
+    state.aiPulse.pendingByUser = restored
+  }
+  if (!Number.isFinite(state.aiPulse.totalPending)) state.aiPulse.totalPending = 0
+  state.aiPulse.pendingSince = Number.isFinite(state.aiPulse.pendingSince) ? state.aiPulse.pendingSince : null
+  state.aiPulse.pendingLastAt = Number.isFinite(state.aiPulse.pendingLastAt) ? state.aiPulse.pendingLastAt : null
+  if (!Number.isFinite(state.aiPulse.lastSeq)) state.aiPulse.lastSeq = 0
+  if (!(state.aiPulse.activeUsers instanceof Map)) state.aiPulse.activeUsers = new Map()
 
   state.aiExtras = state.aiExtras || { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
@@ -100,7 +119,18 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const persistedMemory = memoryStore.load()
 
   // global recent chat logs
-  state.aiRecent = state.aiRecent || [] // [{t, user, text}]
+  state.aiRecent = Array.isArray(state.aiRecent) ? state.aiRecent : []
+  if (!Number.isFinite(state.aiRecentSeq)) state.aiRecentSeq = 0
+  for (const entry of state.aiRecent) {
+    if (!entry || typeof entry !== 'object') continue
+    if (Number.isFinite(entry.seq)) {
+      state.aiRecentSeq = Math.max(state.aiRecentSeq, entry.seq)
+    } else {
+      state.aiRecentSeq += 1
+      entry.seq = state.aiRecentSeq
+    }
+  }
+  state.aiPulse.lastSeq = state.aiRecentSeq
   state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
   if (!Array.isArray(state.aiLong) || state.aiLong.length === 0) {
     state.aiLong = Array.isArray(persistedMemory.long) ? persistedMemory.long : []
@@ -241,19 +271,240 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return Boolean(state.aiPulse?.enabled && state.ai.enabled && state.ai.key)
   }
 
+  function ensurePendingStore () {
+    if (!(state.aiPulse.pendingByUser instanceof Map)) state.aiPulse.pendingByUser = new Map()
+    return state.aiPulse.pendingByUser
+  }
+
+  function prunePendingStore () {
+    const store = ensurePendingStore()
+    const cutoff = now() - PULSE_PENDING_EXPIRE_MS
+    let total = state.aiPulse.totalPending || 0
+    for (const [name, info] of store.entries()) {
+      if (!info || info.count <= 0 || !Number.isFinite(info.lastAt) || info.lastAt < cutoff) {
+        total -= info?.count || 0
+        store.delete(name)
+      }
+    }
+    if (store.size > 40) {
+      const ordered = [...store.entries()].sort((a, b) => (a[1]?.lastAt || 0) - (b[1]?.lastAt || 0))
+      while (ordered.length > 40) {
+        const [key, info] = ordered.shift()
+        total -= info?.count || 0
+        store.delete(key)
+      }
+    }
+    state.aiPulse.totalPending = Math.max(0, total)
+    if (!state.aiPulse.totalPending) {
+      state.aiPulse.pendingSince = null
+      state.aiPulse.pendingLastAt = null
+    }
+  }
+
+  function clonePendingStore () {
+    const store = ensurePendingStore()
+    const clone = new Map()
+    for (const [name, info] of store.entries()) {
+      if (!info || !info.count) continue
+      clone.set(name, { count: info.count, lastAt: Number(info.lastAt) || now() })
+    }
+    return clone
+  }
+
+  function restorePendingStore (backup) {
+    const store = ensurePendingStore()
+    store.clear()
+    if (!(backup instanceof Map)) {
+      state.aiPulse.totalPending = 0
+      state.aiPulse.pendingSince = null
+      state.aiPulse.pendingLastAt = null
+      return
+    }
+    let total = 0
+    let earliest = null
+    let latest = null
+    for (const [name, info] of backup.entries()) {
+      const count = Number(info?.count) || 0
+      if (count <= 0) continue
+      const lastAt = Number(info.lastAt) || now()
+      store.set(name, { count, lastAt })
+      total += count
+      if (earliest == null || lastAt < earliest) earliest = lastAt
+      if (latest == null || lastAt > latest) latest = lastAt
+    }
+    state.aiPulse.totalPending = total
+    state.aiPulse.pendingSince = total > 0 ? earliest : null
+    state.aiPulse.pendingLastAt = total > 0 ? latest : null
+  }
+
+  function resetPendingStore () {
+    const store = ensurePendingStore()
+    store.clear()
+    state.aiPulse.totalPending = 0
+    state.aiPulse.pendingSince = null
+    state.aiPulse.pendingLastAt = null
+  }
+
+  function pendingCountFor (username) {
+    if (!username) return 0
+    const entry = ensurePendingStore().get(username)
+    return entry ? (entry.count || 0) : 0
+  }
+
+  function ensureActiveSessions () {
+    if (!(state.aiPulse.activeUsers instanceof Map)) state.aiPulse.activeUsers = new Map()
+    return state.aiPulse.activeUsers
+  }
+
+  function cleanupActiveSessions () {
+    const sessions = ensureActiveSessions()
+    const nowTs = now()
+    for (const [name, info] of sessions.entries()) {
+      if (!info || !Number.isFinite(info.expiresAt) || info.expiresAt <= nowTs) {
+        if (info?.timer) {
+          try { clearTimeout(info.timer) } catch {}
+        }
+        sessions.delete(name)
+      }
+    }
+  }
+
+  function activateSession (username, reason) {
+    if (!pulseEnabled()) return
+    if (!username) return
+    cleanupActiveSessions()
+    const sessions = ensureActiveSessions()
+    let entry = sessions.get(username)
+    if (!entry) entry = {}
+    if (entry.timer) {
+      try { clearTimeout(entry.timer) } catch {}
+      entry.timer = null
+    }
+    entry.expiresAt = now() + ACTIVE_CHAT_WINDOW_MS
+    entry.reason = reason || entry.reason || 'trigger'
+    entry.awaiting = false
+    sessions.set(username, entry)
+  }
+
+  function isUserActive (username) {
+    if (!username) return false
+    cleanupActiveSessions()
+    return ensureActiveSessions().has(username)
+  }
+
+  function scheduleActiveFollowup (username) {
+    if (!pulseEnabled()) return
+    if (!username) return
+    cleanupActiveSessions()
+    const sessions = ensureActiveSessions()
+    const entry = sessions.get(username)
+    if (!entry) return
+    if (entry.timer) {
+      try { clearTimeout(entry.timer) } catch {}
+    }
+    entry.timer = setTimeout(() => {
+      entry.timer = null
+      maybeFlush('active', { username })
+    }, ACTIVE_FOLLOW_DELAY_MS)
+    entry.awaiting = true
+    entry.lastMessageAt = now()
+    sessions.set(username, entry)
+  }
+
+  function clearActiveFollowup (username) {
+    if (!username) return
+    const sessions = ensureActiveSessions()
+    const entry = sessions.get(username)
+    if (!entry) return
+    if (entry.timer) {
+      try { clearTimeout(entry.timer) } catch {}
+      entry.timer = null
+    }
+    entry.awaiting = false
+    sessions.set(username, entry)
+  }
+
+  function resetActiveSessions () {
+    const sessions = ensureActiveSessions()
+    for (const [name, info] of sessions.entries()) {
+      if (info?.timer) {
+        try { clearTimeout(info.timer) } catch {}
+      }
+      sessions.delete(name)
+    }
+  }
+
+  function pushRecentChatEntry (username, text, kind = 'player') {
+    const trimmed = String(text || '').trim()
+    if (!trimmed) return null
+    if (!Array.isArray(state.aiRecent)) state.aiRecent = []
+    if (!Number.isFinite(state.aiRecentSeq)) state.aiRecentSeq = 0
+    state.aiRecentSeq += 1
+    const entry = { t: now(), user: username || '??', text: trimmed.slice(0, 160), kind, seq: state.aiRecentSeq }
+    state.aiRecent.push(entry)
+    enforceRecentLimit()
+    return entry
+  }
+
+  function enforceRecentLimit () {
+    const cs = state.ai.context || {}
+    const recentMax = Math.max(20, cs.recentStoreMax || 200)
+    if (state.aiRecent.length <= recentMax) return
+    const overflow = state.aiRecent.splice(0, state.aiRecent.length - recentMax)
+    scheduleOverflowSummary(overflow)
+  }
+
+  function scheduleOverflowSummary (overflow) {
+    if (!overflow || overflow.length < 20) return
+    ;(async () => {
+      try {
+        if (!state.ai?.key) return
+        const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
+        const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
+        const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
+        const url = (state.ai.baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (state.ai.path || DEFAULT_PATH)
+        const body = { model: state.ai.model || DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 60, stream: false }
+        try {
+          const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
+          if (!res.ok) return
+          const data = await res.json()
+          const sum = data?.choices?.[0]?.message?.content?.trim()
+          if (!sum) return
+          state.aiLong.push({ t: Date.now(), summary: sum })
+          if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
+          persistMemoryState()
+          if (state.ai.trace && log?.info) log.info('long summary ->', sum)
+        } catch {}
+      } catch {}
+    })()
+  }
+
+  function recordBotChat (text) {
+    try {
+      pushRecentChatEntry(bot?.username || 'bot', text, 'bot')
+    } catch {}
+  }
+
   function enqueuePulse (username, text) {
     try {
-      if (!state.aiPulse || !state.aiPulse.enabled) return
-      if (!state.ai.enabled) return
+      if (!pulseEnabled()) return
       if (!username || username === bot.username) return
       const trimmed = String(text || '').trim()
       if (!trimmed) return
       const replyStore = state.aiRecentReplies instanceof Map ? state.aiRecentReplies : null
       const lastReplyAt = replyStore ? replyStore.get(username) : null
       if (lastReplyAt && now() - lastReplyAt <= PULSE_RECENT_REPLY_SUPPRESS_MS) return
-      const buf = state.aiPulse.buffer ||= []
-      buf.push({ t: now(), user: username, text: trimmed })
-      if (buf.length > 80) buf.splice(0, buf.length - 80)
+      prunePendingStore()
+      const store = ensurePendingStore()
+      const entry = store.get(username) || { count: 0, lastAt: 0 }
+      entry.count = (entry.count || 0) + 1
+      entry.lastAt = now()
+      store.set(username, entry)
+      const prevTotal = state.aiPulse.totalPending || 0
+      state.aiPulse.totalPending = prevTotal + 1
+      if (!prevTotal) state.aiPulse.pendingSince = entry.lastAt
+      state.aiPulse.pendingLastAt = entry.lastAt
+      if (isUserActive(username)) scheduleActiveFollowup(username)
       maybeFlush('count')
     } catch (e) {
       if (log?.warn) log.warn('pulse enqueue error:', e?.message || e)
@@ -325,59 +576,137 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function sendDirectReply (username, text) {
     const trimmed = String(text || '').trim()
     if (!trimmed) return
-    try { bot.chat(trimmed) } catch {}
+    try {
+      bot.chat(trimmed)
+      recordBotChat(trimmed)
+      if (state.aiPulse && Number.isFinite(state.aiRecentSeq)) state.aiPulse.lastSeq = state.aiRecentSeq
+    } catch {}
     noteRecentReply(username)
     try {
       if (!state.aiPulse) return
-      state.aiPulse.buffer = []
+      resetPendingStore()
       state.aiPulse.lastReason = 'user_reply'
       state.aiPulse.lastFlushAt = now()
       state.aiPulse.lastMessage = null
       state.aiPulse.lastMessageAt = now()
+      clearActiveFollowup(username)
     } catch {}
   }
 
-  function maybeFlush (reason) {
+  function sendChatReply (username, text, opts = {}) {
+    sendDirectReply(username, text)
+    activateSession(username, opts.reason || 'chat')
+  }
+
+  function shouldFlushByCount () {
+    const store = ensurePendingStore()
+    if (!store.size) return false
+    let total = 0
+    let hasSpam = false
+    for (const info of store.values()) {
+      const count = Number(info?.count) || 0
+      if (count >= 2) hasSpam = true
+      total += count
+    }
+    if (total <= 0) return false
+    if (hasSpam) return true
+    const dynamic = Math.min(PULSE_MAX_MESSAGES, Math.max(3, store.size * 2))
+    return total >= dynamic
+  }
+
+  function maybeFlush (reason, options = {}) {
     try {
-      if (!state.aiPulse || !state.aiPulse.enabled) return
-      if (!state.ai.enabled) return
+      if (!pulseEnabled()) return
       if (pulseCtrl.running) return
-      const buf = state.aiPulse.buffer || []
-      if (!buf.length) return
-      const nowTs = now()
-      const elapsed = nowTs - (state.aiPulse.lastFlushAt || 0)
-      if (reason === 'count' && buf.length >= PULSE_MAX_MESSAGES) {
-        flushPulse('count').catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+      prunePendingStore()
+      cleanupActiveSessions()
+      if (options.force) {
+        flushPulse(reason, options).catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+        return
+      }
+      if (reason === 'active') {
+        const target = options.username
+        if (!target) return
+        if (pendingCountFor(target) <= 0) return
+        clearActiveFollowup(target)
+        flushPulse('active', options).catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+        return
+      }
+      const total = state.aiPulse.totalPending || 0
+      if (total <= 0) return
+      if (reason === 'count' && shouldFlushByCount()) {
+        flushPulse('count', options).catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
         return
       }
       if (reason === 'manual') {
-        flushPulse('manual').catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+        flushPulse('manual', options).catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
         return
       }
-      if (elapsed >= PULSE_INTERVAL_MS) {
-        flushPulse(reason === 'timer' ? 'timer' : 'interval').catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
+      const since = now() - (state.aiPulse.pendingSince || state.aiPulse.lastFlushAt || 0)
+      if (since >= PULSE_INTERVAL_MS) {
+        flushPulse(reason === 'timer' ? 'timer' : 'interval', options).catch(err => log?.warn && log.warn('pulse flush error:', err?.message || err))
       }
     } catch (e) {
       if (log?.warn) log.warn('pulse maybeFlush error:', e?.message || e)
     }
   }
 
-  async function flushPulse (trigger) {
+  function pendingUsers () {
+    const out = new Set()
+    const store = ensurePendingStore()
+    for (const [name, info] of store.entries()) {
+      if (!info || info.count <= 0) continue
+      out.add(name)
+    }
+    return out
+  }
+
+  function buildPulseBatch (options = {}) {
+    const lines = Array.isArray(state.aiRecent) ? state.aiRecent : []
+    if (!lines.length) return null
+    const lastSeq = Number(state.aiPulse.lastSeq) || 0
+    const focusUsers = pendingUsers()
+    if (!focusUsers.size && !options.force) return null
+    const MAX_SCAN = 200
+    const window = []
+    for (let i = lines.length - 1, scanned = 0; i >= 0 && scanned < MAX_SCAN; i--, scanned++) {
+      const entry = lines[i]
+      if (!entry || typeof entry !== 'object') continue
+      const user = entry.user
+      const include = focusUsers.has(user) || entry?.kind === 'bot' || options.force
+      if (include) window.push(entry)
+    }
+    if (!window.length) return null
+    window.reverse()
+    const capped = window.slice(-PULSE_MAX_MESSAGES)
+    const processed = capped.filter(entry => focusUsers.has(entry?.user) && Number(entry?.seq) > lastSeq)
+    if (!processed.length && !options.force) return null
+    const nextSeq = processed.length ? processed[processed.length - 1].seq : lastSeq
+    return { entries: capped, processed, lastSeq: nextSeq }
+  }
+
+  async function flushPulse (trigger, options = {}) {
     if (pulseCtrl.running) return
-    const buf = state.aiPulse.buffer || []
-    if (!buf.length) {
-      state.aiPulse.lastFlushAt = now()
+    const prevFlushAt = state.aiPulse.lastFlushAt || 0
+    const prevReason = state.aiPulse.lastReason
+    const prevSeq = Number(state.aiPulse.lastSeq) || 0
+    const prevPending = clonePendingStore()
+    const prevTotal = state.aiPulse.totalPending || 0
+    const prevSince = state.aiPulse.pendingSince
+    const prevLastAt = state.aiPulse.pendingLastAt
+    const batch = buildPulseBatch(options)
+    if (!batch) {
+      state.aiPulse.lastMessage = null
       return
     }
-    const prevFlushAt = state.aiPulse.lastFlushAt || 0
-    const batch = buf.slice()
-    state.aiPulse.buffer = []
     state.aiPulse.lastFlushAt = now()
     state.aiPulse.lastReason = trigger
+    state.aiPulse.lastSeq = batch.lastSeq
+    resetPendingStore()
     let revert = true
     const nowTs = now()
     const history = ensurePulseHistory()
-    const filteredBatch = batch.filter(entry => {
+    const filteredBatch = batch.processed.filter(entry => {
       const key = pulseKey(entry)
       if (!key) return false
       const seen = history.get(key)
@@ -390,7 +719,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       return
     }
     if (!pulseEnabled()) {
-      // feature disabled or no key — drop silently but keep last flush time
       revert = false
       state.aiPulse.lastMessage = null
       return
@@ -401,7 +729,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       state.aiPulse.lastMessage = null
       return
     }
-    const transcript = filteredBatch.map(it => {
+    const transcript = batch.entries.map(it => {
       const ts = it?.t ? new Date(it.t).toISOString().slice(11, 19) : ''
       return `${ts ? '[' + ts + '] ' : ''}${it.user || '??'}: ${it.text || ''}`
     }).join('\n')
@@ -489,14 +817,24 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       markPulseHandled(filteredBatch, nowTs)
       revert = false
       if (log?.info) log.info('pulse reply ->', trimmed)
-      try { bot.chat(trimmed) } catch (e) { if (log?.warn) log.warn('pulse chat error:', e?.message || e) }
+      try {
+        bot.chat(trimmed)
+        recordBotChat(trimmed)
+      } catch (e) { if (log?.warn) log.warn('pulse chat error:', e?.message || e) }
+      if (options.username && trigger === 'active') activateSession(options.username, 'pulse_followup')
     } finally {
       clearTimeout(timeout)
       pulseCtrl.running = false
       pulseCtrl.abort = null
       if (revert) {
         state.aiPulse.lastFlushAt = prevFlushAt
-        state.aiPulse.buffer = batch.concat(state.aiPulse.buffer || []).slice(-80)
+        state.aiPulse.lastReason = prevReason
+        state.aiPulse.lastSeq = prevSeq
+        restorePendingStore(prevPending)
+        state.aiPulse.totalPending = prevTotal
+        state.aiPulse.pendingSince = prevSince
+        state.aiPulse.pendingLastAt = prevLastAt
+        if (options.username && trigger === 'active') scheduleActiveFollowup(options.username)
         if (log?.warn) log.warn('pulse flush failed; batch restored')
       }
     }
@@ -512,11 +850,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function pulseStatus () {
     const info = state.aiPulse || {}
     const enabled = info.enabled !== false
-    const buffer = info.buffer ? info.buffer.length : 0
+    const pending = info.totalPending || 0
     const lastAt = info.lastFlushAt ? new Date(info.lastFlushAt).toLocaleTimeString() : '无'
     const since = info.lastFlushAt ? now() - info.lastFlushAt : Infinity
-    const nextIn = buffer > 0 ? Math.max(0, PULSE_INTERVAL_MS - since) : null
-    console.log('[PULSE]', `enabled=${enabled}`, 'running=', pulseCtrl.running, 'buffer=', buffer, 'last=', lastAt, 'lastReason=', info.lastReason || '无', 'next≈', nextIn == null ? '待消息' : fmtDuration(nextIn), 'lastMsg=', info.lastMessage || '(none)')
+    const nextIn = pending > 0 ? Math.max(0, PULSE_INTERVAL_MS - since) : null
+    cleanupActiveSessions()
+    const active = ensureActiveSessions().size
+    const topPending = [...ensurePendingStore().entries()].map(([name, data]) => `${name}:${data?.count || 0}`).filter(Boolean).slice(0, 3).join(', ') || 'none'
+    console.log('[PULSE]', `enabled=${enabled}`, 'running=', pulseCtrl.running, 'pending=', pending, 'active=', active, 'last=', lastAt, 'lastReason=', info.lastReason || '无', 'next≈', nextIn == null ? '待消息' : fmtDuration(nextIn), 'lastMsg=', info.lastMessage || '(none)', 'top=', topPending)
   }
 
   function onPulseCli (payload) {
@@ -528,17 +869,18 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (cmd === 'on') {
         state.aiPulse.enabled = true
         console.log('[PULSE]', '已开启主动发言')
-        maybeFlush('manual')
+        maybeFlush('manual', { force: true })
         return
       }
       if (cmd === 'off') {
         state.aiPulse.enabled = false
-        state.aiPulse.buffer = []
+        resetPendingStore()
+        resetActiveSessions()
         console.log('[PULSE]', '已关闭主动发言')
         return
       }
       if (cmd === 'now' || cmd === 'run' || cmd === 'flush') {
-        maybeFlush('manual')
+        maybeFlush('manual', { force: true })
         return
       }
       console.log('[PULSE]', '未知子命令，支持: status|on|off|now')
@@ -1646,7 +1988,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (payload && payload.tool) {
           const toolName = String(payload.tool)
           if (toolName === 'write_memory') {
-            if (speech) sendDirectReply(username, speech)
+            if (speech) sendChatReply(username, speech)
             const normalized = normalizeMemoryText(payload.args?.text || '')
             if (!normalized) {
               return H.trimReply('没听懂要记什么呢~', maxReplyLen || 120)
@@ -1702,7 +2044,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (!allow.has(String(payload.tool))) {
             return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
           }
-          if (speech) sendDirectReply(username, speech)
+          if (speech) sendChatReply(username, speech)
           // Mark external-busy and current task for context; emit begin/end for tracker
           try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
           let res
@@ -1716,14 +2058,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (res && res.ok) {
             const okText = H.trimReply(res.msg || '好的', maxReplyLen || 120)
             if (speech) {
-              sendDirectReply(username, okText)
+              sendChatReply(username, okText)
               return ''
             }
             return okText
           }
           const failText = H.trimReply(res?.msg || '这次没成功！', maxReplyLen || 120)
           if (speech) {
-            sendDirectReply(username, failText)
+            sendChatReply(username, failText)
             return ''
           }
           return failText
@@ -1765,7 +2107,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         try {
           const tools = actionsMod.install(bot, { log })
           const res = await tools.run('dismount', {})
-          sendDirectReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`))
+          sendChatReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), { reason: 'trigger_tool' })
         } catch {}
         return
       }
@@ -1776,13 +2118,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         const tools = actionsMod.install(bot, { log })
         await tools.run('reset', {})
       } catch {}
-      sendDirectReply(username, '好的')
+      sendChatReply(username, '好的', { reason: 'trigger_stop' })
       return
     }
     const memoryText = extractMemoryCommand(content)
     if (memoryText) {
       if (!state.ai?.key) {
-        sendDirectReply(username, '现在记不住呀，AI 没开~')
+        sendChatReply(username, '现在记不住呀，AI 没开~', { reason: 'memory_key' })
         return
       }
       const job = {
@@ -1823,13 +2165,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         })()
       }
       enqueueMemoryJob(job)
-      sendDirectReply(username, '收到啦，我整理一下~')
+      sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
-        sendDirectReply(username, '太快啦，稍后再试~')
+        sendChatReply(username, '太快啦，稍后再试~', { reason: 'limits' })
       }
       return
     }
@@ -1857,15 +2199,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
-        sendDirectReply(username, reply)
+        sendChatReply(username, reply, { reason: 'llm_reply' })
       }
     } catch (e) {
       dlog('ai error:', e?.message || e)
       // Optional: notify user softly if misconfigured
       if (/key not configured/i.test(String(e))) {
-        sendDirectReply(username, 'AI未配置')
+        sendChatReply(username, 'AI未配置', { reason: 'error_key' })
       } else if (/budget/i.test(String(e)) && state.ai.notifyOnBudget) {
-        sendDirectReply(username, 'AI余额不足')
+        sendChatReply(username, 'AI余额不足', { reason: 'error_budget' })
       }
     } finally {
       ctrl.busy = false
@@ -1884,41 +2226,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const onChatCapture = (username, message) => {
     try {
       const text = String(message || '').trim()
-      const entry = { t: now(), user: username, text: text.slice(0, 160) }
-      state.aiRecent.push(entry)
+      if (!text) return
+      const entry = pushRecentChatEntry(username, text, 'player')
       const cs = state.ai.context || {}
-      const recentMax = Math.max(20, cs.recentStoreMax || 200)
-      if (state.aiRecent.length > recentMax) {
-        // summarize overflow asynchronously and trim
-        ;(async () => {
-          try {
-            const overflow = state.aiRecent.splice(0, state.aiRecent.length - recentMax)
-            // summarize only if we have enough lines
-            if (overflow.length >= 20) {
-              const sum = await (async () => {
-                if (!state.ai?.key) return null
-                const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
-                const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
-                const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
-                const url = (state.ai.baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (state.ai.path || DEFAULT_PATH)
-                const body = { model: state.ai.model || DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 60, stream: false }
-                try {
-                  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
-                  if (!res.ok) return null
-                  const data = await res.json()
-                  return data?.choices?.[0]?.message?.content?.trim() || null
-                } catch { return null }
-              })()
-              if (sum) {
-                state.aiLong.push({ t: Date.now(), summary: sum })
-                if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
-                persistMemoryState()
-                if (state.ai.trace && log?.info) log.info('long summary ->', sum)
-              }
-            }
-          } catch {}
-        })()
-      }
       const trig = triggerWord()
       const trigRe = new RegExp('\\b' + trig + '\\b', 'i')
       if (trigRe.test(text)) {
@@ -1950,7 +2260,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         case 'base': state.ai.baseUrl = rest[0] || state.ai.baseUrl; print('base =', state.ai.baseUrl); break
         case 'path': state.ai.path = rest[0] || state.ai.path; print('path =', state.ai.path); break
         case 'max': state.ai.maxReplyLen = Math.max(20, parseInt(rest[0] || '120', 10)); print('maxReplyLen =', state.ai.maxReplyLen); break
-        case 'clear': { state.aiRecent = []; print('recent chat cleared'); break }
+        case 'clear': {
+          state.aiRecent = []
+          state.aiRecentSeq = 0
+          if (state.aiPulse) state.aiPulse.lastSeq = 0
+          print('recent chat cleared')
+          break
+        }
         case 'ctx': {
           try { print('gameCtx ->', buildGameContext()); print('chatCtx ->', buildContextPrompt('')) } catch {}
           break
@@ -2072,6 +2388,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   registerCleanup && registerCleanup(() => {
     try { bot.off('cli', onPulseCli) } catch {}
     try { bot.off('cli', onCli) } catch {}
+    try { resetActiveSessions() } catch {}
     if (state.aiPulse?._timer) {
       try { clearInterval(state.aiPulse._timer) } catch {}
       state.aiPulse._timer = null
