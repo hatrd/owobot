@@ -2092,7 +2092,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return '' }
   }
 
-  async function callAI (username, content, intent) {
+  async function callAI (username, content, intent, options = {}) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
     const url = (baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (path || DEFAULT_PATH)
@@ -2103,13 +2103,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
     const memoryCtx = buildMemoryContext()
+    const allowSkip = options?.allowSkip === true
+    const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
     const messages = [
       { role: 'system', content: systemPrompt() },
       extrasCtx ? { role: 'system', content: extrasCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,
       { role: 'system', content: contextPrompt },
-      { role: 'user', content }
+      { role: 'user', content: userContent }
     ].filter(Boolean)
 
     // Optional trace of contexts
@@ -2390,10 +2392,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     ctrl.busy = true
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', text)
-      const reply = await callAI(username, text, intent)
+      const allowSkip = source === 'followup'
+      const reply = await callAI(username, text, intent, { allowSkip })
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
+        if (allowSkip && /^skip$/i.test(reply.trim())) {
+          traceChat('[chat] followup skipped', { username })
+          return
+        }
         const replyReason = source === 'followup' ? 'llm_followup' : 'llm_reply'
         sendChatReply(username, reply, { reason: replyReason })
       }

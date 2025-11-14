@@ -29,6 +29,7 @@ This document explains how `bot_impl/ai-chat.js` wires the trigger-based DeepSee
 - **`scheduleActiveFollowup(username)`:** When the active player speaks again, enqueue a delayed (5 s) proactive check. If the player keeps talking before the timer fires, it re-schedules to avoid interruption.
 - **Flush behavior:** When the timer fires, `maybeFlush('active', {username})` immediately asks the pulse system to respond using the full transcript (not just the latest line). Successful proactive replies re-arm the session; failures reschedule if needed.
 - **Trigger follow-ups (no pulse needed):** Even with proactive pulses disabled, active sessions enable automatic replies to the same player’s subsequent chats (without trigger words) for 1 minute by directly routing the new message back through the main dialogue stack.
+- **Follow-up skip hint:** During these auto follow-ups the LLM prompt adds“若无需回复请输出 SKIP”，and if it does so the turn is silently dropped (explicit `owk` triggers never include this hint).
 
 ## 4. Conversation Memory
 - **Lifecycle:** When a trigger starts a new session, `activateSession(..., {restart:true})` snapshots the current chat sequence index. As long as the session stays alive, every player/bot message updates `lastSeq` + `lastAt` and records the participants set.
