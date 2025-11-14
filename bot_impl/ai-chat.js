@@ -125,6 +125,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (!state.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
 
   const persistedMemory = memoryStore.load()
+  if (!Array.isArray(state.aiDialogues) || state.aiDialogues.length === 0) {
+    state.aiDialogues = Array.isArray(persistedMemory.dialogues) ? persistedMemory.dialogues : []
+  }
+  trimConversationStore()
 
   // global recent chat logs
   state.aiRecent = Array.isArray(state.aiRecent) ? state.aiRecent : []
@@ -621,6 +625,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       state.aiDialogues.push(record)
       trimConversationStore()
+      persistMemoryState()
     } catch (e) {
       traceChat('[chat] process summary error', e?.message || e)
     }
@@ -1623,7 +1628,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function persistMemoryState () {
     try {
-      memoryStore.save({ long: Array.isArray(state.aiLong) ? state.aiLong : [], memories: ensureMemoryEntries() })
+      const payload = {
+        long: Array.isArray(state.aiLong) ? state.aiLong : [],
+        memories: ensureMemoryEntries(),
+        dialogues: Array.isArray(state.aiDialogues) ? state.aiDialogues : []
+      }
+      memoryStore.save(payload)
     } catch {}
   }
 
@@ -2565,6 +2575,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (sub === 'clear') {
             state.aiDialogues = []
             print('dialog memory cleared')
+            persistMemoryState()
             break
           }
           const list = (() => {

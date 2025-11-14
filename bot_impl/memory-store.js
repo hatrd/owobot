@@ -11,17 +11,18 @@ function safeArray (value) {
 function load () {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8')
-    if (!raw) return { long: [], memories: [] }
+    if (!raw) return { long: [], memories: [], dialogues: [] }
     const parsed = JSON.parse(raw)
     if (Array.isArray(parsed)) {
-      return { long: [], memories: [] }
+      return { long: [], memories: [], dialogues: [] }
     }
     return {
       long: safeArray(parsed?.long),
-      memories: safeArray(parsed?.memories)
+      memories: safeArray(parsed?.memories),
+      dialogues: safeArray(parsed?.dialogues)
     }
   } catch {
-    return { long: [], memories: [] }
+    return { long: [], memories: [], dialogues: [] }
   }
 }
 
@@ -30,9 +31,10 @@ function save (data = {}) {
     fs.mkdirSync(DATA_DIR, { recursive: true })
   } catch {}
   const payload = {
-    version: 2,
+    version: 3,
     long: safeArray(data.long),
-    memories: safeArray(data.memories)
+    memories: safeArray(data.memories),
+    dialogues: safeArray(data.dialogues)
   }
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(payload))
