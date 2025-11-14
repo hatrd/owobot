@@ -13,7 +13,7 @@ function trimReply (text, maxLen) {
   return t.slice(0, Math.max(0, maxLen - 1)) + '…'
 }
 
-function buildContextPrompt (username, recent, recentTrig, options = {}) {
+function buildContextPrompt (username, recent, options = {}) {
   const ctx = Object.assign({ include: true, recentCount: 8, recentWindowSec: 300 }, options)
   if (!ctx.include) return ''
   const now = Date.now()

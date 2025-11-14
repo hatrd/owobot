@@ -5,6 +5,7 @@
 const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
 const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
+const DEFAULT_RECENT_COUNT = 32
 
 const PULSE_MAX_MESSAGES = 20
 const PULSE_INTERVAL_MS = 3 * 60 * 1000
@@ -14,6 +15,13 @@ const PULSE_REPEAT_SUPPRESS_MS = 6 * 60 * 1000
 const PULSE_PENDING_EXPIRE_MS = 5 * 60 * 1000
 const ACTIVE_CHAT_WINDOW_MS = 60 * 1000
 const ACTIVE_FOLLOW_DELAY_MS = 5 * 1000
+const CONVERSATION_STORE_MAX = 60
+const CONVERSATION_BUCKETS = [
+  { maxDays: 3, limit: 4 },
+  { maxDays: 7, limit: 6 },
+  { maxDays: 15, limit: 8 },
+  { maxDays: 30, limit: 10 }
+]
 
 const fs = require('fs')
 const path = require('path')
@@ -65,19 +73,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     maxTokensPerCall: 512, // projected worst-case to pre-check against budget
     notifyOnBudget: true,
     // Context memory (global)
-    context: { include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5, recentStoreMax: 200, owkStoreMax: 100 },
+    context: { include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: 300, recentStoreMax: 200 },
     trace: false
   }
   // normalize context defaults across reloads
   const DEF_CTX = {
     include: true,
-    recentCount: 8,
+    recentCount: DEFAULT_RECENT_COUNT,
     recentWindowSec: 300,
-    includeOwk: true,
-    owkWindowSec: 900,
-    owkMax: 5,
     recentStoreMax: 200,
-    owkStoreMax: 100,
     game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 },
     memory: { include: true, max: 6, storeMax: 200 }
   }
@@ -87,6 +91,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     ...state.ai.context,
     game: { ...DEF_CTX.game, ...(state.ai.context.game || {}) },
     memory: { ...DEF_CTX.memory, ...(state.ai.context.memory || {}) }
+  }
+  if (!state.ai.context.userRecentOverride && (!Number.isFinite(state.ai.context.recentCount) || state.ai.context.recentCount < DEFAULT_RECENT_COUNT)) {
+    state.ai.context.recentCount = DEFAULT_RECENT_COUNT
   }
 
   state.aiPulse = state.aiPulse || { enabled: false, lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
@@ -113,6 +120,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   state.aiExtras = state.aiExtras || { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
+  if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []
 
   if (!state.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
 
@@ -131,7 +139,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
   state.aiPulse.lastSeq = state.aiRecentSeq
-  state.aiOwk = state.aiOwk || []       // subset with trigger word (kept name for compat)
   if (!Array.isArray(state.aiLong) || state.aiLong.length === 0) {
     state.aiLong = Array.isArray(persistedMemory.long) ? persistedMemory.long : []
   } else if (!Array.isArray(state.aiLong)) {
@@ -371,21 +378,42 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           try { clearTimeout(info.timer) } catch {}
         }
         sessions.delete(name)
+        queueConversationSummary(name, info, 'expire')
       }
     }
   }
 
-  function activateSession (username, reason) {
+  function activateSession (username, reason, options = {}) {
     if (!username) return
     cleanupActiveSessions()
     const sessions = ensureActiveSessions()
     let entry = sessions.get(username)
+    const restart = options.restart === true
+    const nowTs = now()
     if (!entry) entry = {}
+    const stillActive = Number.isFinite(entry.expiresAt) && entry.expiresAt > nowTs
+    const continuing = restart && stillActive
     if (entry.timer) {
       try { clearTimeout(entry.timer) } catch {}
       entry.timer = null
     }
-    entry.expiresAt = now() + ACTIVE_CHAT_WINDOW_MS
+    if (restart && Number.isFinite(entry.startSeq) && !continuing) {
+      queueConversationSummary(username, entry, 'restart')
+    }
+    if (!continuing && (restart || !Number.isFinite(entry.startSeq))) {
+      const baselineSeq = Number.isFinite(state.aiRecentSeq) ? state.aiRecentSeq : 0
+      entry.startSeq = Math.max(0, baselineSeq - 1)
+      entry.startedAt = nowTs
+      entry.participants = entry.participants instanceof Set ? entry.participants : new Set()
+      entry.participants.clear()
+      if (username && username !== bot.username) entry.participants.add(username)
+      entry.lastSeq = entry.startSeq
+      entry.lastAt = entry.startedAt
+    } else if (!(entry.participants instanceof Set)) {
+      entry.participants = new Set()
+      if (username && username !== bot.username) entry.participants.add(username)
+    }
+    entry.expiresAt = nowTs + ACTIVE_CHAT_WINDOW_MS
     entry.reason = reason || entry.reason || 'trigger'
     entry.awaiting = false
     sessions.set(username, entry)
@@ -395,6 +423,21 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!username) return false
     cleanupActiveSessions()
     return ensureActiveSessions().has(username)
+  }
+
+  function touchConversationSession (username, extraParticipants = []) {
+    if (!username) return
+    const sessions = ensureActiveSessions()
+    const entry = sessions.get(username)
+    if (!entry) return
+    if (!(entry.participants instanceof Set)) entry.participants = new Set()
+    if (username !== bot.username) entry.participants.add(username)
+    for (const name of extraParticipants) {
+      if (!name || name === bot.username) continue
+      entry.participants.add(name)
+    }
+    entry.lastSeq = Number.isFinite(state.aiRecentSeq) ? state.aiRecentSeq : entry.lastSeq
+    entry.lastAt = now()
   }
 
   function scheduleActiveFollowup (username) {
@@ -435,6 +478,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (info?.timer) {
         try { clearTimeout(info.timer) } catch {}
       }
+      queueConversationSummary(name, info, 'reset')
       sessions.delete(name)
     }
   }
@@ -488,6 +532,105 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try {
       pushRecentChatEntry(bot?.username || 'bot', text, 'bot')
     } catch {}
+  }
+
+  function conversationParticipantsFromLines (lines) {
+    const set = new Set()
+    for (const line of lines) {
+      const name = String(line?.user || '').trim()
+      if (!name || name === bot.username) continue
+      set.add(name)
+    }
+    return [...set]
+  }
+
+  async function runSummaryModel (messages, maxTokens = 60, temperature = 0.2) {
+    const { key, model } = state.ai || {}
+    if (!key) return null
+    const url = (state.ai.baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (state.ai.path || DEFAULT_PATH)
+    const body = { model: model || DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify(body)
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      return data?.choices?.[0]?.message?.content?.trim() || null
+    } catch { return null }
+  }
+
+  function fallbackConversationSummary (lines, participants) {
+    const parts = participants.length ? participants.join('、') : '玩家们'
+    const recent = lines.slice(-2).map(l => `${l.user}: ${l.text}`).join(' / ')
+    return `${parts} 聊天：${recent.slice(0, 50)}`
+  }
+
+  async function summarizeConversationLines (lines, participants) {
+    if (!lines.length) return ''
+    const fallback = fallbackConversationSummary(lines, participants)
+    const joined = lines.map(l => `${l.user}: ${l.text}`).join(' | ')
+    const sys = '你是Minecraft服务器里的聊天总结助手。请用中文≤40字，概括玩家互动主题，提到参与者名字和关键行动/地点，不要编造。'
+    const messages = [
+      { role: 'system', content: sys },
+      { role: 'user', content: `玩家：${participants.join('、') || '未知'}\n聊天摘录（旧→新）：${joined}\n请输出一句总结。` }
+    ]
+    const summary = await runSummaryModel(messages, 80, 0.3)
+    if (!summary) return fallback
+    return summary.replace(/\s+/g, ' ').trim()
+  }
+
+  function queueConversationSummary (username, entry, reason) {
+    try {
+      if (!entry) return
+      const startSeq = Number(entry.startSeq)
+      const endSeq = Number(entry.lastSeq || state.aiRecentSeq)
+      if (!Number.isFinite(startSeq) || !Number.isFinite(endSeq) || endSeq <= startSeq) return
+      const participants = entry.participants instanceof Set ? [...entry.participants] : []
+      const payload = {
+        id: `conv_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        username,
+        participants,
+        startSeq,
+        endSeq,
+        startedAt: entry.startedAt || now(),
+        endedAt: entry.lastAt || now(),
+        reason
+      }
+      processConversationSummary(payload).catch(err => traceChat('[chat] summary error', err?.message || err))
+    } catch (e) {
+      traceChat('[chat] summary queue error', e?.message || e)
+    }
+  }
+
+  async function processConversationSummary (job) {
+    try {
+      const lines = (state.aiRecent || []).filter(line => Number(line?.seq) > job.startSeq && Number(line?.seq) <= job.endSeq)
+      if (!lines.length) return
+      const participants = job.participants && job.participants.length ? job.participants : conversationParticipantsFromLines(lines)
+      if (!participants.length) participants.push(job.username || '玩家')
+      const summary = await summarizeConversationLines(lines, participants)
+      if (!summary) return
+      const record = {
+        id: job.id,
+        participants: participants.map(p => String(p || '').trim()).filter(Boolean),
+        summary,
+        startedAt: job.startedAt || now(),
+        endedAt: job.endedAt || now()
+      }
+      state.aiDialogues.push(record)
+      trimConversationStore()
+    } catch (e) {
+      traceChat('[chat] process summary error', e?.message || e)
+    }
+  }
+
+  function trimConversationStore () {
+    if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []
+    if (state.aiDialogues.length <= CONVERSATION_STORE_MAX) return
+    state.aiDialogues.sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0))
+    while (state.aiDialogues.length > CONVERSATION_STORE_MAX) state.aiDialogues.shift()
   }
 
   function enqueuePulse (username, text) {
@@ -601,6 +744,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function sendChatReply (username, text, opts = {}) {
     sendDirectReply(username, text)
     activateSession(username, opts.reason || 'chat')
+    touchConversationSession(username)
   }
 
   function shouldFlushByCount () {
@@ -1187,8 +1331,59 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   function buildContextPrompt (username) {
-    const ctx = state.ai.context || { include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5 }
-    return H.buildContextPrompt(username, state.aiRecent, state.aiOwk, { ...ctx, trigger: triggerWord() })
+    const ctx = state.ai.context || { include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: 300 }
+    const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
+    const conv = buildConversationMemoryPrompt(username)
+    return [base, conv].filter(Boolean).join('\n\n')
+  }
+
+  function relativeTimeLabel (ts) {
+    if (!Number.isFinite(ts)) return '未知时间'
+    const delta = now() - ts
+    if (delta < 60 * 1000) return '刚刚'
+    if (delta < 60 * 60 * 1000) return `${Math.max(1, Math.round(delta / (60 * 1000)))}分钟前`
+    if (delta < 24 * 60 * 60 * 1000) return `${Math.max(1, Math.round(delta / (60 * 60 * 1000)))}小时前`
+    const days = Math.max(1, Math.round(delta / (24 * 60 * 60 * 1000)))
+    if (days < 7) return `${days}天前`
+    const weeks = Math.max(1, Math.round(days / 7))
+    return `${weeks}周前`
+  }
+
+  function selectDialoguesForContext (username) {
+    if (!Array.isArray(state.aiDialogues) || !state.aiDialogues.length) return []
+    const sorted = state.aiDialogues.slice().sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
+    const prioritized = username ? sorted.filter(entry => Array.isArray(entry.participants) && entry.participants.includes(username)) : sorted
+    const remaining = username ? sorted.filter(entry => !prioritized.includes(entry)) : []
+    const combined = username ? prioritized.concat(remaining) : sorted
+    const selected = []
+    const used = new Set()
+    const nowTs = now()
+    for (const bucket of CONVERSATION_BUCKETS) {
+      let count = 0
+      for (const entry of combined) {
+        if (!entry) continue
+        const key = entry.id || `${entry.endedAt || 0}_${entry.summary || ''}`
+        if (used.has(key)) continue
+        const ageDays = Number.isFinite(entry.endedAt) ? (nowTs - entry.endedAt) / (24 * 60 * 60 * 1000) : Infinity
+        if (!Number.isFinite(ageDays) || ageDays > bucket.maxDays) continue
+        selected.push(entry)
+        used.add(key)
+        count++
+        if (count >= bucket.limit) break
+      }
+    }
+    return selected
+  }
+
+  function buildConversationMemoryPrompt (username) {
+    const entries = selectDialoguesForContext(username)
+    if (!entries.length) return ''
+    const lines = entries.map((entry, idx) => {
+      const label = relativeTimeLabel(entry.endedAt)
+      const people = (entry.participants || []).join('、') || '玩家们'
+      return `${idx + 1}. ${label} ${people}: ${entry.summary}`
+    })
+    return `对话记忆：\n${lines.join('\n')}`
   }
 
   function normalizeMemoryText (text) {
@@ -1893,7 +2088,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const url = (baseUrl || DEFAULT_BASE).replace(/\/$/, '') + (path || DEFAULT_PATH)
 
     // Build messages with per-user memory (short context)
-    // Build context from global recent chat (including owk lines) and game state
+    // Build context from global recent chat and game state
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
@@ -2109,6 +2304,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     let text = String(content || '').trim()
     if (!text) return
     traceChat('[chat] process', { source, username, text })
+    activateSession(username, source)
+    touchConversationSession(username)
     const reasonTag = source === 'followup' ? 'followup' : 'trigger'
     if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(text)) {
       try {
@@ -2223,6 +2420,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     let content = trimmed.replace(new RegExp('^(' + trig + '[:：,，。.!！\s]*)+', 'i'), '')
     content = content.replace(/^[:：,，。.!！\s]+/, '')
     traceChat('[chat] trigger matched', { username, text: content })
+    activateSession(username, 'trigger', { restart: true })
     await processChatContent(username, content, raw, 'trigger')
   }
 
@@ -2233,17 +2431,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // capture recent chats for context (store even if not starting with trigger)
   const onChatCapture = (username, message) => {
     try {
+      if (!username || username === bot.username) return
       const text = String(message || '').trim()
       if (!text) return
-      const entry = pushRecentChatEntry(username, text, 'player')
-      const cs = state.ai.context || {}
-      const trig = triggerWord()
-      const trigRe = new RegExp('\\b' + trig + '\\b', 'i')
-      if (trigRe.test(text)) {
-        state.aiOwk.push(entry)
-        const owkMax = Math.max(10, cs.owkStoreMax || 100)
-        if (state.aiOwk.length > owkMax) state.aiOwk.splice(0, state.aiOwk.length - owkMax)
-      }
+      pushRecentChatEntry(username, text, 'player')
       enqueuePulse(username, text)
     } catch {}
   }
@@ -2369,19 +2560,45 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           }
           break
         }
+        case 'dialog': {
+          const sub = (rest[0] || '').toLowerCase()
+          if (sub === 'clear') {
+            state.aiDialogues = []
+            print('dialog memory cleared')
+            break
+          }
+          const list = (() => {
+            if (sub === 'full') {
+              return (state.aiDialogues || []).slice().sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
+            }
+            const targetUser = sub ? rest[0] : null
+            return selectDialoguesForContext(targetUser)
+          })()
+          if (!list.length) {
+            print('dialog memory empty')
+            break
+          }
+          list.forEach((entry, idx) => {
+            const label = relativeTimeLabel(entry.endedAt)
+            const people = (entry.participants || []).join('、') || '玩家们'
+            print(`${idx + 1}. ${label} ${people}: ${entry.summary}`)
+          })
+          break
+        }
         // mem subcommand removed (using global recent chat only)
         case 'context': {
           const k = (rest[0] || '').toLowerCase(); const v = rest[1]
-          state.ai.context = state.ai.context || { include: true, recentCount: 8, recentWindowSec: 300, includeOwk: true, owkWindowSec: 900, owkMax: 5, recentStoreMax: 200, owkStoreMax: 100 }
+          state.ai.context = state.ai.context || { include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: 300, recentStoreMax: 200 }
           switch (k) {
             case 'on': state.ai.context.include = true; print('context include=true'); break
             case 'off': state.ai.context.include = false; print('context include=false'); break
-            case 'recent': state.ai.context.recentCount = Math.max(0, parseInt(v || '3', 10)); print('context recentCount=', state.ai.context.recentCount); break
+            case 'recent':
+              state.ai.context.recentCount = Math.max(0, parseInt(v || '3', 10))
+              state.ai.context.userRecentOverride = true
+              print('context recentCount=', state.ai.context.recentCount)
+              break
             case 'window': state.ai.context.recentWindowSec = Math.max(10, parseInt(v || '120', 10)); print('context recentWindowSec=', state.ai.context.recentWindowSec); break
-            case 'owkmax': state.ai.context.owkMax = Math.max(0, parseInt(v || '5', 10)); print('context owkMax=', state.ai.context.owkMax); break
-            case 'owkwindow': state.ai.context.owkWindowSec = Math.max(10, parseInt(v || '900', 10)); print('context owkWindowSec=', state.ai.context.owkWindowSec); break
             case 'recentmax': state.ai.context.recentStoreMax = Math.max(20, parseInt(v || '200', 10)); print('context recentStoreMax=', state.ai.context.recentStoreMax); break
-            case 'owkstoremax': state.ai.context.owkStoreMax = Math.max(10, parseInt(v || '100', 10)); print('context owkStoreMax=', state.ai.context.owkStoreMax); break
             case 'show': default: print('context =', state.ai.context)
           }
           break

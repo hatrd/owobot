@@ -15,21 +15,19 @@ test('trimReply truncates with ellipsis', () => {
   assert.equal(trimReply('  a   b  ', 3), 'a b')
 })
 
-// memory selection removed in favor of global recent chat context
-
-test('buildContextPrompt includes recent chat lines and owk lines', () => {
+test('buildContextPrompt limits to recent window/count', () => {
   const now = Date.now()
   const recent = [
-    { t: now - 1000, user: 'A', text: 'hi' },
-    { t: now - 500, user: 'B', text: 'yo' },
-    { t: now - 10, user: 'C', text: 'ok' },
-    { t: now - 300, user: 'A', text: 'owk 我想问' }
+    { t: now - 120 * 1000, user: 'Old', text: 'past' },
+    { t: now - 40 * 1000, user: 'A', text: 'hi there' },
+    { t: now - 20 * 1000, user: 'B', text: 'yo' },
+    { t: now - 2 * 1000, user: 'C', text: 'latest line' }
   ]
-  const ctx = buildContextPrompt('Me', recent, recent, { include: true, recentCount: 2, recentWindowSec: 60, includeOwk: true, owkWindowSec: 600, owkMax: 3 })
-  assert.match(ctx, /Minecraft服务器/)
-  assert.match(ctx, /Me/)
-  assert.match(ctx, /C: ok/)
-  assert.match(ctx, /owk/)
+  const ctx = buildContextPrompt('Me', recent, { include: true, recentCount: 2, recentWindowSec: 60 })
+  assert.match(ctx, /当前对话玩家: Me/)
+  assert.match(ctx, /C: \[.*\] latest line/)
+  assert.match(ctx, /B: \[.*\] yo/)
+  assert.doesNotMatch(ctx, /Old: \[.*\] past/)
 })
 
 test('cost projection and affordability', () => {
