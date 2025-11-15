@@ -456,12 +456,39 @@ function scanFrames (bot, radius = 12) {
 
 function extendState (state) {
   if (!state.frameSort) state.frameSort = { running: false, lastScan: null }
+  if (typeof state.frameSort.stopRequested !== 'boolean') state.frameSort.stopRequested = false
   return state.frameSort
 }
 
 function install (bot, { on, state, log }) {
   const logger = log || { info: console.log, warn: console.warn, error: console.error, debug: () => {} }
   const frameState = extendState(state || {})
+  const ABORT_ERR_CODE = 'FRAME_SORT_ABORT'
+  const abortError = () => {
+    const err = new Error('frame_sort_abort')
+    err.code = ABORT_ERR_CODE
+    return err
+  }
+  const checkAbort = () => {
+    if (frameState.stopRequested) throw abortError()
+  }
+  const detachStopListener = () => {
+    if (!frameState.stopListener) return
+    try {
+      if (typeof bot.off === 'function') bot.off('agent:stop_all', frameState.stopListener)
+      else if (typeof bot.removeListener === 'function') bot.removeListener('agent:stop_all', frameState.stopListener)
+    } catch {}
+  }
+  detachStopListener()
+  const stopListener = () => {
+    if (!frameState.running) return
+    frameState.stopRequested = true
+  }
+  frameState.stopListener = stopListener
+  try {
+    if (typeof bot.on === 'function') bot.on('agent:stop_all', stopListener)
+    else if (typeof bot.addListener === 'function') bot.addListener('agent:stop_all', stopListener)
+  } catch {}
   const sendInventoryFullNotice = () => {
     if (frameState.inventoryFullNotified) return
     frameState.inventoryFullNotified = true
@@ -472,6 +499,7 @@ function install (bot, { on, state, log }) {
   const CHEST_BLOCK_NAMES = new Set(['chest', 'trapped_chest'])
 
   const ensureNear = async (pos, actions, range = 1.6) => {
+    checkAbort()
     const target = new Vec3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
     const tolerance = range + 0.7
     try {
@@ -479,6 +507,7 @@ function install (bot, { on, state, log }) {
       if (here && here.distanceTo(target) <= tolerance) return true
     } catch {}
     const res = await actions.run('goto', { x: pos.x + 0.5, y: pos.y, z: pos.z + 0.5, range: Math.max(range, 0.8) })
+    checkAbort()
     if (!res || !res.ok) {
       try {
         const here = bot.entity?.position
@@ -489,6 +518,7 @@ function install (bot, { on, state, log }) {
     const start = Date.now()
     const timeoutMs = 12000
     while (Date.now() - start < timeoutMs) {
+      checkAbort()
       try {
         const here = bot.entity?.position
         if (here && here.distanceTo(target) <= tolerance) return true
@@ -521,6 +551,7 @@ function install (bot, { on, state, log }) {
   }
 
   async function processSourceChest (source, destMap, actions) {
+    checkAbort()
     const keySet = new Set(destMap.keys())
     let movedAny = false
     const pos = clonePos(source.openPos || source.position || source)
@@ -528,6 +559,7 @@ function install (bot, { on, state, log }) {
     const sourcePosKey = (p) => `${p.x},${p.y},${p.z}`
     const sourceKeySet = new Set(sourcePositions.map(sourcePosKey))
     while (true) {
+      checkAbort()
       if (!await ensureNear(pos, actions)) {
         logger.warn('[frame-sort] 前往源箱子失败', pos)
         return movedAny
@@ -535,6 +567,7 @@ function install (bot, { on, state, log }) {
       let container
       try {
         container = await openContainerAt(pos)
+        checkAbort()
       } catch (err) {
         logger.warn('[frame-sort] 打开源箱子失败', err?.message || err)
         return movedAny
@@ -576,6 +609,7 @@ function install (bot, { on, state, log }) {
       takeCount = Math.min(takeCount, carryCap)
       try {
         await container.withdraw(targetItem.type, targetItem.metadata, takeCount, targetItem.nbt)
+        checkAbort()
       } catch (err) {
         try { container.close() } catch {}
         logger.warn('[frame-sort] 取出物品失败', err?.message || err)
@@ -587,6 +621,7 @@ function install (bot, { on, state, log }) {
 
       let remaining = takeCount
       for (const dest of wanted) {
+        checkAbort()
         if (remaining <= 0) break
         const sameCluster = Array.isArray(dest.positions) && dest.positions.some(p => sourceKeySet.has(sourcePosKey(p)))
         if (sameCluster) continue
@@ -597,6 +632,7 @@ function install (bot, { on, state, log }) {
         if (dest.position) candidateRaw.push(clonePos(dest.position))
         const seenTargets = new Set()
         for (const rawPos of candidateRaw) {
+          checkAbort()
           if (!rawPos) continue
           const key = `${rawPos.x},${rawPos.y},${rawPos.z}`
           if (seenTargets.has(key)) continue
@@ -615,6 +651,7 @@ function install (bot, { on, state, log }) {
           let destContainer
           try {
             destContainer = await openContainerAt(rawPos)
+            checkAbort()
           } catch (err) {
             logger.warn('[frame-sort] 打开目标箱子失败', err?.message || err)
             continue
@@ -622,6 +659,7 @@ function install (bot, { on, state, log }) {
           const before = countInInventory(targetItem)
           try {
             await destContainer.deposit(targetItem.type, targetItem.metadata, remaining, targetItem.nbt)
+            checkAbort()
           } catch (err) {
             logger.debug && logger.debug('[frame-sort] 目标箱子已满?', err?.message || err)
           }
@@ -634,19 +672,21 @@ function install (bot, { on, state, log }) {
       }
 
       if (remaining > 0) {
+        checkAbort()
         // 尝试放回原箱子
         if (!await ensureNear(pos, actions)) {
           logger.warn('[frame-sort] 返回源箱子失败，背包残留', remaining)
           return movedAny
         }
         let back
-        try { back = await openContainerAt(pos) } catch (err) {
+        try { back = await openContainerAt(pos); checkAbort() } catch (err) {
           logger.warn('[frame-sort] 放回源箱子失败，背包残留', err?.message || err)
           return movedAny
         }
         const before = countInInventory(targetItem)
         try {
           await back.deposit(targetItem.type, targetItem.metadata, remaining, targetItem.nbt)
+          checkAbort()
           const after = countInInventory(targetItem)
           const returned = before - after
           remaining -= returned
@@ -683,81 +723,101 @@ function install (bot, { on, state, log }) {
       return result
     }
     frameState.inventoryFullNotified = false
+    frameState.stopRequested = false
     frameState.running = true
-    const actions = actionsMod.install(bot, { log: logger })
-    const parsedRadius = Number(radius)
-    const baseRadius = Number.isFinite(parsedRadius) ? parsedRadius : 20
-    const rad = Math.max(2, Math.min(80, baseRadius))
-    const runScan = typeof frameState.scanFn === 'function' ? frameState.scanFn : (r) => scanFrames(bot, r)
-    const scan = runScan(rad)
-    frameState.lastScan = scan
-    if (!scan.ok) {
-      logger.warn('[frame-sort] 扫描失败: bot未就绪')
+    const finishRun = () => {
       frameState.running = false
-      const result = { ok: false, reason: 'unready' }
-      frameState.lastResult = result
-      return result
+      frameState.stopRequested = false
     }
-    const destMap = new Map()
-    for (const chest of scan.framedChests) {
-      if (!chest || !chest.itemKey) continue
-      if (!chest.frame?.item) continue
-      const list = destMap.get(chest.itemKey) || []
-      list.push(chest)
-      destMap.set(chest.itemKey, list)
-    }
-    if (!destMap.size) {
-      logger.warn('[frame-sort] 区域内没有展示框指引的箱子')
-      frameState.running = false
-      const result = { ok: false, reason: 'no_framed' }
-      frameState.lastResult = result
-      return result
-    }
-    if (!scan.unframedChests.length) {
-      logger.info('[frame-sort] 没有需要整理的箱子')
-      frameState.running = false
-      const result = { ok: true, moved: false, reason: 'nothing_to_sort', radius: scan.radius || rad }
-      frameState.lastResult = result
-      return result
-    }
-
-    let active = false
-    let sourcesMoved = 0
-    let acquiredLock = false
+    let aborted = false
     try {
-      if (state) {
-        const lockedByChat = state.currentTask && String(state.currentTask.name || '') === 'sort_chests'
-        if (!lockedByChat) {
-          try { bot.emit('external:begin', { source: 'cli', tool: 'sort_chests' }) } catch {}
-          state.externalBusy = true
-          acquiredLock = true
+      const actions = actionsMod.install(bot, { log: logger })
+      const parsedRadius = Number(radius)
+      const baseRadius = Number.isFinite(parsedRadius) ? parsedRadius : 20
+      const rad = Math.max(2, Math.min(80, baseRadius))
+      const runScan = typeof frameState.scanFn === 'function' ? frameState.scanFn : (r) => scanFrames(bot, r)
+      const scan = runScan(rad)
+      frameState.lastScan = scan
+      checkAbort()
+      if (!scan.ok) {
+        logger.warn('[frame-sort] 扫描失败: bot未就绪')
+        const result = { ok: false, reason: 'unready' }
+        frameState.lastResult = result
+        return result
+      }
+      const destMap = new Map()
+      for (const chest of scan.framedChests) {
+        if (!chest || !chest.itemKey) continue
+        if (!chest.frame?.item) continue
+        const list = destMap.get(chest.itemKey) || []
+        list.push(chest)
+        destMap.set(chest.itemKey, list)
+      }
+      if (!destMap.size) {
+        logger.warn('[frame-sort] 区域内没有展示框指引的箱子')
+        const result = { ok: false, reason: 'no_framed' }
+        frameState.lastResult = result
+        return result
+      }
+      if (!scan.unframedChests.length) {
+        logger.info('[frame-sort] 没有需要整理的箱子')
+        const result = { ok: true, moved: false, reason: 'nothing_to_sort', radius: scan.radius || rad }
+        frameState.lastResult = result
+        return result
+      }
+
+      let active = false
+      let sourcesMoved = 0
+      let acquiredLock = false
+      try {
+        if (state) {
+          const lockedByChat = state.currentTask && String(state.currentTask.name || '') === 'sort_chests'
+          if (!lockedByChat) {
+            try { bot.emit('external:begin', { source: 'cli', tool: 'sort_chests' }) } catch {}
+            state.externalBusy = true
+            acquiredLock = true
+          }
+        }
+        for (const source of scan.unframedChests) {
+          checkAbort()
+          const moved = await processSourceChest(source, destMap, actions)
+          if (moved) {
+            active = true
+            sourcesMoved++
+          }
+        }
+      } finally {
+        if (state && acquiredLock) {
+          state.externalBusy = false
+          try { bot.emit('external:end', { source: 'cli', tool: 'sort_chests' }) } catch {}
         }
       }
-      for (const source of scan.unframedChests) {
-        const moved = await processSourceChest(source, destMap, actions)
-        if (moved) {
-          active = true
-          sourcesMoved++
-        }
+      if (!active) logger.info('[frame-sort] 没有可转移的物品')
+      else logger.info('[frame-sort] 整理完成')
+      const result = {
+        ok: true,
+        moved: active,
+        sourcesMoved,
+        sourcesTotal: scan.unframedChests.length,
+        radius: scan.radius || rad
+      }
+      frameState.lastResult = result
+      return result
+    } catch (err) {
+      if (err?.code === ABORT_ERR_CODE) {
+        aborted = true
+        logger.warn('[frame-sort] 分类任务被中断')
+      } else {
+        throw err
       }
     } finally {
-      if (state && acquiredLock) {
-        state.externalBusy = false
-        try { bot.emit('external:end', { source: 'cli', tool: 'sort_chests' }) } catch {}
-      }
-      frameState.running = false
+      finishRun()
     }
-    if (!active) logger.info('[frame-sort] 没有可转移的物品')
-    else logger.info('[frame-sort] 整理完成')
-    const result = {
-      ok: true,
-      moved: active,
-      sourcesMoved,
-      sourcesTotal: scan.unframedChests.length,
-      radius: scan.radius || rad
+    if (aborted) {
+      const result = { ok: false, reason: 'aborted' }
+      frameState.lastResult = result
+      return result
     }
-    frameState.lastResult = result
-    return result
   }
 
   frameState.scanFn = (radius) => scanFrames(bot, radius)

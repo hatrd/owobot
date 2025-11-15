@@ -77,6 +77,7 @@ module.exports = function registerSkills (ctx) {
           case 'busy': return '当前忙于其他任务'
           case 'unready': return '还没准备好'
           case 'no_framed': return '附近没有展示框指引的箱子'
+          case 'aborted': return '分类任务已停止'
           default: return '分类失败'
         }
       })()
