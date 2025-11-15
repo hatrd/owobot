@@ -2,11 +2,12 @@
 
 let bot = null
 const fs = require('fs')
-const path = require('path')
 const { Vec3 } = require('vec3')
 const logging = require('./logging')
 const { MODULES } = require('./module-registry')
 const { prepareSharedState } = require('./state')
+const greetings = require('./greetings')
+const watchers = require('./watchers')
 const coreLog = logging.getLogger('core')
 
 function dlog (...args) { coreLog.debug(...args) }
@@ -14,89 +15,24 @@ function ts () { return new Date().toISOString() }
 
 // Shared state comes from loader to preserve across reloads
 let state = null
+let greetingManager = null
+let watcherManager = null
 
 // Listener references and timers for cleanup
 const listeners = []
-let fireWatcher = null
-let playerWatcher = null
-let explosionCooldownUntil = 0
-const RECENT_AI_REPLY_WINDOW_MS = 20 * 1000
 let teleportResetPromise = null
 function initAfterSpawn() {
-  // Reset greeting bookkeeping
-  if (!state?.greetedPlayers || typeof state.greetedPlayers.clear !== 'function') {
-    state.greetedPlayers = new Set()
-  }
-  state.greetedPlayers.clear()
-  if (!state?.pendingGreets || !(state.pendingGreets instanceof Map)) state.pendingGreets = new Map()
-  clearAllPendingGreets()
-  if (!state?.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
-  const nowTs = Date.now()
-  for (const [name, ts] of [...state.aiRecentReplies.entries()]) {
-    if (!Number.isFinite(ts) || nowTs - ts > RECENT_AI_REPLY_WINDOW_MS) state.aiRecentReplies.delete(name)
-  }
-
-  const players = bot && bot.players ? bot.players : {}
-  for (const username of Object.keys(players)) {
-    if (username && username !== bot.username) {
-      state.greetedPlayers.add(username)
-    }
-  }
-
-  state.readyForGreeting = true
-  state.hasSpawned = true
-
-  dlog('Init after spawn. Player snapshot:', Object.keys(players))
-  dlog('Greeted set primed with currently online players count =', state.greetedPlayers.size)
-
-  if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
-  fireWatcher = setInterval(() => {
-    extinguishNearbyFire().catch((err) => {
-      console.log('Fire watcher error:', err.message || err)
-    })
-  }, 1500)
-  
-  if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
-  playerWatcher = setInterval(() => {
-    // Only run when completely idle: no tasks, no locks, no goals
-    try {
-      const hasGoal = !!(bot.pathfinder && bot.pathfinder.goal)
-      const hasTask = !!(state?.currentTask)
-      const runnerBusy = !!(bot._skillRunnerState && bot._skillRunnerState.tasks && bot._skillRunnerState.tasks.size > 0)
-      const busy = state?.externalBusy || state?.holdItemLock || state?.autoLookSuspended || hasGoal || hasTask || runnerBusy || bot.currentWindow || bot.targetDigBlock
-      if (busy) return
-    } catch {}
-    const entity = bot.nearestEntity()
-    if (entity) {
-      try {
-        const name = String(entity.name || entity.displayName || '').toLowerCase()
-        if (entity.type === 'player') {
-          bot.lookAt(entity.position.offset(0, 1.6, 0))
-        } else if (entity.type === 'mob') {
-          if (name !== 'enderman') bot.lookAt(entity.position)
-        }
-      } catch {}
-    }
-  }, 120)
-
-  // Guard: explosion storms may thrash physics/pathfinder and trigger disconnects on some servers.
-  // On explosion, briefly clear goals and controls, and pause automations to let chunks/physics settle.
   try {
-    let lastExplosionAt = 0
-    const onExplosion = (pos, strength, affected, source) => {
-      const now = Date.now()
-      // Coalesce bursts
-      if (now - lastExplosionAt < 200) return
-      lastExplosionAt = now
-      try { coreLog.warn('Explosion near', pos ? `${pos.x},${pos.y},${pos.z}` : 'unknown', 'strength=', strength) } catch {}
-      explosionCooldownUntil = now + 1500
-      try { if (state) state.explosionCooldownUntil = explosionCooldownUntil } catch {}
-      try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
-      try { if (typeof bot.stopDigging === 'function') bot.stopDigging() } catch {}
-      try { bot.clearControlStates() } catch {}
-    }
-    on('explosion', onExplosion)
-  } catch {}
+    greetingManager?.onSpawn()
+  } catch (err) {
+    coreLog.warn('greeting init error:', err?.message || err)
+  }
+  try {
+    watcherManager?.onSpawn()
+  } catch (err) {
+    coreLog.warn('watcher init error:', err?.message || err)
+  }
+  state.hasSpawned = true
 }
 
 async function hardReset (reason) {
@@ -219,413 +155,6 @@ function offAll() {
   }
 }
 
-function clearAllPendingGreets() {
-  if (!state?.pendingGreets || typeof state.pendingGreets.clear !== 'function') {
-    state.pendingGreets = new Map()
-    return
-  }
-  for (const timeout of state.pendingGreets.values()) {
-    clearTimeout(timeout)
-  }
-  state.pendingGreets.clear()
-}
-
-const GREET_INITIAL_DELAY_MS = 5000
-const GREET_DEFAULT_SUFFIX = '☆ (≧▽≦)ﾉ'
-const GREET_ZONES_FILE = process.env.GREET_ZONES_FILE || path.join(__dirname, '..', 'data', 'greet-zones.json')
-const DEFAULT_GREETING_ZONES = [
-  {
-    name: 'siwuxie_wool',
-    x: -175,
-    y: 64,
-    z: 99,
-    radius: 50,
-    suffix: 'Siwuxie_log 的十六色羊毛机已经开机啦，现在 tpa 我免费领羊毛~',
-    enabled: true
-  }
-]
-
-function greetLogEnabled () { try { return Boolean(state?.greetLogEnabled) } catch { return false } }
-function greetLog (...args) { if (greetLogEnabled()) console.log('[GREET]', ...args) }
-
-function normalizeZone (zone) {
-  try {
-    if (!zone) return null
-    const name = String(zone.name || '').trim()
-    if (!name) return null
-    const sx = zone.x ?? zone.cx ?? zone.pos?.x
-    const sy = zone.y ?? zone.cy ?? zone.pos?.y
-    const sz = zone.z ?? zone.cz ?? zone.pos?.z
-    const radius = Number(zone.radius ?? zone.r)
-    const suffix = String(zone.suffix || '').trim()
-    if (![sx, sy, sz].every(v => Number.isFinite(Number(v)))) return null
-    if (!Number.isFinite(radius) || radius <= 0) return null
-    if (!suffix) return null
-    return {
-      name,
-      x: Number(sx),
-      y: Number(sy),
-      z: Number(sz),
-      radius,
-      suffix,
-      enabled: zone.enabled === false ? false : true
-    }
-  } catch { return null }
-}
-
-function readGreetingZonesFromFile () {
-  try {
-    const text = fs.readFileSync(GREET_ZONES_FILE, 'utf8')
-    const raw = JSON.parse(text)
-    if (!Array.isArray(raw)) throw new Error('expected array')
-    const zones = raw.map(normalizeZone).filter(Boolean)
-    return zones.length ? zones : null
-  } catch (err) {
-    if (err && err.code !== 'ENOENT') {
-      console.warn('[GREET] 读取配置失败:', err.message || err)
-    }
-    return null
-  }
-}
-
-function ensureDir (file) {
-  try { fs.mkdirSync(path.dirname(file), { recursive: true }) } catch {}
-}
-
-function writeGreetingZonesToFile (zones) {
-  try {
-    const data = Array.isArray(zones) ? zones.map(normalizeZone).filter(Boolean) : []
-    ensureDir(GREET_ZONES_FILE)
-    fs.writeFileSync(GREET_ZONES_FILE, JSON.stringify(data, null, 2), 'utf8')
-    console.log('[GREET] 已写入配置:', GREET_ZONES_FILE)
-    return true
-  } catch (err) {
-    console.warn('[GREET] 写入配置失败:', err.message || err)
-    return false
-  }
-}
-
-function initializeGreetingZones () {
-  if (!state) return
-  if (!Array.isArray(state.greetZones)) state.greetZones = []
-  if (typeof state.greetZonesSeeded !== 'boolean') state.greetZonesSeeded = false
-  if (state.greetZonesSeeded) return
-  const fromFile = readGreetingZonesFromFile()
-  if (fromFile && fromFile.length) {
-    state.greetZones = fromFile.map(z => ({ ...z }))
-    console.log('[GREET] 已加载外部问候区配置:', GREET_ZONES_FILE)
-  } else if (!state.greetZones.length) {
-    for (const zone of DEFAULT_GREETING_ZONES) {
-      const norm = normalizeZone(zone)
-      if (norm) state.greetZones.push(norm)
-    }
-  }
-  state.greetZonesSeeded = true
-}
-
-function collectGreetingSuffixes (opts = {}) {
-  try {
-    if (!state) return []
-    const staticZones = Array.isArray(state.greetZones) ? state.greetZones : []
-    const memoryZones = Array.isArray(state.worldMemoryZones) ? state.worldMemoryZones : []
-    const zones = staticZones.concat(memoryZones)
-    if (!zones.length) return []
-    const pos = bot?.entity?.position
-    if (!pos) return []
-    const currentDim = (() => {
-      try {
-        const raw = bot.game?.dimension
-        return typeof raw === 'string' ? raw.toLowerCase() : null
-      } catch { return null }
-    })()
-    const logIt = Boolean(opts.debug) || greetLogEnabled()
-    const suffixes = []
-    for (const zone of zones) {
-      if (!zone) continue
-      if (zone.enabled === false) continue
-      const suffix = typeof zone.suffix === 'string' ? zone.suffix.trim() : ''
-      if (!suffix) continue
-      const radius = Number(zone.radius)
-      if (!Number.isFinite(radius) || radius <= 0) continue
-      const zx = Number(zone.x ?? zone.cx ?? zone.pos?.x)
-      const zy = Number(zone.y ?? zone.cy ?? zone.pos?.y)
-      const zz = Number(zone.z ?? zone.cz ?? zone.pos?.z)
-      if (![zx, zy, zz].every(Number.isFinite)) continue
-      const center = new Vec3(zx, zy, zz)
-      const dist = pos.distanceTo(center)
-      const within = Number.isFinite(dist) && dist <= radius
-      const zoneDim = typeof zone.dim === 'string' ? zone.dim.toLowerCase() : null
-      if (zoneDim && currentDim && zoneDim !== currentDim) {
-        if (logIt) greetLog(`zone ${zone.name || '(unnamed)'} skipped dim mismatch zoneDim=${zoneDim} currentDim=${currentDim}`)
-        continue
-      }
-      if (logIt) greetLog(`zone ${zone.name || '(unnamed)'} enabled=${zone.enabled !== false} radius=${radius} dist=${Number.isFinite(dist) ? dist.toFixed(2) : 'nan'} within=${within}`)
-      if (!within) continue
-      suffixes.push(suffix)
-    }
-    if (logIt) greetLog('suffix result ->', suffixes)
-    return suffixes
-  } catch { return [] }
-}
-
-function handleGreetZoneCli (args = []) {
-  initializeGreetingZones()
-  const sub = String(args[0] || '').toLowerCase()
-  if (!sub || sub === 'list' || sub === 'ls') {
-    const zones = Array.isArray(state?.greetZones) ? state.greetZones : []
-    console.log(`[GREETZONE] 共${zones.length}个配置`)
-    zones.forEach((zone, idx) => {
-      try {
-        console.log(`[${idx}] ${zone.name || '未命名'} @ (${zone.x},${zone.y},${zone.z}) r=${zone.radius} enabled=${zone.enabled !== false} suffix="${zone.suffix || ''}"`)
-      } catch {}
-    })
-    if (!zones.length) console.log('[GREETZONE] 使用 .greetzone add <name> <x> <y> <z> <radius> <suffix...> 添加')
-    return
-  }
-
-  if (sub === 'add' || sub === 'set') {
-    if (args.length < 6) {
-      console.log('[GREETZONE] 用法: .greetzone add <名称> <x> <y> <z> <半径> <后缀...>')
-      return
-    }
-    const name = String(args[1] || '').trim()
-    const payload = {
-      name,
-      x: Number(args[2]),
-      y: Number(args[3]),
-      z: Number(args[4]),
-      radius: Number(args[5]),
-      suffix: args.slice(6).join(' ').trim(),
-      enabled: true
-    }
-    const zone = normalizeZone(payload)
-    if (!zone) { console.log('[GREETZONE] 参数无效，请确保名称/坐标/半径/后缀正确'); return }
-    const zones = state.greetZones
-    const idx = zones.findIndex((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
-    if (idx >= 0) zones[idx] = zone
-    else zones.push(zone)
-    console.log(`[GREETZONE] ${idx >= 0 ? '更新' : '添加'} ${name}`)
-    return
-  }
-
-  if (sub === 'remove' || sub === 'rm' || sub === 'del' || sub === 'delete') {
-    const name = String(args[1] || '').trim()
-    if (!name) { console.log('[GREETZONE] 用法: .greetzone remove <名称>'); return }
-    const zones = state.greetZones
-    const idx = zones.findIndex((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
-    if (idx < 0) { console.log(`[GREETZONE] 未找到 ${name}`); return }
-    zones.splice(idx, 1)
-    console.log(`[GREETZONE] 已移除 ${name}`)
-    return
-  }
-
-  if (sub === 'enable' || sub === 'on') {
-    const name = String(args[1] || '').trim()
-    if (!name) { console.log('[GREETZONE] 用法: .greetzone enable <名称>'); return }
-    const zone = state.greetZones.find((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
-    if (!zone) { console.log(`[GREETZONE] 未找到 ${name}`); return }
-    zone.enabled = true
-    console.log(`[GREETZONE] 已启用 ${name}`)
-    return
-  }
-
-  if (sub === 'disable' || sub === 'off') {
-    const name = String(args[1] || '').trim()
-    if (!name) { console.log('[GREETZONE] 用法: .greetzone disable <名称>'); return }
-    const zone = state.greetZones.find((z) => String(z?.name || '').toLowerCase() === name.toLowerCase())
-    if (!zone) { console.log(`[GREETZONE] 未找到 ${name}`); return }
-    zone.enabled = false
-    console.log(`[GREETZONE] 已禁用 ${name}`)
-    return
-  }
-
-  if (sub === 'clear') {
-    state.greetZones.splice(0, state.greetZones.length)
-    console.log('[GREETZONE] 已清空所有配置（不会自动恢复默认）')
-    return
-  }
-
-  if (sub === 'reset') {
-    state.greetZones.splice(0, state.greetZones.length)
-    state.greetZonesSeeded = false
-    initializeGreetingZones()
-    console.log('[GREETZONE] 已重置到默认配置')
-    return
-  }
-
-  if (sub === 'reload') {
-    const zones = readGreetingZonesFromFile()
-    if (zones && zones.length) {
-      state.greetZones = zones.map(z => ({ ...z }))
-      console.log('[GREETZONE] 已重新加载配置文件')
-    } else {
-      console.log('[GREETZONE] 配置文件不存在或内容无效，保持原状态')
-    }
-    return
-  }
-
-  if (sub === 'save') {
-    const ok = writeGreetingZonesToFile(state.greetZones || [])
-    if (!ok) console.log('[GREETZONE] 保存失败（查看日志）')
-    return
-  }
-
-  if (sub === 'file') {
-    console.log('[GREETZONE] 配置文件路径 =', GREET_ZONES_FILE)
-    return
-  }
-
-  if (sub === 'help') {
-    console.log('[GREETZONE] 指令: list|add|remove|enable|disable|clear|reset|reload|save|file')
-    console.log('  add 示例: .greetzone add sheep -175 64 10 40 来领取羊毛呀')
-    return
-  }
-
-  console.log('[GREETZONE] 未知子命令，使用 .greetzone help 查看用法')
-}
-
-function handleGreetLogCli (args = []) {
-  const sub = String(args[0] || 'status').toLowerCase()
-  switch (sub) {
-    case 'on':
-    case 'enable':
-      state.greetLogEnabled = true
-      console.log('[GREET] 调试日志已开启')
-      break
-    case 'off':
-    case 'disable':
-      state.greetLogEnabled = false
-      console.log('[GREET] 调试日志已关闭')
-      break
-    case 'status': {
-      const pos = bot?.entity?.position
-      console.log('[GREET] 调试日志状态 =', state.greetLogEnabled ? '开启' : '关闭')
-      if (pos) console.log(`[GREET] 当前位置 = ${pos.x.toFixed(2)},${pos.y.toFixed(2)},${pos.z.toFixed(2)}`)
-      const zones = Array.isArray(state?.greetZones) ? state.greetZones.length : 0
-      console.log('[GREET] 区域配置数量 =', zones)
-      break
-    }
-    case 'sample': {
-      const suffixes = collectGreetingSuffixes({ debug: true })
-      console.log('[GREET] 即时匹配后缀 =', suffixes.length ? suffixes.join(' | ') : '无')
-      break
-    }
-    case 'help':
-      console.log('[GREET] 用法: .greetlog on|off|status|sample')
-      console.log('  sample 会立即计算一次并打印详情')
-      break
-    default:
-      console.log('[GREET] 未知子命令，使用 .greetlog help 查看用法')
-  }
-}
-
-function buildGreeting (username) {
-  const now = new Date()
-  const hour = now.getHours()
-
-  let salutation
-  if (hour >= 5 && hour < 11) salutation = '早上好呀'
-  else if (hour >= 11 && hour < 14) salutation = '午安午安~'
-  else if (hour >= 14 && hour < 18) salutation = '下午好喔'
-  else if (hour >= 18 && hour < 23) salutation = '晚上好呀'
-  else salutation = '深夜好喔'
-
-  const suffixes = collectGreetingSuffixes()
-  greetLog('build greeting for', username, 'suffixes=', suffixes)
-  const parts = [GREET_DEFAULT_SUFFIX, ...suffixes]
-  const extra = parts.length ? `，${parts.join(' ')}` : ''
-  return `${salutation} ${username}酱~ 这里是${bot.username}${extra}`
-}
-
-function resolvePlayerUsername (player) {
-  if (!player) return null
-  if (typeof player === 'string') return player
-  if (player.username && typeof player.username === 'string') return player.username
-  if (player.name && typeof player.name === 'string') return player.name
-  if (player.profile?.name && typeof player.profile.name === 'string') return player.profile.name
-  if (player.uuid && bot.players) {
-    const match = Object.values(bot.players).find((entry) => entry?.uuid === player.uuid && typeof entry.username === 'string')
-    if (match?.username) return match.username
-  }
-  if (typeof player.displayName?.toString === 'function') {
-    const rendered = player.displayName.toString().trim()
-    if (rendered) {
-      const sanitized = rendered.replace(/\u00a7./g, '').trim()
-      return sanitized || rendered
-    }
-  }
-  if (player.entity?.username && typeof player.entity.username === 'string') return player.entity.username
-  return null
-}
-
-function scheduleGreeting (username) {
-  greetLog('queue greeting for', username, 'in', `${GREET_INITIAL_DELAY_MS}ms`)
-  const timeout = setTimeout(() => {
-    state.pendingGreets.delete(username)
-    if (state.greetedPlayers.has(username)) {
-      greetLog('skip greet (already greeted at dispatch)', username)
-      dlog('Skip greeting (race): already greeted:', username)
-      return
-    }
-    const message = buildGreeting(username)
-    greetLog('send greeting', username, 'message=', message)
-    dlog('Sending greeting to', username, 'message =', message)
-    try { bot.chat(message) } catch (e) { console.error('Chat error:', e) }
-    state.greetedPlayers.add(username)
-  }, GREET_INITIAL_DELAY_MS)
-
-  greetLog('scheduled greeting', username)
-  dlog(`Scheduled greeting in ${GREET_INITIAL_DELAY_MS}ms for:`, username)
-  state.pendingGreets.set(username, timeout)
-}
-
-async function extinguishNearbyFire () {
-  if (state.extinguishing || bot.targetDigBlock) {
-    dlog('Skip fire check: busy =', { extinguishing: state.extinguishing, hasTargetDigBlock: Boolean(bot.targetDigBlock) })
-    return
-  }
-
-  const fireBlock = bot.findBlock({
-    matching: (block) => block && block.name === 'fire',
-    maxDistance: 6
-  })
-
-  if (!fireBlock) {
-    dlog('No nearby fire found')
-    return
-  }
-
-  state.extinguishing = true
-
-  try {
-    await bot.lookAt(fireBlock.position.offset(0.5, 0.5, 0.5), true)
-    await bot.dig(fireBlock)
-    console.log(`Extinguished fire at ${fireBlock.position}`)
-  } catch (err) {
-    if (err?.message === 'Block is not currently diggable') return
-    console.log('Failed to extinguish fire:', err.message || err)
-  } finally {
-    state.extinguishing = false
-    dlog('Extinguish attempt complete')
-  }
-}
-
-function summarizePlayer (player) {
-  try {
-    if (!player) return player
-    const summary = {
-      username: player.username ?? player.name ?? player?.profile?.name ?? null,
-      name: player.name ?? null,
-      uuid: player.uuid ?? null,
-      hasEntity: Boolean(player.entity),
-      keys: Object.keys(player || {})
-    }
-    return summary
-  } catch (e) {
-    return { error: String(e) }
-  }
-}
-
 function activate (botInstance, options = {}) {
   bot = botInstance
   // Raise listener limits to avoid MaxListeners warnings under heavy dig/reload cycles
@@ -650,6 +179,10 @@ function activate (botInstance, options = {}) {
   try { logging.init(state) } catch {}
   // expose shared state on bot for modules that only receive bot
   try { bot.state = state } catch {}
+
+  function registerCleanup (fn) {
+    try { if (typeof fn === 'function') state.cleanups.push(fn) } catch {}
+  }
 
   if (!state.chatTeleportPatched) {
     if (!bot || typeof bot.chat !== 'function') {
@@ -678,7 +211,16 @@ function activate (botInstance, options = {}) {
   }
 
   state.greetZonesSeeded = false
-  initializeGreetingZones()
+  try {
+    greetingManager = greetings.install(bot, { state, on, registerCleanup, dlog })
+  } catch (err) {
+    coreLog.warn('greeting install error:', err?.message || err)
+  }
+  try {
+    watcherManager = watchers.install(bot, { state, on, registerCleanup, dlog })
+  } catch (err) {
+    coreLog.warn('watcher install error:', err?.message || err)
+  }
 
   // Track current external task for AI context (source: chat/cli -> player/auto)
   on('external:begin', (info) => {
@@ -705,10 +247,6 @@ function activate (botInstance, options = {}) {
     } catch {}
   })
 
-  function registerCleanup (fn) {
-    try { if (typeof fn === 'function') state.cleanups.push(fn) } catch {}
-  }
-
   // Event: display server messages
   on('message', (message) => {
     try {
@@ -718,15 +256,6 @@ function activate (botInstance, options = {}) {
       console.log(out)
     } catch (e) {
       try { console.log(String(message)) } catch {}
-    }
-  })
-
-  on('cli', ({ cmd, args }) => {
-    const c = String(cmd || '').toLowerCase()
-    if (c === 'greetzone') {
-      handleGreetZoneCli(Array.isArray(args) ? args : [])
-    } else if (c === 'greetlog') {
-      handleGreetLogCli(Array.isArray(args) ? args : [])
     }
   })
 
@@ -819,76 +348,11 @@ function activate (botInstance, options = {}) {
     runOneShotIfPresent()
   }
 
-  on('playerJoined', (player) => {
-    if (state && state.greetingEnabled === false) return
-    dlog('playerJoined event:', summarizePlayer(player))
-    const username = resolvePlayerUsername(player)
-    if (!username) {
-      greetLog('skip greet: unresolved username from player payload')
-      dlog('Skip greeting: cannot resolve username from player:', player)
-      return
-    }
-    greetLog('player joined', username, 'pos=', (() => { try { const p = player?.entity?.position; return p ? `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}` : 'unknown' } catch { return 'unknown' } })())
-    if (username === bot.username) {
-      greetLog('skip greet: joined player is bot itself', username)
-      dlog('Skip greeting: joined player is the bot itself:', username)
-      return
-    }
-    if (!state.readyForGreeting) {
-      greetLog('skip greet: bot not ready (readyForGreeting=false)', username)
-      dlog('Skip greeting: not readyForGreeting yet')
-      return
-    }
-    if (state.greetedPlayers.has(username)) {
-      greetLog('skip greet: already greeted', username)
-      dlog('Skip greeting: already greeted:', username)
-      return
-    }
-    if (state.pendingGreets.has(username)) {
-      greetLog('skip greet: already pending', username)
-      dlog('Skip greeting: already pending:', username)
-      return
-    }
-    if (state.aiRecentReplies instanceof Map) {
-      const ts = state.aiRecentReplies.get(username)
-      if (Number.isFinite(ts) && Date.now() - ts < RECENT_AI_REPLY_WINDOW_MS) {
-        greetLog('skip greet: recent AI reply exists', username)
-        dlog('Skip greeting: recent AI reply for', username)
-        state.greetedPlayers.add(username)
-        return
-      }
-    }
-
-    scheduleGreeting(username)
-  })
-
-  on('playerLeft', (player) => {
-    if (state && state.greetingEnabled === false) return
-    const username = resolvePlayerUsername(player)
-    dlog('playerLeft event:', summarizePlayer(player), 'resolved =', username)
-    if (!username) {
-      greetLog('player left but username unresolved (no cleanup)')
-      return
-    }
-    greetLog('player left', username)
-    state.greetedPlayers.delete(username)
-    if (state.aiRecentReplies instanceof Map) state.aiRecentReplies.delete(username)
-    const timeout = state.pendingGreets.get(username)
-    if (timeout) {
-      clearTimeout(timeout)
-      state.pendingGreets.delete(username)
-      greetLog('cancel pending greeting due to leave', username)
-      dlog('Cancelled pending greeting for left player:', username)
-    }
-  })
-
   on('end', () => {
     dlog('Bot connection closed (impl cleanup)')
-    if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
-    if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
-    clearAllPendingGreets()
-    state.greetedPlayers.clear()
-    state.readyForGreeting = false
+    try { greetingManager?.deactivate() } catch {}
+    try { watcherManager?.shutdown() } catch {}
+    greetingManager = null
   })
 
   on('kicked', (reason) => { dlog('Kicked:', reason) })
@@ -901,9 +365,10 @@ function activate (botInstance, options = {}) {
 function deactivate () {
   try {
     offAll()
-    if (fireWatcher) clearInterval(fireWatcher), (fireWatcher = null)
-    if (playerWatcher) clearInterval(playerWatcher), (playerWatcher = null)
-    clearAllPendingGreets()
+    try { greetingManager?.deactivate() } catch {}
+    try { watcherManager?.shutdown() } catch {}
+    greetingManager = null
+    watcherManager = null
     // Run module cleanups registered during install
     if (Array.isArray(state?.cleanups)) {
       for (const fn of state.cleanups.splice(0)) {
