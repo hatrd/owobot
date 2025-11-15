@@ -1,5 +1,5 @@
 const { oreLabelFromOnly } = require('../lib/ore')
-const { countItemByName, ensureItemEquipped } = require('../lib/inventory')
+const { countItemByName, ensureItemEquipped, itemsMatchingName } = require('../lib/inventory')
 const logging = require('../../logging')
 
 module.exports = function registerCombat (ctx) {
@@ -2531,7 +2531,7 @@ module.exports = function registerCombat (ctx) {
           }
           const nm = spec?.name
           if (!nm) continue
-          const list = itemsMatchingName(nm, { source: bot.inventory?.items() || [], allowPartial: true, includeArmor: false, includeOffhand: true, includeHeld: true })
+          const list = itemsMatchingName(bot, nm, { source: bot.inventory?.items() || [], allowPartial: true, includeArmor: false, includeOffhand: true, includeHeld: true })
           if (!list.length) continue
           if (cnt != null) {
             let remaining = Math.max(0, Number(cnt))

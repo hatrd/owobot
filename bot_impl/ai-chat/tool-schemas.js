@@ -1,7 +1,7 @@
 const ACTION_TOOL_DEFINITIONS = [
   {
     name: 'observe_detail',
-    description: 'Inspect nearby world context (entities, drops, inventory, biome) without changing the world.',
+    description: 'Inspect nearby world context (entities, drops) without changing the world.',
     parameters: {
       type: 'object',
       properties: {
