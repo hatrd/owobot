@@ -54,7 +54,7 @@ This document explains how `bot_impl/ai-chat.js` wires the trigger-based DeepSee
 - **Recovery:** Failures restore `lastSeq`, `pendingByUser`, and re-arm timers to avoid losing messages.
 
 ## 7. CLI & Ops Controls
-- **`.ai ...`:** Existing controls for enabling/disabling, swapping API keys/models, budgeting, reply length, and context windows. `.ai clear` now resets both `state.aiRecent` and `state.aiPulse.lastSeq` to keep transcripts aligned。常用上下文调节：`.ai context recent 32|64`、`.ai context window 600`、`.ai context recentmax 400`。
+- **`.ai ...`:** Existing controls for enabling/disabling, swapping API keys/models, budgeting, reply length, and context windows. 这些 CLI 现在集中在 `bot_impl/ai-chat/cli.js` 中，便于维护与扩展。`.ai clear` 会同时重置 `state.aiRecent` 与 `state.aiPulse.lastSeq`，保持热重载后一致。常用上下文调节：`.ai context recent 32|64`、`.ai context window 600`、`.ai context recentmax 400`。
 - **`.pulse status|on|off|now`:**
   - Proactive replies start **disabled by default**; run `.pulse on` (or pass `--greet on`?) to enable during a session.
   - `status` prints pending counts, active-session totals, last flush time/reason, and top offending players.
