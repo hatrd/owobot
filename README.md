@@ -34,12 +34,12 @@ Mineflayer bot with hot reload and optional AI chat.
   - BlueMap: `http(s)://<host>/<prefix>/maps/<mapId>/live/players.json`.
 - Behavior by API type:
   - Legacy API
-    - Supports filters on `world|dim` and `armor_*` / `health_*` thresholds.
-    - Output includes health/armor when present.
+    - Supports `world|dim` filters (armor/health filters were removed after upstream API changes).
+    - Output currently includes name/world/coordinates; health/armor fields are no longer provided.
   - BlueMap
     - Discovers all maps via `<base>/settings.json` (reads `maps` and `liveDataRoot`) and queries each `/<liveDataRoot>/<mapId>/live/players.json`.
     - Uses `foreign:false` per map to determine the player’s actual dimension.
-    - Health/armor are not provided; output omits them. If a query asks for health/armor (or uses `armor_*` / `health_*` filters), the bot will reply it doesn’t know.
+    - Health/armor are not provided; output omits them. If a query asks for health/armor, the bot will reply it doesn’t know.
 - Custom worlds: supported automatically via BlueMap `settings.json` map list.
 - Examples:
   - BlueMap: `MAP_API_URL=http://example.com/maps/world/live/players.json npm start`
@@ -48,34 +48,33 @@ Mineflayer bot with hot reload and optional AI chat.
 
 ## AI Chat Usage
 - Trigger: first 3 alnum chars of bot name (e.g. `owk`).
-- Info queries (how many/any/which/where/distance): answer from context; use `observe_detail` only if needed; do not call world‑changing tools.
-- Actions: output a single line `TOOL {"tool":"<name>","args":{...}}` with no extra text.
+- Info queries (how many/any/which/where/distance): answer from context; call `observe_detail` only if needed; never mutate the world just to respond.
+- Actions: describe the goal plainly. DeepSeek uses function calling to pick from the allowlisted tools automatically (see `node scripts/list-tools.js` for the current schema).
 - Safety defaults: never attack players unless explicitly named; do not dig unless `dig:true`.
 - Immediate stop: natural language “stop/cancel/停止/停下” maps to `reset{}`.
 
 Examples
-- Defend current spot: say “owk, 守点清怪” → `defend_area{}`
-- Defend a player (follow + protect): `TOOL {"tool":"defend_player","args":{"name":"Ameyaku"}}`
-- Right-click mount a player (empty hand): `TOOL {"tool":"mount_player","args":{"name":"Ameyaku"}}`
-- Shoot nearest iron golem with bow: `TOOL {"tool":"range_attack","args":{"match":"iron_golem"}}`
-- Go to nearest bed: `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
-- Toss main‑hand: `TOOL {"tool":"toss","args":{"slot":"hand"}}`
+- Defend current spot: say “owk, 守点清怪” → function call `defend_area{}`
+- Defend a player (follow + protect): “owk, 保护 Ameyaku” → `defend_player{"name":"Ameyaku"}`
+- Right-click mount a player (empty hand): “owk, 来坐我身上” → `mount_player{"name":"<requester>"}` (name auto-fills to the speaker)
+- Shoot nearest iron golem with bow: “owk, 弓射最近的铁傀儡” → `range_attack{"match":"iron_golem"}`
+- Go to nearest bed: “owk, 去最近的床” → `goto_block{"match":"bed","radius":48}`
+- Toss main-hand: “owk, 丢掉主手物品” → `toss{"slot":"hand"}`
 
 ## Highlights
 - Hot reload by editing `bot_impl/`; shared state is preserved across reloads when possible.
-- DeepSeek integration: AI routes via TOOL calls on a safe toolset.
+- DeepSeek integration: AI routes via DeepSeek function calling on a safe toolset.
 - Built-in automations cover survival chores and can be toggled via CLI commands.
 
 ## Built‑in Behaviors
 - Auto eat/back/gear/armor craft/fish/swim/plant/stash; iron-nugget follow; periodic fire watch; auto bed sleep; inventory compression; frame-based sorter; `/tpa` helper; optional AI chat.
 
-## Pathfinding to Nearest Block
 - Tool: `goto_block{names?|name?|match?, radius?, range?, dig?}` (no digging by default)
-- Examples:
-  - Bed: `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48}}`
-  - Force dig if blocked: `TOOL {"tool":"goto_block","args":{"match":"bed","radius":48,"dig":true}}`
-  - Crafting table: `TOOL {"tool":"goto_block","args":{"name":"crafting_table"}}`
-  - Logs: `TOOL {"tool":"goto_block","args":{"match":"_log","radius":32}}`
+- Example arguments:
+  - Bed: `{"match":"bed","radius":48}`
+  - Force dig if blocked: `{"match":"bed","radius":48,"dig":true}`
+  - Crafting table: `{"name":"crafting_table"}`
+  - Logs: `{"match":"_log","radius":32}`
 Note: approaching a bed will attempt to sleep automatically.
 
 Default digging policy (simplified)
@@ -92,7 +91,7 @@ Default digging policy (simplified)
 ## Farming & Ranching
 - Harvest and replant crops: `harvest{only?, radius?, replant?, sowOnly?}`
 - Feed animals: `feed_animals{species?, item?, radius?, max?}`
-  - Example: feed nearby cows with wheat: `TOOL {"tool":"feed_animals","args":{"species":"cow","item":"wheat"}}`
+  - Example: feed nearby cows with wheat: `{"species":"cow","item":"wheat"}`
 ## CLI Commands
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`; buttons default to `on=solid`, `spacing=1`)
@@ -108,8 +107,8 @@ Default digging policy (simplified)
 ## Farming
 - Harvest and replant crops: `harvest{only?, radius?, replant?}`
   - Examples:
-    - Harvest and replant nearby potatoes: `TOOL {"tool":"harvest","args":{"only":"potato"}}`
-    - Auto-detect crops (harvest mature and replant same type): `TOOL {"tool":"harvest","args":{}}`
+    - Harvest and replant nearby potatoes: `{"only":"potato"}`
+    - Auto-detect crops (harvest mature and replant same type): `{}`
 
 ## Hot Reload
 - `bot.js` watches `bot_impl/`, unloads old modules, calls `deactivate()`, then loads the new `index.js`.

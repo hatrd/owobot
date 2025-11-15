@@ -1,3 +1,7 @@
+const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
+
+const TOOL_FUNCTIONS = buildToolFunctionList()
+
 function createChatExecutor ({
   state,
   bot,
@@ -94,8 +98,7 @@ function createChatExecutor ({
     const fallback = [
       '你是Minecraft服务器中的简洁助手。',
       '风格：中文、可爱、极简、单句。',
-      '如需执行动作，可先说一句话，再单独输出一行：TOOL {"tool":"<名字>","args":{...}}；若无需动作，仅回复文本。',
-      '可用工具: observe_detail{what,radius?,max?}, observe_players{names?,world?|dim?,armor_(lt|lte|gt|gte|eq)?,health_(lt|lte|gt|gte|eq)?,max?}, goto{x,y,z,range?}, goto_block{names?|name?|match?,radius?,range?,dig?}, defend_area{radius?,tickMs?,dig?}, defend_player{name,radius?,followRange?,tickMs?,dig?}, hunt_player{name,range?,durationMs?}, follow_player{name,range?}, reset{}, equip{name,dest?}, toss{items:[{name|slot,count?},...],all?}, withdraw{items:[{name,count?},...],all?,radius?,includeBarrel?,multi?}, deposit{items:[{name|slot,count?},...],all?,radius?,includeBarrel?,keepEquipped?,keepHeld?,keepOffhand?}, pickup{names?|match?,radius?,max?,until?}, place_blocks{item,on:{top_of:[...]},area:{radius?,origin?},max?,spacing?,collect?}, gather{only?|names?|match?,radius?,height?,stacks?|count?,collect?}, harvest{only?,radius?,replant?,sowOnly?}, feed_animals{species?,item?,radius?,max?}, autofish{radius?,debug?}, mount_near{radius?,prefer?}, mount_player{name,range?}, range_attack{name?,match?,radius?,followRange?,durationMs?}, dismount{}.',
+      '如需执行动作，请调用系统提供的函数工具（函数描述由API告知）；若无需动作，仅回复文本。',
       '回答优先使用已提供的“游戏上下文”；若是统计/查询上下文类问题，直接回答。上下文不足可用 observe_detail 查询信息。',
       '关于全服玩家坐标等信息（如“盔甲=0/≤10、在末地/下界/主世界、多人名单”），调用 observe_players{...}.',
       '清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；明确指名“追杀/攻击/追击 <玩家名>”才使用 hunt_player。',
@@ -182,7 +185,8 @@ function createChatExecutor ({
       messages,
       temperature: 0.2,
       max_tokens: Math.max(120, Math.min(512, state.ai.maxTokensPerCall || 256)),
-      stream: false
+      stream: false,
+      tools: TOOL_FUNCTIONS
     }
     const ac = new AbortController()
     ctrl.abort = ac
@@ -199,21 +203,8 @@ function createChatExecutor ({
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
       const data = await res.json()
-      const reply = data?.choices?.[0]?.message?.content || ''
-      const toolMatch = /\bTOOL\b/.exec(reply)
-      if (toolMatch) {
-        const beforeTool = reply.slice(0, toolMatch.index)
-        const afterToolRaw = reply.slice(toolMatch.index + toolMatch[0].length)
-        const jsonStr = extractJsonObject(afterToolRaw)
-        if (!jsonStr) return H.trimReply(beforeTool || reply, maxReplyLen || 120)
-        const speech = beforeTool ? H.trimReply(beforeTool, maxReplyLen || 120) : ''
-        let payload = null
-        try { payload = JSON.parse(jsonStr) } catch {}
-        if (payload && payload.tool) {
-          const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen })
-          return handled
-        }
-      }
+      const choice = data?.choices?.[0]?.message || {}
+      const reply = choice?.content || ''
       const usage = data?.usage || {}
       const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
       const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : estTokensFromText(reply)
@@ -222,6 +213,19 @@ function createChatExecutor ({
         const delta = (inTok / 1000) * (state.ai.priceInPerKT || 0) + (outTok / 1000) * (state.ai.priceOutPerKT || 0)
         log.info('usage inTok=', inTok, 'outTok=', outTok, 'cost+=', delta.toFixed(4))
       }
+      const toolCalls = extractToolCalls(choice)
+      if (toolCalls.length) {
+        let speech = reply ? H.trimReply(reply, maxReplyLen || 120) : ''
+        let finalText = ''
+        for (const call of toolCalls) {
+          const payload = normalizeToolPayload(call)
+          if (!payload || !payload.tool) continue
+          const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen })
+          if (handled) finalText = handled
+          speech = ''
+        }
+        return finalText
+      }
       return H.trimReply(reply, maxReplyLen || 120)
     } finally {
       clearTimeout(timeout)
@@ -229,31 +233,25 @@ function createChatExecutor ({
     }
   }
 
-  function extractJsonObject (raw) {
-    if (!raw) return null
-    let i = 0
-    while (i < raw.length && /\s/.test(raw[i])) i++
-    if (raw[i] !== '{') return null
-    let depth = 0
-    let inString = false
-    let prev = ''
-    for (let j = i; j < raw.length; j++) {
-      const ch = raw[j]
-      if (inString) {
-        if (ch === '"' && prev !== '\\') inString = false
-      } else {
-        if (ch === '"') {
-          inString = true
-        } else if (ch === '{') {
-          depth++
-        } else if (ch === '}') {
-          depth--
-          if (depth === 0) return raw.slice(i, j + 1)
-        }
+  function extractToolCalls (message) {
+    if (!message || typeof message !== 'object') return []
+    if (Array.isArray(message.tool_calls)) return message.tool_calls.filter(Boolean)
+    if (message.function_call) return [{ id: message.id || 'fn-0', function: message.function_call }]
+    return []
+  }
+
+  function normalizeToolPayload (toolCall) {
+    if (!toolCall || typeof toolCall !== 'object') return null
+    const fn = toolCall.function || toolCall
+    if (!fn || !fn.name) return null
+    let args = {}
+    if (fn.arguments) {
+      try { args = JSON.parse(fn.arguments) } catch (err) {
+        log?.warn && log.warn('tool args parse error', err?.message || err, fn.arguments)
+        args = {}
       }
-      prev = ch
     }
-    return null
+    return { tool: fn.name, args }
   }
 
   async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen }) {
@@ -283,7 +281,6 @@ function createChatExecutor ({
       }
     } catch {}
     const tools = actionsMod.install(bot, { log })
-    const allow = new Set(['hunt_player','defend_area','defend_player','follow_player','goto','goto_block','reset','equip','toss','pickup','gather','harvest','feed_animals','place_blocks','light_area','deposit','withdraw','autofish','mount_near','mount_player','range_attack','dismount','observe_detail','observe_players','sort_chests'])
     if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(toolName)) {
       return H.trimReply('我这就看看…', maxReplyLen || 120)
     }
@@ -294,7 +291,7 @@ function createChatExecutor ({
         if (name) payload = { tool: 'mount_player', args: { name } }
       }
     }
-    if (!allow.has(toolName)) return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
+    if (!isActionToolAllowed(toolName)) return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
     if (speech) pulse.sendChatReply(username, speech)
     try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
     let res

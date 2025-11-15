@@ -20,7 +20,7 @@ This document explains how `bot_impl/ai-chat.js` wires the trigger-based DeepSee
 5. **LLM call (`callAI`):**
    - Builds a system prompt listing available tools and safety notes.
    - Applies budget checks via `projectedCostForCall`/`canAfford`.
-   - Supports tool calls by parsing `TOOL {...}` blocks and routing through `actions.run()` with allowlists and intent guards.
+   - Sends the DeepSeek function-calling schema (generated from `bot_impl/ai-chat/tool-schemas.js`) so replies land in `message.tool_calls`; each call is routed through `actions.run()` with allowlists and intent guards.
 6. **Reply emission:** `sendChatReply` sends chat, records it in `state.aiRecent`, notes the per-user response time, and opens/refreshes the player's activation session (see Section 3). All tool acknowledgements also flow through `sendChatReply`.
 
 ## 3. Activation Sessions & Follow-Ups
