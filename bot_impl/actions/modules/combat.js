@@ -24,26 +24,27 @@ module.exports = function registerCombat (ctx) {
     const m = new Movements(bot, mcData)
     m.allowSprinting = true; m.canDig = (args.dig === true)
     bot.pathfinder.setMovements(m)
-    huntTarget = String(name)
-    if (huntInterval) { try { clearInterval(huntInterval) } catch {}; huntInterval = null }
+    shared.huntTarget = String(name)
+    const targetName = shared.huntTarget
+    if (shared.huntInterval) { try { clearInterval(shared.huntInterval) } catch {}; shared.huntInterval = null }
     const ctx = {}
     const startedAt = Date.now()
     const iv = setInterval(() => {
       try {
-        if (durationMs != null && (Date.now() - startedAt) > Number(durationMs)) { try { clearInterval(huntInterval) } catch {}; huntInterval = null; return }
-        const ent = bot.players[huntTarget]?.entity
+        if (durationMs != null && (Date.now() - startedAt) > Number(durationMs)) { try { clearInterval(iv) } catch {}; if (shared.huntInterval === iv) shared.huntInterval = null; if (shared.huntTarget === targetName) shared.huntTarget = null; return }
+        const ent = bot.players[targetName]?.entity
         if (!ent) return
         bot.pathfinder.setGoal(new goals.GoalFollow(ent, range), true)
         try { pvp.pvpTick(bot, ent, ctx) } catch {}
       } catch {}
     }, Math.max(150, tickMs))
-    huntInterval = iv
+    shared.huntInterval = iv
     // Ensure hard reset truly stops hunting: clear this specific timer on stop/end
-    const stopHunt = () => { try { clearInterval(iv) } catch {}; if (huntInterval === iv) huntInterval = null; huntTarget = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} }
+    const stopHunt = () => { try { clearInterval(iv) } catch {}; if (shared.huntInterval === iv) shared.huntInterval = null; if (shared.huntTarget === targetName) shared.huntTarget = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} }
     try { bot.once('agent:stop_all', stopHunt) } catch {}
     try { bot.once('end', stopHunt) } catch {}
     try { if (typeof registerCleanup === 'function') registerCleanup(() => stopHunt()) } catch {}
-    return ok(`开始追击 ${huntTarget}` + (durationMs != null ? ` (持续${Math.round(Number(durationMs)/1000)}s)` : ''))
+    return ok(`开始追击 ${targetName}` + (durationMs != null ? ` (持续${Math.round(Number(durationMs)/1000)}s)` : ''))
   }
 
   // --- Mining ---
