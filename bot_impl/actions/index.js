@@ -81,7 +81,14 @@ function install (bot, options = {}) {
   function run (tool, args) {
     const fn = ctx.registry.get(tool)
     if (!fn) return { ok: false, msg: '未知工具' }
-    return Promise.resolve().then(() => fn(args || {})).catch((e) => ({ ok: false, msg: String(e?.message || e) }))
+    return Promise
+      .resolve()
+      .then(() => fn(args || {}))
+      .catch((e) => {
+        const errMsg = String(e?.message || e)
+        try { ctx.log?.error && ctx.log.error('action error', { tool, err: errMsg }) } catch {}
+        return { ok: false, msg: '执行失败，请稍后再试~', error: errMsg }
+      })
   }
 
   function list () { return Array.from(ctx.registry.keys()) }

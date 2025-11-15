@@ -344,10 +344,6 @@ function detail (bot, args = {}) {
     list.sort((a, b) => a.d - b.d)
     return { ok: true, msg: `附近方块${list.length}个(半径${r})`, data: list.slice(0, max) }
   }
-  if (what === 'inventory') {
-    const inv = collectInventorySummary(bot, 999)
-    return { ok: true, msg: `背包物品${inv.top.length}种`, data: inv }
-  }
   return { ok: false, msg: '未知类别', data: null }
 }
 

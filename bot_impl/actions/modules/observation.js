@@ -6,7 +6,10 @@ module.exports = function registerObservation (ctx) {
     try {
       const r = observer.detail(bot, args || {})
       return { ok: Boolean(r && r.ok), msg: (r && r.msg) || '无', data: r && r.data }
-    } catch (e) { return fail(String(e?.message || e)) }
+    } catch (e) {
+      try { log?.warn && log.warn('observe_detail error', e?.message || e) } catch {}
+      return fail('观察失败，请稍后再试~')
+    }
   }
 
   async function observe_players (args = {}) {
@@ -206,7 +209,8 @@ module.exports = function registerObservation (ctx) {
       const msg = dimCN ? `${dimCN}: ${parts.join('; ')}` : parts.join('; ')
       return ok(msg, { data: mapped.slice(0, maxOut) })
     } catch (e) {
-      return fail(String(e?.message || e))
+      try { log?.warn && log.warn('observe_players error', e?.message || e) } catch {}
+      return fail('查询失败，请稍后再试~')
     } finally {
       clearTimeout(timeout)
     }

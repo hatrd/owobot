@@ -66,7 +66,8 @@ module.exports = function registerSkills (ctx) {
     try {
       res = await frameState.runSort(radiusRaw)
     } catch (e) {
-      return fail(`分类失败: ${e?.message || e}`)
+      try { log?.warn && log.warn('sort_chests error', e?.message || e) } catch {}
+      return fail('分类失败，请稍后再试~')
     }
     if (!res || res.ok === false) {
       const reason = res?.reason

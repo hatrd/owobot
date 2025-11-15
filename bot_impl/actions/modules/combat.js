@@ -82,7 +82,7 @@ module.exports = function registerCombat (ctx) {
   }
 
   async function break_blocks (args = {}) {
-    const toolSel = require('../tool-select')
+  const toolSel = require('../../tool-select')
     const logging = require('../logging')
     const chopLog = logging.getLogger('chop')
     const match = Array.isArray(args.names) && args.names.length ? null : (args.match ? String(args.match).toLowerCase() : null)
@@ -737,7 +737,14 @@ module.exports = function registerCombat (ctx) {
   }
 
   async function dismount () {
-    try { if (!bot.vehicle) return ok('当前未乘坐') ; await bot.dismount(); return ok('已下坐') } catch (e) { return fail('下坐失败: ' + (e?.message || e)) }
+    try {
+      if (!bot.vehicle) return ok('当前未乘坐')
+      await bot.dismount()
+      return ok('已下坐')
+    } catch (e) {
+      try { log?.warn && log.warn('dismount error', e?.message || e) } catch {}
+      return fail('下坐失败，请稍后再试~')
+    }
   }
 
   // --- Ranged attack (bow/crossbow via HawkEye) ---
@@ -2039,7 +2046,10 @@ module.exports = function registerCombat (ctx) {
             try { if (top?.position) await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
           }
           await approach(pv)
-          try { await ensureItemEquipped(item) } catch (e) { return fail(String(e?.message || e)) }
+          try { await ensureItemEquipped(item) } catch (e) {
+            try { log?.warn && log.warn('place_blocks equip error', e?.message || e) } catch {}
+            return fail('装备放置物品失败，请稍后再试~')
+          }
           try {
             // re-check top right before placing (might have changed)
             const top2 = bot.blockAt(pv.offset(0,1,0))
@@ -2455,7 +2465,12 @@ module.exports = function registerCombat (ctx) {
     if (!blk) return fail('箱子不可见')
     try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
     let container = null
-    try { container = await bot.openContainer(blk) } catch (e) { return fail('无法打开箱子: ' + (e?.message || e)) }
+    try {
+      container = await bot.openContainer(blk)
+    } catch (e) {
+      try { log?.warn && log.warn('deposit openContainer error', e?.message || e) } catch {}
+      return fail('无法打开箱子，请稍后再试~')
+    }
 
     function itemFromSlot (slot) {
       const key = String(slot).toLowerCase()
