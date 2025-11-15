@@ -292,7 +292,6 @@ function activate (botInstance, options = {}) {
       runner.registerSkill('gather', require('./skills/gather'))
       runner.registerSkill('craft', require('./skills/craft'))
       runner.registerSkill('mine_ore', require('./skills/mine-ore'))
-      runner.registerSkill('write_text', require('./skills/write-text'))
     } catch {}
     // Reflect runner tasks into shared state for observer/.status after hot-reload
     try {

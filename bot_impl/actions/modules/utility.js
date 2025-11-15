@@ -29,19 +29,6 @@ module.exports = function registerUtility (ctx) {
     return res.ok ? ok(`矿脉挖掘已启动: ${label}`, { taskId: res.taskId }) : fail(res.msg || '启动失败')
   }
 
-  // --- Write text on ground using blocks (high-level skill) ---
-  async function write_text (args = {}) {
-    const runner = ensureRunner()
-    if (!runner) return fail('技能运行器不可用')
-    const text = String(args.text || '').trim()
-    if (!text) return fail('缺少文本')
-    const spacing = Math.max(1, parseInt(args.spacing || '1', 10))
-    const size = Math.max(1, parseInt(args.size || '1', 10))
-    const item = args.item ? String(args.item) : null
-    const res = runner.startSkill('write_text', { text, item, spacing, size }, null)
-    return res.ok ? ok('开始铺字~', { taskId: res.taskId }) : fail(res.msg || '启动失败')
-  }
-
   // --- Feed animals (e.g., cows with wheat) ---
   async function feed_animals (args = {}) {
     const species = String(args.species || 'cow').toLowerCase()
@@ -997,7 +984,6 @@ module.exports = function registerUtility (ctx) {
   // --- legacy chunk end ---
 
   register('mine_ore', mine_ore)
-  register('write_text', write_text)
   register('feed_animals', feed_animals)
   register('harvest', harvest)
   register('observe_detail', observe_detail)
