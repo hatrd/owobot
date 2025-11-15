@@ -1,5 +1,16 @@
+const inventory = require('../lib/inventory')
+
 module.exports = function registerFarming (ctx) {
   const { bot, register, ok, fail, wait, assertCanEquipHand } = ctx
+  const DEFAULT_INV_OPTS = {
+    includeArmor: true,
+    includeOffhand: true,
+    includeHeld: true,
+    includeMain: true,
+    includeHotbar: true
+  }
+  function invCount (name) { return inventory.countItemByName(bot, name, DEFAULT_INV_OPTS) }
+  async function ensureHandItem (name) { return inventory.ensureItemEquipped(bot, name, { assertCanEquipHand, includeArmor: true, includeOffhand: true, includeMain: true, includeHotbar: true }) }
   function ensurePathfinder () {
     const ok = ctx.ensurePathfinder()
     return ok ? ctx.pathfinder : null
@@ -22,21 +33,6 @@ module.exports = function registerFarming (ctx) {
     bot.pathfinder.setMovements(m)
 
     function now () { return Date.now() }
-    function invFind (nm) { try { const s = String(nm).toLowerCase(); return (bot.inventory?.items() || []).find(it => String(it.name || '').toLowerCase() === s) || null } catch { return null } }
-    function invCount (nm) { try { const s = String(nm).toLowerCase(); return (bot.inventory?.items() || []).filter(it => String(it.name || '').toLowerCase() === s).reduce((a, b) => a + (b.count || 0), 0) } catch { return 0 } }
-    async function ensureItemEquipped (nm) {
-      try {
-        const it = invFind(nm)
-        if (!it) return false
-        if (bot.heldItem && String(bot.heldItem.name || '').toLowerCase() === nm) return true
-        assertCanEquipHand(bot, it.name)
-        await bot.equip(it, 'hand')
-        return true
-      } catch (e) {
-        if (e?.code === 'MAIN_HAND_LOCKED') return false
-        return false
-      }
-    }
     function isTargetSpecies (e) {
       try {
         if (!e || !e.position) return false
@@ -96,7 +92,7 @@ module.exports = function registerFarming (ctx) {
           }
           try { bot.pathfinder.setGoal(null) } catch {}
           const before = invCount(itemName)
-          const okEquip = await ensureItemEquipped(itemName)
+          const okEquip = await ensureHandItem(itemName)
           if (!okEquip) break
           try { await bot.lookAt((t.position && t.position.offset(0, 1.2, 0)) || bot.entity.position, true) } catch {}
           try { await bot.useOn(t) } catch {}
@@ -193,13 +189,9 @@ module.exports = function registerFarming (ctx) {
       } catch { return [] }
     }
 
-    function invFind (name) { try { const s = String(name).toLowerCase(); return (bot.inventory?.items() || []).find(it => String(it.name || '').toLowerCase() === s) || null } catch { return null } }
-
     async function plantAt (pos, crop) {
-      const item = invFind(crop.item)
-      if (!item) return false
-      assertCanEquipHand(bot, item.name)
-      await bot.equip(item, 'hand')
+      const okEquip = await ensureHandItem(crop.item)
+      if (!okEquip) return false
       try { await bot.lookAt(pos.offset(0.5, 0.5, 0.5), true) } catch {}
       const soilBlock = bot.blockAt(pos.offset(0, -1, 0))
       if (!soilBlock) return false

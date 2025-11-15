@@ -5,7 +5,7 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: {
       type: 'object',
       properties: {
-        what: { type: 'string', description: 'Optional focus such as inventory, drops, players, mobs.' },
+        what: { type: 'string', description: 'Optional focus such as drops, players, mobs.' },
         radius: { type: 'number', description: 'How far to look around the bot in blocks.' },
         max: { type: 'number', description: 'Maximum rows/items to return.' }
       },
@@ -186,7 +186,7 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: {
       type: 'object',
       properties: {
-        only: { type: 'string', description: 'Shortcut resource filter (e.g., oak_log).' },
+        only: { type: 'string', description: 'Shortcut resource filter (e.g., log).' },
         names: { type: 'array', items: { type: 'string' }, description: 'Exact block names.' },
         match: { type: 'string', description: 'Substring match for block names.' },
         radius: { type: 'number', description: 'Working radius.' },

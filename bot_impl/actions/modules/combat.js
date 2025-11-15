@@ -1,4 +1,6 @@
 const { oreLabelFromOnly } = require('../lib/ore')
+const { countItemByName, ensureItemEquipped } = require('../lib/inventory')
+const logging = require('../../logging')
 
 module.exports = function registerCombat (ctx) {
   const { bot, register, ok, fail, wait, shared, assertCanEquipHand, isMainHandLocked, Vec3 } = ctx
@@ -82,8 +84,7 @@ module.exports = function registerCombat (ctx) {
   }
 
   async function break_blocks (args = {}) {
-  const toolSel = require('../../tool-select')
-    const logging = require('../logging')
+    const toolSel = require('../../tool-select')
     const chopLog = logging.getLogger('chop')
     const match = Array.isArray(args.names) && args.names.length ? null : (args.match ? String(args.match).toLowerCase() : null)
     const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
@@ -1963,7 +1964,7 @@ module.exports = function registerCombat (ctx) {
       candidates.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
 
       const placed = []
-    let remaining = Math.min(Math.min(max, maxCap), countItemByName(item))
+      let remaining = Math.min(Math.min(max, maxCap), countItemByName(bot, item))
       if (remaining <= 0) return fail('背包没有该物品')
 
       async function approach (p) {
@@ -2046,8 +2047,9 @@ module.exports = function registerCombat (ctx) {
             try { if (top?.position) await bot.lookAt(top.position.offset(0.5, 0.5, 0.5), true); await bot.dig(top) } catch {}
           }
           await approach(pv)
-          try { await ensureItemEquipped(item) } catch (e) {
-            try { log?.warn && log.warn('place_blocks equip error', e?.message || e) } catch {}
+          const equipped = await ensureItemEquipped(bot, item, { assertCanEquipHand })
+          if (!equipped) {
+            try { log?.warn && log.warn('place_blocks equip error', '无法装备', item) } catch {}
             return fail('装备放置物品失败，请稍后再试~')
           }
           try {
@@ -2097,7 +2099,7 @@ module.exports = function registerCombat (ctx) {
     const VERTICAL_SCAN_UP = 12
     const VERTICAL_SCAN_DOWN = 18
 
-    const totalTorches = countItemByName('torch')
+    const totalTorches = countItemByName(bot, 'torch')
     if (totalTorches <= 0) return fail('没有火把')
     const maxTorches = maxRaw != null && Number.isFinite(maxRaw) && maxRaw > 0 ? Math.min(maxRaw, totalTorches) : totalTorches
     if (maxTorches <= 0) return fail('没有火把')
