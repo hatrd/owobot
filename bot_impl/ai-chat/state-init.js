@@ -12,8 +12,21 @@ function prepareAiState (state, opts = {}) {
     DEFAULT_MODEL,
     DEFAULT_BASE,
     DEFAULT_PATH,
-    DEFAULT_RECENT_COUNT
+    DEFAULT_RECENT_COUNT,
+    DEFAULT_MEMORY_STORE_MAX,
+    buildDefaultContext
   } = defaults
+  const resolveContext = typeof buildDefaultContext === 'function'
+    ? buildDefaultContext
+    : () => ({
+        include: true,
+        recentCount: DEFAULT_RECENT_COUNT,
+        recentWindowSec: 300,
+        recentStoreMax: 200,
+        game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 },
+        memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200 }
+      })
+  const DEF_CTX = resolveContext()
   state.ai = state.ai || {
     enabled: true,
     key: process.env.DEEPSEEK_API_KEY || null,
@@ -30,16 +43,7 @@ function prepareAiState (state, opts = {}) {
     budgetTotal: null,
     maxTokensPerCall: 512,
     notifyOnBudget: true,
-    context: { include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: 300, recentStoreMax: 200 },
     trace: false
-  }
-  const DEF_CTX = {
-    include: true,
-    recentCount: DEFAULT_RECENT_COUNT,
-    recentWindowSec: 300,
-    recentStoreMax: 200,
-    game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 },
-    memory: { include: true, max: 6, storeMax: 200 }
   }
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
@@ -107,7 +111,7 @@ function prepareAiState (state, opts = {}) {
     state.aiMemory.entries = Array.isArray(persistedMemory.memories) ? persistedMemory.memories : []
   }
   if (!Array.isArray(state.aiMemory.entries)) state.aiMemory.entries = []
-  if (typeof state.aiMemory.storeMax !== 'number') state.aiMemory.storeMax = state.ai.context?.memory?.storeMax || 200
+  if (typeof state.aiMemory.storeMax !== 'number') state.aiMemory.storeMax = state.ai.context?.memory?.storeMax || DEFAULT_MEMORY_STORE_MAX || 200
   if (!Array.isArray(state.aiMemory.queue)) state.aiMemory.queue = []
   if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
   if (typeof updateWorldMemoryZones === 'function') updateWorldMemoryZones()

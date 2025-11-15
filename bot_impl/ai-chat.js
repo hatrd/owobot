@@ -1,8 +1,3 @@
-const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
-const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
-const DEFAULT_RECENT_COUNT = 32
-
 const H = require('./ai-chat-helpers')
 const actionsMod = require('./actions')
 const observer = require('./agent/observer')
@@ -12,6 +7,14 @@ const { createAiCliHandler } = require('./ai-chat/cli')
 const { createPulseService } = require('./ai-chat/pulse')
 const { createMemoryService } = require('./ai-chat/memory')
 const { createChatExecutor } = require('./ai-chat/executor')
+const {
+  DEFAULT_MODEL,
+  DEFAULT_BASE,
+  DEFAULT_PATH,
+  DEFAULT_RECENT_COUNT,
+  DEFAULT_MEMORY_STORE_MAX,
+  buildDefaultContext
+} = require('./ai-chat/config')
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...args) => log.debug(...args)
@@ -102,14 +105,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return '' }
   }
 
-  const defaults = { DEFAULT_MODEL, DEFAULT_BASE, DEFAULT_PATH, DEFAULT_RECENT_COUNT }
+  const defaults = { DEFAULT_MODEL, DEFAULT_BASE, DEFAULT_PATH, DEFAULT_RECENT_COUNT, DEFAULT_MEMORY_STORE_MAX, buildDefaultContext }
   const memory = createMemoryService({ state, log, memoryStore, defaults, bot, traceChat, now })
   const persistedMemory = memoryStore.load()
   prepareAiState(state, {
     defaults,
     persistedMemory,
-    trimConversationStore: memory.trimConversationStore,
-    updateWorldMemoryZones: memory.updateWorldMemoryZones,
+    trimConversationStore: memory.dialogue.trimStore,
+    updateWorldMemoryZones: memory.longTerm.updateWorldZones,
     dayStart,
     monthStart
   })
@@ -158,7 +161,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('message', onMessage)
 
   pulse.start()
-  memory.processMemoryQueue().catch(() => {})
+  memory.rewrite.processQueue().catch(() => {})
 
   const aiCliHandler = createAiCliHandler({
     bot,
@@ -167,9 +170,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     actionsMod,
     buildGameContext,
     buildContextPrompt: executor.buildContextPrompt,
-    persistMemoryState: memory.persistMemoryState,
-    selectDialoguesForContext: memory.selectDialoguesForContext,
-    relativeTimeLabel: memory.relativeTimeLabel,
+    persistMemoryState: memory.longTerm.persistState,
+    selectDialoguesForContext: memory.dialogue.selectForContext,
+    relativeTimeLabel: memory.dialogue.relativeTimeLabel,
     DEFAULT_RECENT_COUNT,
     rollSpendWindows,
     dayStart,

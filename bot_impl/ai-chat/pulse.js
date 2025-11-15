@@ -122,7 +122,7 @@ function createPulseService ({
           try { clearTimeout(info.timer) } catch {}
         }
         sessions.delete(name)
-        memory.queueConversationSummary(name, info, 'expire')
+        memory.dialogue.queueSummary(name, info, 'expire')
       }
     }
   }
@@ -143,7 +143,7 @@ function createPulseService ({
     }
     if (restart && Number.isFinite(entry.startSeq) && !continuing) {
       const summaryEntry = { ...entry, lastSeq: entry.lastSeq || entry.startSeq }
-      memory.queueConversationSummary(username, summaryEntry, 'restart')
+      memory.dialogue.queueSummary(username, summaryEntry, 'restart')
       entry.startSeq = null
     }
     if (!Number.isFinite(entry.startSeq)) entry.startSeq = state.aiRecentSeq || nowTs
@@ -209,7 +209,7 @@ function createPulseService ({
       if (info?.timer) {
         try { clearTimeout(info.timer) } catch {}
       }
-      memory.queueConversationSummary(name, info, 'reset')
+      memory.dialogue.queueSummary(name, info, 'reset')
       sessions.delete(name)
     }
   }
@@ -252,7 +252,7 @@ function createPulseService ({
           if (!sum) return
           state.aiLong.push({ t: Date.now(), summary: sum })
           if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
-          memory.persistMemoryState()
+          memory.longTerm.persistState()
           if (state.ai.trace && log?.info) log.info('long summary ->', sum)
         } catch {}
       } catch {}

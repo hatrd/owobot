@@ -114,7 +114,7 @@ function createChatExecutor ({
   function buildContextPrompt (username) {
     const ctx = state.ai.context || { include: true, recentCount: defaults.DEFAULT_RECENT_COUNT, recentWindowSec: 300 }
     const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
-    const conv = memory.buildConversationMemoryPrompt(username)
+    const conv = memory.dialogue.buildPrompt(username)
     return [base, conv].filter(Boolean).join('\n\n')
   }
 
@@ -152,7 +152,7 @@ function createChatExecutor ({
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
-    const memoryCtx = memory.buildMemoryContext()
+    const memoryCtx = memory.longTerm.buildContext()
     const allowSkip = options?.allowSkip === true
     const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
     const messages = [
@@ -167,7 +167,7 @@ function createChatExecutor ({
       try {
         log.info('gameCtx ->', buildGameContext())
         log.info('chatCtx ->', buildContextPrompt(username))
-        log.info('memoryCtx ->', memory.buildMemoryContext())
+        log.info('memoryCtx ->', memory.longTerm.buildContext())
       } catch {}
     }
     const estIn = estTokensFromText(messages.map(m => m.content).join(' '))
@@ -260,13 +260,13 @@ function createChatExecutor ({
     const toolName = String(payload.tool)
     if (toolName === 'write_memory') {
       if (speech) pulse.sendChatReply(username, speech)
-      const normalized = memory.normalizeMemoryText(payload.args?.text || '')
+      const normalized = memory.longTerm.normalizeText(payload.args?.text || '')
       if (!normalized) return H.trimReply('没听懂要记什么呢~', maxReplyLen || 120)
       const importanceRaw = Number(payload.args?.importance)
       const importance = Number.isFinite(importanceRaw) ? importanceRaw : 1
       const author = payload.args?.author ? String(payload.args.author) : username
       const source = payload.args?.source ? String(payload.args.source) : 'ai'
-      const added = memory.addMemoryEntry({ text: normalized, author, source, importance })
+      const added = memory.longTerm.addEntry({ text: normalized, author, source, importance })
       if (state.ai.trace && log?.info) log.info('tool write_memory ->', { text: normalized, author, source, importance, ok: added.ok })
       if (!added.ok) return H.trimReply('记忆没有保存下来~', maxReplyLen || 120)
       return speech ? '' : H.trimReply('记住啦~', maxReplyLen || 120)
@@ -356,7 +356,7 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '好的', { reason: `${reasonTag}_stop` })
       return
     }
-    const memoryText = memory.extractMemoryCommand(text)
+    const memoryText = memory.longTerm.extractCommand(text)
     if (memoryText) {
       if (!state.ai?.key) {
         pulse.sendChatReply(username, '现在记不住呀，AI 没开~', { reason: 'memory_key' })
@@ -367,13 +367,13 @@ function createChatExecutor ({
         player: username,
         text: memoryText,
         original: raw,
-        recent: memory.recentChatSnippet(6),
+        recent: memory.rewrite.recentSnippet(6),
         createdAt: now(),
         source: 'player',
         attempts: 0,
         context: collectMemoryContext(memoryText)
       }
-      memory.enqueueMemoryJob(job)
+      memory.rewrite.enqueueJob(job)
       pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }

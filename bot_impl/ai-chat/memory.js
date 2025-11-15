@@ -21,6 +21,8 @@ function createMemoryService ({
     messenger = typeof fn === 'function' ? fn : () => {}
   }
 
+  // --- Long-term memory entries ---
+
   function normalizeMemoryText (text) {
     if (typeof text !== 'string') return ''
     try { return text.normalize('NFKC').replace(/\s+/g, ' ').trim() } catch { return text.replace(/\s+/g, ' ').trim() }
@@ -309,6 +311,8 @@ function createMemoryService ({
     return top.slice(0, limit)
   }
 
+  // --- Rewrite queue & background jobs ---
+
   function recentChatSnippet (count = 5) {
     const lines = (state.aiRecent || []).slice(-Math.max(1, count))
     return lines.map(r => ({ user: r.user, text: r.text })).filter(Boolean)
@@ -559,6 +563,8 @@ function createMemoryService ({
     return null
   }
 
+  // --- Dialogue memory & summaries ---
+
   function relativeTimeLabel (ts) {
     if (!Number.isFinite(ts)) return '未知时间'
     const delta = now() - ts
@@ -746,23 +752,35 @@ function createMemoryService ({
 
   function delay (ms) { return new Promise(resolve => setTimeout(resolve, Math.max(0, ms || 0))) }
 
+  const longTerm = {
+    persistState: persistMemoryState,
+    updateWorldZones: updateWorldMemoryZones,
+    buildContext: buildMemoryContext,
+    addEntry: addMemoryEntry,
+    findLocationAnswer: findLocationMemoryAnswer,
+    extractCommand: extractMemoryCommand,
+    normalizeText: normalizeMemoryText
+  }
+
+  const dialogue = {
+    trimStore: trimConversationStore,
+    selectForContext: selectDialoguesForContext,
+    buildPrompt: buildConversationMemoryPrompt,
+    queueSummary: queueConversationSummary,
+    relativeTimeLabel
+  }
+
+  const rewrite = {
+    enqueueJob: enqueueMemoryJob,
+    processQueue: processMemoryQueue,
+    recentSnippet: recentChatSnippet
+  }
+
   return {
     setMessenger,
-    persistMemoryState,
-    updateWorldMemoryZones,
-    trimConversationStore,
-    buildMemoryContext,
-    buildConversationMemoryPrompt,
-    selectDialoguesForContext,
-    relativeTimeLabel,
-    addMemoryEntry,
-    enqueueMemoryJob,
-    processMemoryQueue,
-    recentChatSnippet,
-    findLocationMemoryAnswer,
-    extractMemoryCommand,
-    queueConversationSummary,
-    normalizeMemoryText
+    longTerm,
+    dialogue,
+    rewrite
   }
 }
 
