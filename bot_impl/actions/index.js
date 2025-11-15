@@ -8,7 +8,10 @@ const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'sto
 
 const MODULES = [
   require('./modules/movement'),
-  require('./modules/utility'),
+  require('./modules/skills'),
+  require('./modules/farming'),
+  require('./modules/observation'),
+  require('./modules/inventory'),
   require('./modules/combat')
 ]
 
