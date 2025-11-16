@@ -6,7 +6,7 @@ function createAiCliHandler (options = {}) {
     buildContextPrompt,
     persistMemoryState,
     selectDialoguesForContext,
-    relativeTimeLabel,
+    formatDialogueEntriesForDisplay,
     DEFAULT_RECENT_COUNT,
     rollSpendWindows,
     dayStart,
@@ -153,11 +153,14 @@ function createAiCliHandler (options = {}) {
             print('dialog memory empty')
             break
           }
-          list.forEach((entry, idx) => {
-            const label = relativeTimeLabel(entry.endedAt)
-            const people = (entry.participants || []).join('、') || '玩家们'
-            print(`${idx + 1}. ${label} ${people}: ${entry.summary}`)
-          })
+          const lines = typeof formatDialogueEntriesForDisplay === 'function'
+            ? formatDialogueEntriesForDisplay(list)
+            : list.map((entry, idx) => {
+                const label = entry && entry.endedAt ? new Date(entry.endedAt).toISOString() : '未知时间'
+                const people = (entry?.participants || []).join('、') || '玩家们'
+                return `${idx + 1}. ${label} ${people}: ${entry?.summary || ''}`
+              })
+          lines.forEach(line => print(line))
           break
         }
         case 'context': {

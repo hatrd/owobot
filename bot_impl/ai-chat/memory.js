@@ -577,6 +577,187 @@ function createMemoryService ({
     return `${weeks}周前`
   }
 
+  const ONE_HOUR_MS = 60 * 60 * 1000
+  const ONE_DAY_MS = 24 * ONE_HOUR_MS
+  const ONE_WEEK_MS = 7 * ONE_DAY_MS
+  const ONE_MONTH_MS = 30 * ONE_DAY_MS
+
+  function conversationTimestamp (entry) {
+    if (!entry || typeof entry !== 'object') return null
+    const ts = Number(entry.endedAt ?? entry.startedAt)
+    return Number.isFinite(ts) ? ts : null
+  }
+
+  function pad2 (num) {
+    return String(num).padStart(2, '0')
+  }
+
+  function formatDate (date) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+  }
+
+  function startOfHour (ts) {
+    const d = new Date(ts)
+    d.setMinutes(0, 0, 0)
+    return d.getTime()
+  }
+
+  function startOfDay (ts) {
+    const d = new Date(ts)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
+
+  function startOfWeek (ts) {
+    const d = new Date(ts)
+    d.setHours(0, 0, 0, 0)
+    const day = d.getDay() === 0 ? 7 : d.getDay()
+    d.setDate(d.getDate() - (day - 1))
+    return d.getTime()
+  }
+
+  function startOfMonth (ts) {
+    const d = new Date(ts)
+    d.setDate(1)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
+
+  function formatBucketLabel (kind, start, end) {
+    const startDate = new Date(start)
+    const endDate = new Date(end - 1)
+    if (kind === 'hour') {
+      return `${formatDate(startDate)} ${pad2(startDate.getHours())}:00 小时段`
+    }
+    if (kind === 'day') {
+      return `${formatDate(startDate)} 日汇总`
+    }
+    if (kind === 'week') {
+      return `${formatDate(startDate)}~${formatDate(endDate)} 周汇总`
+    }
+    if (kind === 'month') {
+      return `${startDate.getFullYear()}-${pad2(startDate.getMonth() + 1)} 月汇总`
+    }
+    return relativeTimeLabel(start)
+  }
+
+  function dialogueBucketSpec (entry) {
+    const ts = conversationTimestamp(entry)
+    if (!Number.isFinite(ts)) return { kind: 'single' }
+    const age = now() - ts
+    if (!Number.isFinite(age) || age <= ONE_HOUR_MS) return { kind: 'single' }
+    if (age <= ONE_DAY_MS) {
+      const start = startOfHour(ts)
+      return { kind: 'hour', start, end: start + ONE_HOUR_MS, label: formatBucketLabel('hour', start, start + ONE_HOUR_MS) }
+    }
+    if (age <= ONE_WEEK_MS) {
+      const start = startOfDay(ts)
+      return { kind: 'day', start, end: start + ONE_DAY_MS, label: formatBucketLabel('day', start, start + ONE_DAY_MS) }
+    }
+    if (age <= ONE_MONTH_MS) {
+      const start = startOfWeek(ts)
+      return { kind: 'week', start, end: start + ONE_WEEK_MS, label: formatBucketLabel('week', start, start + ONE_WEEK_MS) }
+    }
+    const start = startOfMonth(ts)
+    const endBase = new Date(start)
+    endBase.setMonth(endBase.getMonth() + 1)
+    return { kind: 'month', start, end: endBase.getTime(), label: formatBucketLabel('month', start, endBase.getTime()) }
+  }
+
+  function aggregateDialogueEntries (entries) {
+    if (!Array.isArray(entries) || !entries.length) return []
+    const sorted = entries.slice().sort((a, b) => {
+      const ta = conversationTimestamp(a) || 0
+      const tb = conversationTimestamp(b) || 0
+      return tb - ta
+    })
+    const out = []
+    const bucketRefs = new Map()
+    for (const entry of sorted) {
+      if (!entry) continue
+      const spec = dialogueBucketSpec(entry)
+      if (!spec || spec.kind === 'single') {
+        out.push({ type: 'single', entry })
+        continue
+      }
+      const key = `${spec.kind}:${spec.start}`
+      let bucket = bucketRefs.get(key)
+      if (!bucket) {
+        bucket = {
+          type: 'aggregate',
+          kind: spec.kind,
+          start: spec.start,
+          end: spec.end,
+          label: spec.label,
+          latestEndedAt: conversationTimestamp(entry) || spec.start,
+          entries: [],
+          participants: new Set()
+        }
+        bucketRefs.set(key, bucket)
+        out.push(bucket)
+      }
+      bucket.entries.push(entry)
+      const ts = conversationTimestamp(entry)
+      if (Number.isFinite(ts) && ts > bucket.latestEndedAt) bucket.latestEndedAt = ts
+      for (const p of entry.participants || []) {
+        const name = typeof p === 'string' ? p.trim() : ''
+        if (name) bucket.participants.add(name)
+      }
+    }
+    return out
+  }
+
+  function formatPeopleLabel (list) {
+    const seen = new Set()
+    const names = []
+    for (const raw of list || []) {
+      const name = typeof raw === 'string' ? raw.trim() : ''
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      names.push(name)
+    }
+    if (!names.length) return '玩家们'
+    const MAX = 3
+    const head = names.slice(0, MAX)
+    if (names.length > MAX) return `${head.join('、')} 等${names.length}人`
+    return head.join('、')
+  }
+
+  function summarizeBucketEntries (entries) {
+    const texts = entries
+      .map(e => (typeof e?.summary === 'string' ? e.summary.trim() : ''))
+      .filter(Boolean)
+    if (!texts.length) return `${entries.length}条对话`
+    const MAX = 3
+    const head = texts.slice(0, MAX).join(' / ')
+    if (texts.length > MAX) return `${head} / 等${texts.length}条`
+    return head
+  }
+
+  function formatDialogueLine (item, idx) {
+    if (!item) return null
+    if (item.type === 'aggregate') {
+      const rel = relativeTimeLabel(item.latestEndedAt)
+      const label = `${rel} ${item.label}（合并${item.entries.length}条）`
+      const people = formatPeopleLabel([...item.participants])
+      const summary = summarizeBucketEntries(item.entries)
+      return `${idx + 1}. ${label} ${people}: ${summary}`
+    }
+    const entry = item.entry
+    if (!entry) return null
+    const label = relativeTimeLabel(entry.endedAt)
+    const people = formatPeopleLabel(entry.participants)
+    const summary = typeof entry.summary === 'string' && entry.summary.trim() ? entry.summary.trim() : '（无摘要）'
+    return `${idx + 1}. ${label} ${people}: ${summary}`
+  }
+
+  function formatDialogueEntriesForDisplay (entries) {
+    const aggregated = aggregateDialogueEntries(entries)
+    return aggregated
+      .map((item, idx) => formatDialogueLine(item, idx))
+      .filter(Boolean)
+  }
+
   function selectDialoguesForContext (username) {
     if (!Array.isArray(state.aiDialogues) || !state.aiDialogues.length) return []
     const sorted = state.aiDialogues.slice().sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
@@ -612,11 +793,8 @@ function createMemoryService ({
   function buildConversationMemoryPrompt (username) {
     const entries = selectDialoguesForContext(username)
     if (!entries.length) return ''
-    const lines = entries.map((entry, idx) => {
-      const label = relativeTimeLabel(entry.endedAt)
-      const people = (entry.participants || []).join('、') || '玩家们'
-      return `${idx + 1}. ${label} ${people}: ${entry.summary}`
-    })
+    const lines = formatDialogueEntriesForDisplay(entries)
+    if (!lines.length) return ''
     return `对话记忆：\n${lines.join('\n')}`
   }
 
@@ -767,7 +945,8 @@ function createMemoryService ({
     selectForContext: selectDialoguesForContext,
     buildPrompt: buildConversationMemoryPrompt,
     queueSummary: queueConversationSummary,
-    relativeTimeLabel
+    relativeTimeLabel,
+    formatEntriesForDisplay: formatDialogueEntriesForDisplay
   }
 
   const rewrite = {

@@ -172,7 +172,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     buildContextPrompt: executor.buildContextPrompt,
     persistMemoryState: memory.longTerm.persistState,
     selectDialoguesForContext: memory.dialogue.selectForContext,
-    relativeTimeLabel: memory.dialogue.relativeTimeLabel,
+    formatDialogueEntriesForDisplay: memory.dialogue.formatEntriesForDisplay,
     DEFAULT_RECENT_COUNT,
     rollSpendWindows,
     dayStart,
