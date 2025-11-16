@@ -1,6 +1,14 @@
 const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
+const LONG_TASK_TOOLS = new Set([
+  'goto', 'goto_block', 'follow_player', 'hunt_player', 'defend_area', 'defend_player',
+  'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest',
+  'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'autofish', 'mine_ore',
+  'range_attack', 'skill_start', 'sort_chests', 'deposit', 'deposit_all', 'withdraw',
+  'withdraw_all'
+])
+const TELEPORT_COMMANDS = new Set(['tpa', 'tpaccept', 'tpahere', 'back', 'home', 'spawn', 'warp', 'rtp'])
 
 function createChatExecutor ({
   state,
@@ -20,6 +28,7 @@ function createChatExecutor ({
 }) {
   const ctrl = { busy: false, abort: null, pending: null }
   const PENDING_EXPIRE_MS = 8000
+  const actions = actionsMod.install(bot, { log })
 
   const estTokensFromText = H.estTokensFromText
 
@@ -254,6 +263,28 @@ function createChatExecutor ({
     return { tool: fn.name, args }
   }
 
+  function isTeleportChatCommand (text) {
+    try {
+      const trimmed = String(text || '').trim()
+      if (!trimmed.startsWith('/')) return false
+      const cmd = trimmed.slice(1).split(/\s+/, 1)[0].toLowerCase()
+      return TELEPORT_COMMANDS.has(cmd)
+    } catch { return false }
+  }
+
+  function canToolBypassBusy (toolName, payload) {
+    if (!toolName) return false
+    const low = String(toolName).toLowerCase()
+    if (low === 'reset' || low === 'stop' || low === 'stop_all') return true
+    if (low === 'say') return isTeleportChatCommand(payload?.args?.text)
+    return false
+  }
+
+  function shouldAutoAckTool (toolName, hadSpeech) {
+    if (hadSpeech) return false
+    return LONG_TASK_TOOLS.has(String(toolName || '').toLowerCase())
+  }
+
   async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen }) {
     const toolName = String(payload.tool)
     if (toolName === 'write_memory') {
@@ -280,7 +311,6 @@ function createChatExecutor ({
         }
       }
     } catch {}
-    const tools = actionsMod.install(bot, { log })
     if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(toolName)) {
       return H.trimReply('我这就看看…', maxReplyLen || 120)
     }
@@ -292,29 +322,36 @@ function createChatExecutor ({
       }
     }
     if (!isActionToolAllowed(toolName)) return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
-    if (speech) pulse.sendChatReply(username, speech)
-    try { state.externalBusy = true; bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
-    let res
-    try {
-      res = await tools.run(payload.tool, payload.args || {})
-    } finally {
-      try { state.externalBusy = false; bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
+    const busy = Boolean(state?.externalBusy)
+    const canOverrideBusy = canToolBypassBusy(toolName, payload)
+    if (busy && !canOverrideBusy) {
+      return H.trimReply('我还在执行其他任务，先等我完成或者说“重置”哦~', maxReplyLen || 120)
     }
-    if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
-    if (res && res.ok) {
-      const okText = H.trimReply(res.msg || '好的', maxReplyLen || 120)
-      if (speech) {
-        pulse.sendChatReply(username, okText)
-        return ''
+    const hadSpeech = Boolean(speech)
+    if (hadSpeech) {
+      pulse.sendChatReply(username, speech)
+    } else if (shouldAutoAckTool(toolName, hadSpeech)) {
+      pulse.sendChatReply(username, '收到，开始执行~', { reason: 'tool_ack' })
+    }
+    const runTool = async () => {
+      try { bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
+      let res
+      try {
+        res = await actions.run(payload.tool, payload.args || {})
+      } catch (err) {
+        log?.warn && log.warn('tool error', err?.message || err)
+        res = { ok: false, msg: '执行失败，请稍后再试~' }
+      } finally {
+        try { bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
       }
-      return okText
+      if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
+      const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
+      const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
+      const finalText = H.trimReply(baseMsg || fallback, maxReplyLen || 120)
+      if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}` })
     }
-    const failText = H.trimReply(res?.msg || '这次没成功！', maxReplyLen || 120)
-    if (speech) {
-      pulse.sendChatReply(username, failText)
-      return ''
-    }
-    return failText
+    runTool().catch((err) => { log?.warn && log.warn('tool async failure', err?.message || err) })
+    return ''
   }
 
   function classifyStopCommand (text) {
@@ -339,16 +376,14 @@ function createChatExecutor ({
     const reasonTag = source === 'followup' ? 'followup' : 'trigger'
     if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(text)) {
       try {
-        const tools = actionsMod.install(bot, { log })
-        const res = await tools.run('dismount', {})
+        const res = await actions.run('dismount', {})
         pulse.sendChatReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), { reason: `${reasonTag}_tool` })
       } catch {}
       return
     }
     if (classifyStopCommand(text)) {
       try {
-        const tools = actionsMod.install(bot, { log })
-        await tools.run('reset', {})
+        await actions.run('reset', {})
       } catch {}
       pulse.sendChatReply(username, '好的', { reason: `${reasonTag}_stop` })
       return

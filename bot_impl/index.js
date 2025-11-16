@@ -21,6 +21,18 @@ let watcherManager = null
 // Listener references and timers for cleanup
 const listeners = []
 let teleportResetPromise = null
+const TELEPORT_CHAT_COMMANDS = new Set(['tpa', 'tpaccept', 'tpahere', 'back', 'home', 'spawn', 'warp', 'rtp'])
+
+function isTeleportChatCommandText (text) {
+  try {
+    const trimmed = String(text || '').trim()
+    if (!trimmed.startsWith('/')) return false
+    const cmd = trimmed.slice(1).split(/\s+/, 1)[0].toLowerCase()
+    return TELEPORT_CHAT_COMMANDS.has(cmd)
+  } catch {
+    return false
+  }
+}
 function initAfterSpawn() {
   try {
     greetingManager?.onSpawn()
@@ -122,7 +134,7 @@ function activate (botInstance, options = {}) {
         try {
           const raw = args[0]
           const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
-          if (/^\/tpa\s+\S+/i.test(text.trim())) {
+          if (isTeleportChatCommandText(text)) {
             resetBeforeTeleportCommand()
               .catch(() => {})
               .finally(() => {

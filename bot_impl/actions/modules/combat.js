@@ -109,7 +109,8 @@ module.exports = function registerCombat (ctx) {
     m.canDig = (args.dig === true) || wantsLogs
     m.allowSprinting = true
     bot.pathfinder.setMovements(m)
-    miningAbort = false
+    shared.miningAbort = false
+    const abortRequested = () => shared.miningAbort === true
 
     // helpers
   function matches (b) {
@@ -157,14 +158,16 @@ module.exports = function registerCombat (ctx) {
     const dropSkip = new Map()
 
     async function moveNearPosition (pos, range = 1.2, timeoutMs = 2500) {
+      if (abortRequested()) return false
       const goal = new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), 0)
       chopLog.debug('approach:start', { goal: `${pos.x},${pos.y},${pos.z}`, range, timeoutMs })
       try { bot.pathfinder.setGoal(goal, true) } catch {}
       const start = Date.now()
       let bestDist = Infinity
       let bestAt = start
-      while (Date.now() - start < timeoutMs) {
+      while (!abortRequested() && (Date.now() - start < timeoutMs)) {
         await wait(100)
+        if (abortRequested()) return false
         const here = bot.entity?.position
         if (!here) break
         const dist = here.distanceTo(pos)
@@ -186,7 +189,7 @@ module.exports = function registerCombat (ctx) {
     }
 
     async function approachAndDig (p) {
-      if (explosionCooling()) return false
+      if (abortRequested() || explosionCooling()) return false
       // approach
       chopLog.debug('chop:approach', { target: `${p.x},${p.y},${p.z}` })
       bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 1), true)
@@ -194,9 +197,9 @@ module.exports = function registerCombat (ctx) {
       let reached = false
       let bestDist = Infinity
       let bestAt = Date.now()
-      while (Date.now() < until) {
+      while (!abortRequested() && Date.now() < until) {
         await wait(100)
-        if (explosionCooling()) return false
+        if (abortRequested() || explosionCooling()) return false
         const d = bot.entity.position.distanceTo(p)
         if (d <= 2.3) { reached = true; break }
         if (d < bestDist - 0.05) {
@@ -218,6 +221,7 @@ module.exports = function registerCombat (ctx) {
         return 'unreachable'
       }
       await wait(60)
+      if (abortRequested()) return false
       let block = bot.blockAt(p)
       if (!block || !matches(block)) return false
       // safety: avoid lava neighbor on/below
@@ -232,6 +236,7 @@ module.exports = function registerCombat (ctx) {
         }
       } catch {}
       async function clearRayObstruction () {
+        if (abortRequested()) return false
         try {
           if (!bot.world || typeof bot.world.raycast !== 'function') return false
           const eye = bot.entity?.position?.offset?.(0, bot.entity?.eyeHeight || 1.62, 0)
@@ -256,7 +261,7 @@ module.exports = function registerCombat (ctx) {
             throw err
           }
           await wait(200)
-          return true
+          return abortRequested() ? false : true
         } catch { return false }
       }
 
@@ -274,13 +279,14 @@ module.exports = function registerCombat (ctx) {
             await wait(150)
             block = bot.blockAt(p)
             if (!block || !matches(block)) return false
+            if (abortRequested()) return false
             continue
           }
           if (/not in view/i.test(msg)) {
             const cleared = await clearRayObstruction()
             block = bot.blockAt(p)
             if (!block || !matches(block)) return false
-            if (cleared) { await wait(120); continue }
+            if (cleared) { await wait(120); if (abortRequested()) return false; continue }
             chopLog.debug('chop:blocked-ray', { target: `${p.x},${p.y},${p.z}` })
             return 'blocked'
           }
@@ -293,6 +299,7 @@ module.exports = function registerCombat (ctx) {
         // move into spot briefly to pick drops
         try { bot.pathfinder.setGoal(new goals.GoalNear(p.x, p.y, p.z, 0), true) } catch {}
         await wait(300)
+        if (abortRequested()) return false
       }
       chopLog.debug('chop:dig-success', { target: `${p.x},${p.y},${p.z}` })
       return true
@@ -304,7 +311,7 @@ module.exports = function registerCombat (ctx) {
 
     if ((area.shape || 'sphere') === 'down') {
       const steps = Math.max(1, parseInt(area.steps || '8', 10))
-      while (!miningAbort && broken < Math.min(limit, steps)) {
+      while (!shared.miningAbort && broken < Math.min(limit, steps)) {
         if (!bot.entity || !bot.entity.position) break
         if (isDangerBelow()) return ok(`停止: 下方疑似岩浆, 已挖 ${broken}`)
         const feet = bot.entity.position.offset(0, -1, 0)
@@ -316,7 +323,7 @@ module.exports = function registerCombat (ctx) {
         // wait to fall
         const startY = Math.floor(bot.entity.position.y)
         const untilFall = Date.now() + 1500
-        while (Date.now() < untilFall) { await wait(50); const y = Math.floor(bot.entity.position.y); if (y < startY) break }
+        while (!abortRequested() && Date.now() < untilFall) { await wait(50); if (abortRequested()) break; const y = Math.floor(bot.entity.position.y); if (y < startY) break }
         broken++
       }
       return ok(`挖掘完成 ${broken}`)
@@ -329,7 +336,7 @@ module.exports = function registerCombat (ctx) {
 
     // Flush config: if drops pile up, run a short pickup sweep (no digging)
     const flushThreshold = (() => { const v = args.flushThreshold; return v == null ? (collect ? 10 : 0) : Math.max(1, parseInt(v, 10)) })()
-    const flushTimeoutMs = Math.max(500, parseInt(args.flushTimeoutMs || '2500', 10))
+      const flushTimeoutMs = Math.max(500, parseInt(args.flushTimeoutMs || '2500', 10))
     const flushCanDig = (args.flushCanDig !== false)
     const dropRevisitDistance = Math.max(0.5, parseFloat(args.dropRevisitDistance || '0.6'))
     const flushRadius = Math.max(2, parseInt(args.flushRadius || String(radius), 10))
@@ -377,7 +384,8 @@ module.exports = function registerCombat (ctx) {
     async function doShortPickup () {
       try {
         const untilPick = Date.now() + flushTimeoutMs
-        while (Date.now() < untilPick) {
+        while (!abortRequested() && Date.now() < untilPick) {
+          if (abortRequested()) return
           const mep = bot.entity?.position; if (!mep) break
           const items = Object.values(bot.entities || {}).filter(e => {
             if (!isItemEntity(e)) return false
@@ -389,6 +397,7 @@ module.exports = function registerCombat (ctx) {
           items.sort((a, b) => a.position.distanceTo(mep) - b.position.distanceTo(mep))
           const it = items[0]
           let ok = await moveNearPosition(it.position, 0.9, 3000)
+          if (abortRequested()) return
           if (!ok && flushCanDig) {
             try {
               const block = bot.blockAt(it.position.floored())
@@ -426,7 +435,7 @@ module.exports = function registerCombat (ctx) {
     })()
     let currentColumn = null // { x, z } of last chopped block; finish trunk before moving
 
-    while (!miningAbort && broken < limit) {
+    while (!shared.miningAbort && broken < limit) {
       let posList = bot.findBlocks({
         point: origin,
         maxDistance: Math.max(2, radius),
@@ -563,11 +572,12 @@ module.exports = function registerCombat (ctx) {
               z: Number(it.position.z ?? 0)
             })
             chopLog.debug('chop:pickup-skip-final', { drop: it.id })
-          } else {
-            if (it.id != null) dropSkip.delete(it.id)
-            await wait(160)
-          }
-        }
+              } else {
+                if (it.id != null) dropSkip.delete(it.id)
+                await wait(160)
+                if (abortRequested()) return
+              }
+            }
         }
       } catch {}
     }
@@ -621,6 +631,13 @@ module.exports = function registerCombat (ctx) {
     if (s.endsWith('_ore')) return true
     if (s === 'ancient_debris') return true
     return false
+  }
+  function isOreTokenHint (value) {
+    const s = String(value || '').toLowerCase().trim()
+    if (!s) return false
+    if (s.includes('ore')) return true
+    const hints = ['diamond', 'iron', 'gold', 'copper', 'coal', 'redstone', 'lapis', 'emerald', 'quartz', 'debris', 'netherite']
+    return hints.some(h => s.includes(h))
   }
   function oreOnlyToken (n) {
     const s = String(n || '').toLowerCase()
@@ -1160,7 +1177,7 @@ module.exports = function registerCombat (ctx) {
     m.allowSprinting = true
     m.canDig = (args.dig === true) // 默认不挖掘，防止破坏脚手架/刷怪塔结构
     bot.pathfinder.setMovements(m)
-    if (guardInterval) { try { clearInterval(guardInterval) } catch {}; guardInterval = null }
+    if (shared.guardInterval) { try { clearInterval(shared.guardInterval) } catch {}; shared.guardInterval = null }
     // Mark current task for observer/"doing" queries
     try { if (bot.state) bot.state.currentTask = { name: '驻点清怪', source: 'player', startedAt: Date.now() } } catch {}
     let mode = 'follow'
@@ -1208,9 +1225,9 @@ module.exports = function registerCombat (ctx) {
     const anchor = bot.entity?.position?.clone?.() || null
 
     function resolveGuardEntity () {
-      if (!guardTarget) return null
+      if (!shared.guardTarget) return null
       try {
-        const wanted = String(guardTarget).trim().toLowerCase()
+        const wanted = String(shared.guardTarget).trim().toLowerCase()
         // primary: bot.players map
         for (const [uname, rec] of Object.entries(bot.players || {})) {
           if (String(uname || '').toLowerCase() === wanted) return rec?.entity || null
@@ -1250,7 +1267,7 @@ module.exports = function registerCombat (ctx) {
     const AIM_OFFSETS = [0.2, 0.6, 1.0, 1.2]
     let aimPhase = 0
 
-    guardInterval = setInterval(async () => {
+    shared.guardInterval = setInterval(async () => {
       try {
         // Yield to externally-triggered tools (e.g., mount_player) during execution
         try { if (bot.state && bot.state.externalBusy) return } catch {}
@@ -1358,14 +1375,14 @@ module.exports = function registerCombat (ctx) {
       })
       bot.once('end', () => {
         try { stopRanged() } catch {}
-        try { if (guardInterval) clearInterval(guardInterval) } catch {}
-        guardInterval = null
+        try { if (shared.guardInterval) clearInterval(shared.guardInterval) } catch {}
+        shared.guardInterval = null
       })
       if (typeof registerCleanup === 'function') registerCleanup(() => {
         try { stopRanged() } catch {}
-        try { if (guardInterval) clearInterval(guardInterval) } catch {}
+        try { if (shared.guardInterval) clearInterval(shared.guardInterval) } catch {}
         try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
-        guardInterval = null
+        shared.guardInterval = null
         try { if (bot.state && bot.state.currentTask && bot.state.currentTask.name === '驻点清怪') bot.state.currentTask = null } catch {}
       })
     } catch {}
@@ -1383,8 +1400,8 @@ module.exports = function registerCombat (ctx) {
     m.allowSprinting = true
     m.canDig = (args.dig === true)
     bot.pathfinder.setMovements(m)
-    guardTarget = String(name || '')
-    if (guardInterval) { try { clearInterval(guardInterval) } catch {}; guardInterval = null }
+    shared.guardTarget = String(name || '')
+    if (shared.guardInterval) { try { clearInterval(shared.guardInterval) } catch {}; shared.guardInterval = null }
     try { if (bot.state) bot.state.currentTask = { name: '护卫玩家', source: 'player', startedAt: Date.now() } } catch {}
     let mode = 'follow'
     let currentMobId = null
@@ -1431,7 +1448,7 @@ module.exports = function registerCombat (ctx) {
     function mobName (e) { try { const raw = e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || ''; return String(raw).replace(/\u00a7./g, '').toLowerCase() } catch { return '' } }
     function resolveGuardEntity () {
       try {
-        const wanted = String(guardTarget).trim().toLowerCase()
+        const wanted = String(shared.guardTarget).trim().toLowerCase()
         for (const [uname, rec] of Object.entries(bot.players || {})) { if (String(uname || '').toLowerCase() === wanted) return rec?.entity || null }
         for (const e of Object.values(bot.entities || {})) { try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === wanted) return e } catch {} }
         return null
@@ -1442,7 +1459,7 @@ module.exports = function registerCombat (ctx) {
     const AIM_OFFSETS = [0.2, 0.6, 1.0, 1.2]
     let aimPhase = 0
 
-    guardInterval = setInterval(async () => {
+    shared.guardInterval = setInterval(async () => {
       try {
         try { if (bot.state && bot.state.externalBusy) return } catch {}
         const targetEnt = resolveGuardEntity()
@@ -1524,22 +1541,25 @@ module.exports = function registerCombat (ctx) {
     try {
       bot.once('agent:stop_all', () => {
         try { stopRanged() } catch {}
+        shared.guardTarget = null
         try { if (bot.state && bot.state.currentTask && bot.state.currentTask.name === '护卫玩家') bot.state.currentTask = null } catch {}
       })
       bot.once('end', () => {
         try { stopRanged() } catch {}
-        try { if (guardInterval) clearInterval(guardInterval) } catch {}
-        guardInterval = null
+        try { if (shared.guardInterval) clearInterval(shared.guardInterval) } catch {}
+        shared.guardInterval = null
+        shared.guardTarget = null
       })
       if (typeof registerCleanup === 'function') registerCleanup(() => {
         try { stopRanged() } catch {}
-        try { if (guardInterval) clearInterval(guardInterval) } catch {}
+        try { if (shared.guardInterval) clearInterval(shared.guardInterval) } catch {}
         try { if (bot.pathfinder) bot.pathfinder.setGoal(null) } catch {}
-        guardInterval = null
+        shared.guardInterval = null
+        shared.guardTarget = null
         try { if (bot.state && bot.state.currentTask && bot.state.currentTask.name === '护卫玩家') bot.state.currentTask = null } catch {}
       })
     } catch {}
-    return ok(`开始护卫玩家 ${guardTarget} (半径${radius}格)`)
+    return ok(`开始护卫玩家 ${shared.guardTarget} (半径${radius}格)`)
   }
 
   // Removed legacy 'guard' tool
@@ -1726,8 +1746,8 @@ module.exports = function registerCombat (ctx) {
   async function gather (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '10', 10))
     const height = (args.height != null) ? Math.max(0, parseInt(args.height, 10)) : null
-    const names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
-    const match = args.match ? String(args.match).toLowerCase() : null
+    let names = Array.isArray(args.names) ? args.names.map(n => String(n).toLowerCase()) : null
+    let match = args.match ? String(args.match).toLowerCase() : null
     const onlyParam = (() => {
       if (args.only == null) return null
       if (Array.isArray(args.only)) return args.only.map(x => String(x).toLowerCase())
@@ -1738,13 +1758,18 @@ module.exports = function registerCombat (ctx) {
     const collectDrops = (String(args.collect ?? 'true').toLowerCase() !== 'false')
     // If no target specified, default to "any ore" for strong compatibility
     const defaultAnyOre = (!names && !match && !onlyParam)
+    const onlyLooksLikeOre = (() => {
+      if (!onlyParam) return false
+      const list = Array.isArray(onlyParam) ? onlyParam : [onlyParam]
+      return list.length > 0 && list.every(tok => isOreTokenHint(tok))
+    })()
 
     // Unified path: if target looks like ore(s), delegate to mining skill
     try {
       const runner = ensureRunner()
       const looksLikeOre = (() => {
         if (defaultAnyOre) return true
-        if (onlyParam) return true
+        if (onlyLooksLikeOre) return true
         if (names && names.some(isOreNameSimple)) return true
         if (match && (match.includes('_ore') || ['ore','diamond','iron','gold','copper','coal','redstone','lapis','emerald','quartz','debris','netherite'].some(k => match.includes(k)))) return true
         return false
@@ -1808,6 +1833,15 @@ module.exports = function registerCombat (ctx) {
         return res.ok ? ok(`矿物采集已启动: ${label}`, { taskId: res.taskId }) : fail(res.msg || '启动失败')
       }
     } catch {}
+
+    if (!names && !match && onlyParam && !onlyLooksLikeOre) {
+      const list = Array.isArray(onlyParam) ? onlyParam : [onlyParam]
+      if (list.length === 1) {
+        match = list[0]
+      } else {
+        names = list
+      }
+    }
 
     function invSumTargets () {
       try {
