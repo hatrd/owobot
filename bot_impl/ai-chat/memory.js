@@ -581,6 +581,7 @@ function createMemoryService ({
   const ONE_DAY_MS = 24 * ONE_HOUR_MS
   const ONE_WEEK_MS = 7 * ONE_DAY_MS
   const ONE_MONTH_MS = 30 * ONE_DAY_MS
+  const DAY_WINDOW_SHIFT_HOUR = 4
 
   function conversationTimestamp (entry) {
     if (!entry || typeof entry !== 'object') return null
@@ -758,6 +759,199 @@ function createMemoryService ({
       .filter(Boolean)
   }
 
+  const aggregationCtrl = { running: false, lastCheck: 0 }
+
+  function ensureDialogueBucketsState () {
+    if (!state.aiDialogueBuckets || typeof state.aiDialogueBuckets !== 'object') state.aiDialogueBuckets = {}
+    return state.aiDialogueBuckets
+  }
+
+  function entryTier (entry) {
+    if (!entry || typeof entry !== 'object') return null
+    return entry.tier || 'raw'
+  }
+
+  function entriesInWindow (tier, start, end) {
+    if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []
+    return state.aiDialogues.filter(entry => {
+      if (!entry) return false
+      const currentTier = entryTier(entry)
+      if (tier && currentTier !== tier) return false
+      const ts = conversationTimestamp(entry)
+      if (!Number.isFinite(ts)) return false
+      return ts >= start && ts < end
+    })
+  }
+
+  function existingAggregate (tier, start, end) {
+    if (!Array.isArray(state.aiDialogues)) return false
+    return state.aiDialogues.some(entry => entry && entryTier(entry) === tier && entry.bucket && entry.bucket.start === start && entry.bucket.end === end)
+  }
+
+  function aggregateParticipants (entries) {
+    const set = new Set()
+    for (const entry of entries) {
+      for (const name of entry?.participants || []) {
+        if (!name) continue
+        set.add(String(name))
+      }
+    }
+    return [...set]
+  }
+
+  function summarizationFallback (entries) {
+    const texts = entries
+      .map(e => typeof e?.summary === 'string' ? e.summary.trim() : '')
+      .filter(Boolean)
+    if (!texts.length) return `${entries.length}条对话活动`
+    const sample = texts.slice(0, 3).join(' / ')
+    if (texts.length > 3) return `${sample} / 等${texts.length}条`
+    return sample
+  }
+
+  async function summarizeDialogueWindow (entries, label, tierName) {
+    const fallback = summarizationFallback(entries)
+    const names = aggregateParticipants(entries)
+    const combined = entries
+      .map(e => {
+        const who = formatPeopleLabel(e?.participants || [])
+        const text = typeof e?.summary === 'string' ? e.summary.trim() : ''
+        return `${who}: ${text}`.trim()
+      })
+      .filter(Boolean)
+      .join(' | ')
+    if (!combined) return fallback
+    const sys = '你是Minecraft服务器里的记忆整理助手。请压缩给定时间段内的对话摘要，50字以内，强调主要事件、地点和相关玩家。禁止编造。'
+    const messages = [
+      { role: 'system', content: sys },
+      { role: 'user', content: `时间段：${label}\n层级：${tierName}\n参与者：${names.join('、') || '玩家们'}\n摘要列表：${combined}\n请输出一段≤50字总结。` }
+    ]
+    const summary = await runSummaryModel(messages, 100, 0.2)
+    if (!summary) return fallback
+    return summary.replace(/\s+/g, ' ').trim()
+  }
+
+  async function aggregateDialogueWindow ({ sourceTier, targetTier, kind, start, end }) {
+    const list = entriesInWindow(sourceTier, start, end)
+    if (!list.length) return false
+    const label = formatBucketLabel(kind, start, end)
+    const summary = await summarizeDialogueWindow(list, label, targetTier)
+    const participants = aggregateParticipants(list)
+    const entry = {
+      id: `agg_${targetTier}_${start}`,
+      tier: targetTier,
+      participants,
+      summary,
+      startedAt: start,
+      endedAt: end - 1,
+      bucket: { kind, start, end, label },
+      sourceTier,
+      sourceCount: list.length,
+      createdAt: now()
+    }
+    for (let i = state.aiDialogues.length - 1; i >= 0; i--) {
+      const current = state.aiDialogues[i]
+      if (!current || entryTier(current) !== sourceTier) continue
+      const ts = conversationTimestamp(current)
+      if (!Number.isFinite(ts)) continue
+      if (ts >= start && ts < end) state.aiDialogues.splice(i, 1)
+    }
+    state.aiDialogues.push(entry)
+    return true
+  }
+
+  async function aggregateHourlyBuckets (nowTs) {
+    const buckets = ensureDialogueBucketsState()
+    let cursor = Number.isFinite(buckets.hourlyEnd) ? buckets.hourlyEnd : startOfHour(nowTs)
+    const target = startOfHour(nowTs)
+    let changed = false
+    while (cursor + ONE_HOUR_MS <= target) {
+      const start = cursor
+      const end = cursor + ONE_HOUR_MS
+      if (!existingAggregate('hour', start, end)) {
+        const ok = await aggregateDialogueWindow({ sourceTier: 'raw', targetTier: 'hour', kind: 'hour', start, end })
+        if (ok) changed = true
+      }
+      cursor = end
+    }
+    buckets.hourlyEnd = cursor
+    return changed
+  }
+
+  async function aggregateDailyBuckets (nowTs) {
+    const buckets = ensureDialogueBucketsState()
+    let cursor = Number.isFinite(buckets.dailyEnd) ? buckets.dailyEnd : startOfDailyWindow(nowTs)
+    const target = startOfDailyWindow(nowTs)
+    let changed = false
+    while (cursor + ONE_DAY_MS <= target) {
+      const start = cursor
+      const end = cursor + ONE_DAY_MS
+      if (!existingAggregate('day', start, end)) {
+        const ok = await aggregateDialogueWindow({ sourceTier: 'hour', targetTier: 'day', kind: 'day', start, end })
+        if (ok) changed = true
+      }
+      cursor = end
+    }
+    buckets.dailyEnd = cursor
+    return changed
+  }
+
+  async function aggregateWeeklyBuckets (nowTs) {
+    const buckets = ensureDialogueBucketsState()
+    let cursor = Number.isFinite(buckets.weeklyEnd) ? buckets.weeklyEnd : startOfWeeklyWindow(nowTs)
+    const target = startOfWeeklyWindow(nowTs)
+    let changed = false
+    while (cursor + ONE_WEEK_MS <= target) {
+      const start = cursor
+      const end = cursor + ONE_WEEK_MS
+      if (!existingAggregate('week', start, end)) {
+        const ok = await aggregateDialogueWindow({ sourceTier: 'day', targetTier: 'week', kind: 'week', start, end })
+        if (ok) changed = true
+      }
+      cursor = end
+    }
+    buckets.weeklyEnd = cursor
+    return changed
+  }
+
+  function pruneExpiredDialogues (nowTs) {
+    if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []
+    const cutoff = nowTs - ONE_MONTH_MS
+    let changed = false
+    for (let i = state.aiDialogues.length - 1; i >= 0; i--) {
+      const entry = state.aiDialogues[i]
+      const ts = conversationTimestamp(entry)
+      if (!Number.isFinite(ts) || ts < cutoff) {
+        state.aiDialogues.splice(i, 1)
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  async function maybeRunDialogueAggregation () {
+    const nowTs = now()
+    if (aggregationCtrl.running) return
+    if (nowTs - aggregationCtrl.lastCheck < 60 * 1000) return
+    aggregationCtrl.running = true
+    aggregationCtrl.lastCheck = nowTs
+    try {
+      let changed = false
+      changed = await aggregateHourlyBuckets(nowTs) || changed
+      changed = await aggregateDailyBuckets(nowTs) || changed
+      changed = await aggregateWeeklyBuckets(nowTs) || changed
+      changed = pruneExpiredDialogues(nowTs) || changed
+      if (changed) {
+        trimConversationStore()
+        persistMemoryState()
+      }
+    } catch (err) {
+      traceChat('[chat] dialogue aggregation error', err?.message || err)
+    } finally {
+      aggregationCtrl.running = false
+    }
+  }
+
   function selectDialoguesForContext (username) {
     if (!Array.isArray(state.aiDialogues) || !state.aiDialogues.length) return []
     const sorted = state.aiDialogues.slice().sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
@@ -859,7 +1053,8 @@ function createMemoryService ({
         participants: participants.map(p => String(p || '').trim()).filter(Boolean),
         summary,
         startedAt: job.startedAt || now(),
-        endedAt: job.endedAt || now()
+        endedAt: job.endedAt || now(),
+        tier: 'raw'
       }
       state.aiDialogues.push(record)
       trimConversationStore()
@@ -946,7 +1141,8 @@ function createMemoryService ({
     buildPrompt: buildConversationMemoryPrompt,
     queueSummary: queueConversationSummary,
     relativeTimeLabel,
-    formatEntriesForDisplay: formatDialogueEntriesForDisplay
+    formatEntriesForDisplay: formatDialogueEntriesForDisplay,
+    maybeRunAggregation: maybeRunDialogueAggregation
   }
 
   const rewrite = {
@@ -964,3 +1160,17 @@ function createMemoryService ({
 }
 
 module.exports = { createMemoryService }
+  function startOfDailyWindow (ts) {
+    const d = new Date(ts)
+    d.setHours(DAY_WINDOW_SHIFT_HOUR, 0, 0, 0)
+    if (ts < d.getTime()) d.setDate(d.getDate() - 1)
+    return d.getTime()
+  }
+
+  function startOfWeeklyWindow (ts) {
+    const start = startOfDailyWindow(ts)
+    const d = new Date(start)
+    const day = d.getDay() === 0 ? 7 : d.getDay()
+    d.setDate(d.getDate() - (day - 1))
+    return d.getTime()
+  }

@@ -1,3 +1,38 @@
+const DAY_WINDOW_SHIFT_HOURS = 4
+
+function startOfHour (ts) {
+  const d = new Date(ts)
+  d.setMinutes(0, 0, 0)
+  return d.getTime()
+}
+
+function startOfDailyWindow (ts) {
+  const d = new Date(ts)
+  d.setHours(DAY_WINDOW_SHIFT_HOURS, 0, 0, 0)
+  if (ts < d.getTime()) d.setDate(d.getDate() - 1)
+  return d.getTime()
+}
+
+function startOfWeeklyWindow (ts) {
+  const dayStart = startOfDailyWindow(ts)
+  const d = new Date(dayStart)
+  const day = d.getDay() === 0 ? 7 : d.getDay()
+  d.setDate(d.getDate() - (day - 1))
+  return d.getTime()
+}
+
+function earliestTierTimestamp (entries, tier) {
+  if (!Array.isArray(entries)) return null
+  let minTs = Infinity
+  for (const entry of entries) {
+    if (!entry || (tier && entry.tier !== tier)) continue
+    const ts = Number(entry.endedAt ?? entry.startedAt)
+    if (!Number.isFinite(ts)) continue
+    if (ts < minTs) minTs = ts
+  }
+  return Number.isFinite(minTs) ? minTs : null
+}
+
 function prepareAiState (state, opts = {}) {
   const {
     defaults,
@@ -87,6 +122,14 @@ function prepareAiState (state, opts = {}) {
   if (!Array.isArray(state.aiDialogues) || state.aiDialogues.length === 0) {
     state.aiDialogues = Array.isArray(persistedMemory.dialogues) ? persistedMemory.dialogues : []
   }
+  if (!state.aiDialogueBuckets || typeof state.aiDialogueBuckets !== 'object') state.aiDialogueBuckets = {}
+  const nowTs = Date.now()
+  const rawTs = earliestTierTimestamp(state.aiDialogues, 'raw') || nowTs
+  if (!Number.isFinite(state.aiDialogueBuckets.hourlyEnd)) state.aiDialogueBuckets.hourlyEnd = startOfHour(rawTs)
+  const hourTs = earliestTierTimestamp(state.aiDialogues, 'hour') || rawTs
+  if (!Number.isFinite(state.aiDialogueBuckets.dailyEnd)) state.aiDialogueBuckets.dailyEnd = startOfDailyWindow(hourTs)
+  const dayTs = earliestTierTimestamp(state.aiDialogues, 'day') || hourTs
+  if (!Number.isFinite(state.aiDialogueBuckets.weeklyEnd)) state.aiDialogueBuckets.weeklyEnd = startOfWeeklyWindow(dayTs)
   if (typeof trimConversationStoreFn === 'function') trimConversationStoreFn()
 
   state.aiRecent = Array.isArray(state.aiRecent) ? state.aiRecent : []

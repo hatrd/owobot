@@ -574,6 +574,9 @@ function createPulseService ({
 
   function maybeFlush (reason, options = {}) {
     try {
+      if (memory?.dialogue?.maybeRunAggregation) {
+        Promise.resolve(memory.dialogue.maybeRunAggregation()).catch(err => log?.warn && log.warn('dialog aggregation error:', err?.message || err))
+      }
       if (!pulseEnabled()) return
       if (pulseCtrl.running) return
       prunePendingStore()
