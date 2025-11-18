@@ -3,6 +3,7 @@ const path = require('path')
 const { Vec3 } = require('vec3')
 
 const GREET_INITIAL_DELAY_MS = 5000
+const GREET_COOLDOWN_MS = 30 * 60 * 1000
 const GREET_DEFAULT_SUFFIX = '☆ (≧▽≦)ﾉ'
 const GREET_ZONES_FILE = process.env.GREET_ZONES_FILE || path.join(__dirname, '..', 'data', 'greet-zones.json')
 const DEFAULT_GREETING_ZONES = [
@@ -77,6 +78,7 @@ class GreetingManager {
     const state = this.state
     if (!state.pendingGreets || !(state.pendingGreets instanceof Map)) state.pendingGreets = new Map()
     if (!state.greetedPlayers || !(state.greetedPlayers instanceof Set)) state.greetedPlayers = new Set()
+    if (!state.greetHistory || !(state.greetHistory instanceof Map)) state.greetHistory = new Map()
     if (!state.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
     if (!Array.isArray(state.greetZones)) state.greetZones = []
     if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
@@ -144,6 +146,9 @@ class GreetingManager {
     for (const [name, ts] of [...state.aiRecentReplies.entries()]) {
       if (!Number.isFinite(ts) || nowTs - ts > RECENT_AI_REPLY_WINDOW_MS) state.aiRecentReplies.delete(name)
     }
+    for (const [name, ts] of [...state.greetHistory.entries()]) {
+      if (!Number.isFinite(ts) || nowTs - ts > GREET_COOLDOWN_MS) state.greetHistory.delete(name)
+    }
     const players = this.bot && this.bot.players ? this.bot.players : {}
     state.greetedPlayers.clear()
     for (const username of Object.keys(players)) {
@@ -164,6 +169,16 @@ class GreetingManager {
     if (!state.readyForGreeting) return
     if (state.greetedPlayers.has(username)) return
     if (state.pendingGreets.has(username)) return
+    if (state.greetHistory instanceof Map) {
+      const lastTs = state.greetHistory.get(username)
+      const now = Date.now()
+      if (Number.isFinite(lastTs) && now - lastTs < GREET_COOLDOWN_MS) {
+        state.greetedPlayers.add(username)
+        const remain = Math.max(0, GREET_COOLDOWN_MS - (now - lastTs))
+        this.greetLog(`skip greet: cooldown active for ${username}, remaining ${Math.ceil(remain / 1000)}s`)
+        return
+      }
+    }
     if (state.aiRecentReplies instanceof Map) {
       const ts = state.aiRecentReplies.get(username)
       if (Number.isFinite(ts) && Date.now() - ts < RECENT_AI_REPLY_WINDOW_MS) {
@@ -279,6 +294,7 @@ class GreetingManager {
         if (state.greetedPlayers.has(username)) return
         const msg = this.buildGreeting(username)
         this.bot.chat(msg)
+        if (state.greetHistory instanceof Map) state.greetHistory.set(username, Date.now())
         state.greetedPlayers.add(username)
       } catch (err) {
         this.dlog('Greeting send error', err)

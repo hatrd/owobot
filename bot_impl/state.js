@@ -14,6 +14,7 @@ function prepareSharedState (existing, { greetEnabled, loginPassword } = {}) {
   const state = existing || {}
   state.pendingGreets = ensureMap(state.pendingGreets)
   state.greetedPlayers = ensureSet(state.greetedPlayers)
+  state.greetHistory = ensureMap(state.greetHistory)
   state.cleanups = ensureArray(state.cleanups)
   state.greetZones = ensureArray(state.greetZones)
   state.worldMemoryZones = ensureArray(state.worldMemoryZones)
