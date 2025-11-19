@@ -624,6 +624,21 @@ function createMemoryService ({
     return d.getTime()
   }
 
+  function startOfDailyWindow (ts) {
+    const d = new Date(ts)
+    d.setHours(DAY_WINDOW_SHIFT_HOUR, 0, 0, 0)
+    if (ts < d.getTime()) d.setDate(d.getDate() - 1)
+    return d.getTime()
+  }
+
+  function startOfWeeklyWindow (ts) {
+    const start = startOfDailyWindow(ts)
+    const d = new Date(start)
+    const day = d.getDay() === 0 ? 7 : d.getDay()
+    d.setDate(d.getDate() - (day - 1))
+    return d.getTime()
+  }
+
   function formatBucketLabel (kind, start, end) {
     const startDate = new Date(start)
     const endDate = new Date(end - 1)
@@ -1160,17 +1175,3 @@ function createMemoryService ({
 }
 
 module.exports = { createMemoryService }
-  function startOfDailyWindow (ts) {
-    const d = new Date(ts)
-    d.setHours(DAY_WINDOW_SHIFT_HOUR, 0, 0, 0)
-    if (ts < d.getTime()) d.setDate(d.getDate() - 1)
-    return d.getTime()
-  }
-
-  function startOfWeeklyWindow (ts) {
-    const start = startOfDailyWindow(ts)
-    const d = new Date(start)
-    const day = d.getDay() === 0 ? 7 : d.getDay()
-    d.setDate(d.getDate() - (day - 1))
-    return d.getTime()
-  }

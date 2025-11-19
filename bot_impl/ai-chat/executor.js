@@ -1,5 +1,6 @@
 const { ACTION_TOOL_DEFINITIONS, buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const { buildPromptFromTemplate } = require('../mai_core/prompt-framework')
+const { formatReadableDateTime } = require('../time-utils')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -218,7 +219,7 @@ function createChatExecutor ({
       extra_info_block: async () => [extrasCtx, gameCtx, memoryCtx].filter(Boolean).join('\n\n'),
       expression_habits_block: async () => '表达习惯：口语化、第一人称、贴近玩家语气。',
       memory_retrieval: async () => (await memoryBlockTask).text,
-      time_block: async () => `当前时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+      time_block: async () => `当前时间：${formatReadableDateTime(new Date())}`,
       dialogue_prompt: async () => dialoguePrompt || contextPrompt,
       reply_target_block: async () => `你需要回复玩家 ${username || '??'}，TA 刚刚说：“${content}”。`,
       planner_reasoning: async () => intent?.topic ? `玩家关注主题：${intent.topic}` : '（暂无额外规划）',

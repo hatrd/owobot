@@ -9,6 +9,7 @@ const {
 const { globalConfig, modelConfig, memoryRetrievalConfig } = require('./config')
 const { getToolRegistry, initBuiltinTools, registerMemoryRetrievalTool } = require('./memory-tools')
 const { createThinkingBackStore } = require('./thinking-back-store')
+const { formatDateTimeTz } = require('../time-utils')
 
 const logger = getLogger('mai.memory')
 
@@ -179,7 +180,7 @@ function createMemoryRetrievalSystem ({
       {},
       {
         bot_name: globalConfig.botName,
-        time_now: now().toISOString(),
+        time_now: formatDateTimeTz(now()),
         chat_history: payload.chatHistory || '',
         recent_query_history: formatRecentQueries(recent),
         sender: payload.sender || '玩家',
@@ -257,7 +258,7 @@ function createMemoryRetrievalSystem ({
         {},
         {
           bot_name: globalConfig.botName,
-          time_now: now().toISOString(),
+          time_now: formatDateTimeTz(now()),
           max_iterations: maxIterations,
           current_iteration: iter,
           remaining_iterations: remaining,

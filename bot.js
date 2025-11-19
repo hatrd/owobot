@@ -1,8 +1,11 @@
+if (!process.env.TZ) process.env.TZ = 'Asia/Shanghai'
+
 const mineflayer = require('mineflayer')
 const readline = require('readline')
 const fs = require('fs')
 const path = require('path')
 const fileLogger = require('./bot_impl/file-logger')
+const { formatDateTimeTz } = require('./bot_impl/time-utils')
 
 // Simple argv parser
 function parseArgv () {
@@ -69,7 +72,7 @@ if (argv.args['iterate-interval']) {
 
 const DEBUG = parseBool(process.env.MC_DEBUG, true)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
-function ts () { return new Date().toISOString() }
+function ts () { return formatDateTimeTz() }
 
 console.log('Starting bot with config:', {
   host: options.host,

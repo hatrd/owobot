@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const util = require('util')
+const { formatDateTz, formatDateTimeTz } = require('./time-utils')
 
 const state = {
   installed: false,
@@ -22,7 +23,7 @@ function resolvePath (options = {}) {
 
   const rawDir = options.dir || process.env.MC_LOG_DIR
   const dir = toAbsolute(rawDir, cwd) || path.join(cwd, 'logs')
-  const stamp = new Date().toISOString().slice(0, 10)
+  const stamp = formatDateTz()
   return path.join(dir, `bot-${stamp}.log`)
 }
 
@@ -44,7 +45,7 @@ function ensureStream (targetPath) {
 }
 
 function formatLine (level, args) {
-  const prefix = `[${new Date().toISOString()}][${level}]`
+  const prefix = `[${formatDateTimeTz()}][${level}]`
   if (!args || args.length === 0) return prefix
   try {
     return `${prefix} ${util.format(...args)}`
@@ -109,7 +110,7 @@ function install (options = {}) {
     overrideConsole()
     attachFinalizers()
     state.installed = true
-    if (state.stream) state.stream.write(`[${new Date().toISOString()}][INFO] File logger attached\n`)
+    if (state.stream) state.stream.write(`[${formatDateTimeTz()}][INFO] File logger attached\n`)
     return { enabled: true, path: state.path }
   } catch (err) {
     const msg = err?.stack || err?.message || String(err)
