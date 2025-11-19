@@ -1,4 +1,5 @@
-const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
+const { ACTION_TOOL_DEFINITIONS, buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
+const { buildPromptFromTemplate } = require('../mai_core/prompt-framework')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -24,7 +25,8 @@ function createChatExecutor ({
   canAfford,
   applyUsage,
   buildGameContext,
-  buildExtrasContext
+  buildExtrasContext,
+  memoryRetrieval
 }) {
   const ctrl = { busy: false, abort: null, pending: null }
   const PENDING_EXPIRE_MS = 8000
@@ -123,6 +125,36 @@ function createChatExecutor ({
     return raw.replace(/{{BOT_NAME}}/g, botName)
   }
 
+  function recentDialogueLines (limit = 12) {
+    const lines = Array.isArray(state.aiRecent) ? state.aiRecent : []
+    return lines.slice(-Math.max(3, limit)).map(line => {
+      const who = line?.user || '??'
+      return `${who}: ${String(line?.text || '').trim()}`
+    }).join('\n')
+  }
+
+  function toolInfoBlock () {
+    return [
+      '可调用工具：',
+      ...ACTION_TOOL_DEFINITIONS.map(def => `- ${def.name}: ${def.description}`)
+    ].join('\n')
+  }
+
+  function keywordReactionPrompt (text) {
+    if (!text) return '若发现玩家情绪激动或求助，先安抚再回答。'
+    const reactions = []
+    if (/(tp|传送|tpa)/i.test(text)) reactions.push('玩家询问传送时，请确认是否需要输出命令或调用工具。')
+    if (/(怪|敌|attack|帮打)/i.test(text)) reactions.push('玩家提到战斗/怪物时，考虑使用 defend/hunt 工具。')
+    if (/(谢谢|thx|辛苦)/i.test(text)) reactions.push('玩家表达感谢时，用一句温暖的话回应。')
+    if (!reactions.length) reactions.push('请根据关键词调整语气。')
+    return reactions.join(' ')
+  }
+
+  function resolveTemplateName (intent) {
+    if (intent?.kind === 'rewrite') return 'chat_prompt_rewrite'
+    return 'chat_prompt_group'
+  }
+
   function buildContextPrompt (username) {
     const ctx = state.ai.context || { include: true, recentCount: defaults.DEFAULT_RECENT_COUNT, recentWindowSec: 300 }
     const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
@@ -161,28 +193,50 @@ function createChatExecutor ({
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
     const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
+    const allowSkip = options?.allowSkip === true
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
     const memoryCtx = memory.longTerm.buildContext()
-    const allowSkip = options?.allowSkip === true
-    const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
-    const messages = [
-      { role: 'system', content: systemPrompt() },
-      extrasCtx ? { role: 'system', content: extrasCtx } : null,
-      gameCtx ? { role: 'system', content: gameCtx } : null,
-      memoryCtx ? { role: 'system', content: memoryCtx } : null,
-      { role: 'system', content: contextPrompt },
-      { role: 'user', content: userContent }
-    ].filter(Boolean)
+    const dialoguePrompt = recentDialogueLines(state.ai.context?.recentCount || defaults.DEFAULT_RECENT_COUNT)
+    const memoryBlockTask = memoryRetrieval
+      ? memoryRetrieval.buildMemoryRetrievalPrompt({
+          chatId: username || 'global',
+          chatHistory: dialoguePrompt,
+          sender: username,
+          targetMessage: content,
+          chatContext: contextPrompt
+        }).catch(err => {
+          log?.warn && log.warn('memory retrieval error', err?.message || err)
+          return { text: '记忆系统暂不可用。' }
+        })
+      : Promise.resolve({ text: '记忆系统未启用。' })
+    const templateName = resolveTemplateName(intent)
+    const blocks = {
+      knowledge_prompt: async () => systemPrompt(),
+      tool_info_block: async () => toolInfoBlock(),
+      extra_info_block: async () => [extrasCtx, gameCtx, memoryCtx].filter(Boolean).join('\n\n'),
+      expression_habits_block: async () => '表达习惯：口语化、第一人称、贴近玩家语气。',
+      memory_retrieval: async () => (await memoryBlockTask).text,
+      time_block: async () => `当前时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+      dialogue_prompt: async () => dialoguePrompt || contextPrompt,
+      reply_target_block: async () => `你需要回复玩家 ${username || '??'}，TA 刚刚说：“${content}”。`,
+      planner_reasoning: async () => intent?.topic ? `玩家关注主题：${intent.topic}` : '（暂无额外规划）',
+      identity: async () => `身份：${bot?.username || 'bot'}，Minecraft 服务器中的AI协作者。`,
+      chat_prompt: async () => '若需要执行动作，请调用提供的函数工具；纯聊天时直接输出文本。',
+      mood_state: async () => '保持可靠、幽默，遇到危险时简洁严肃。',
+      keywords_reaction_prompt: async () => keywordReactionPrompt(content),
+      reply_style: async () => `回复必须 ≤ ${(maxReplyLen || 120)} 字。${allowSkip ? '如无需回复，仅输出 “SKIP”。' : ''}`,
+      moderation_prompt: async () => '严禁输出敏感词、服务器IP或离题内容。'
+    }
+    const mainPrompt = await buildPromptFromTemplate(templateName, blocks)
+    const messages = [{ role: 'user', content: mainPrompt }]
     if (state.ai.trace && log?.info) {
       try {
-        log.info('gameCtx ->', buildGameContext())
-        log.info('chatCtx ->', buildContextPrompt(username))
-        log.info('memoryCtx ->', memory.longTerm.buildContext())
+        log.info('mai_prompt ->', mainPrompt)
       } catch {}
     }
-    const estIn = estTokensFromText(messages.map(m => m.content).join(' '))
+    const estIn = estTokensFromText(mainPrompt)
     const afford = canAfford(estIn)
     if (state.ai.trace && log?.info) log.info('precheck inTok~=', estIn, 'projCost~=', (afford.proj || 0).toFixed(4), 'rem=', afford.rem)
     if (!afford.ok) {
