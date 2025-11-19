@@ -15,22 +15,6 @@ const {
   DEFAULT_MEMORY_STORE_MAX,
   buildDefaultContext
 } = require('./ai-chat/config')
-const {
-  initMemoryRetrievalPrompt,
-  createMemoryRetrievalSystem
-} = require('./mai_core/memory-retrieval')
-const { createThinkingBackStore } = require('./mai_core/thinking-back-store')
-const { createThinkingBackDao } = require('./mai_core/thinking-back-dao')
-const { globalConfig, modelConfig } = require('./mai_core/config')
-
-const LOCAL_JARGON_MAP = new Map([
-  ['tp', '向其他玩家发送传送请求（/tpa <玩家名>）'],
-  ['rtp', '随机传送到一个安全位置'],
-  ['back', '返回上一次死亡点或传送点'],
-  ['spawn', '传送回主城/出生点'],
-  ['home', '传送到家，即 /home'],
-  ['ls', '整理背包或储物箱的命令（loot sort）']
-])
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...args) => log.debug(...args)
@@ -132,128 +116,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     dayStart,
     monthStart
   })
-  globalConfig.botName = bot?.username || state.ai?.botName || 'MaiBot'
-  globalConfig.enableDebugLog = Boolean(state.ai?.trace)
-  modelConfig.model = state.ai?.model || DEFAULT_MODEL
-  modelConfig.temperature = 0.25
-  modelConfig.maxTokens = state.ai?.maxTokensPerCall || 256
   if (!state.aiExtras || typeof state.aiExtras !== 'object') state.aiExtras = { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
-
-  const thinkingBackStore = createThinkingBackStore({ dao: createThinkingBackDao(), now })
-
-  function searchChatHistory ({ keywords = [], limit = 12, sinceMs } = {}) {
-    const rows = Array.isArray(state.aiRecent) ? state.aiRecent : []
-    const terms = (Array.isArray(keywords) ? keywords : [keywords])
-      .map(k => String(k || '').trim().toLowerCase())
-      .filter(Boolean)
-    const since = Number.isFinite(sinceMs) ? sinceMs : 0
-    const matches = rows
-      .filter(line => !Number.isFinite(line?.t) || line.t >= since)
-      .filter(line => {
-        if (!terms.length) return true
-        const text = String(line?.text || '').toLowerCase()
-        return terms.some(term => text.includes(term))
-      })
-      .slice(-Math.max(limit, 8))
-    return matches.map(line => ({
-      user: line?.user || '?',
-      text: String(line?.text || '').slice(0, 200),
-      seq: line?.seq,
-      at: line?.t
-    }))
-  }
-
-  function lookupJargon ({ terms = [] } = {}) {
-    const entries = []
-    for (const raw of terms) {
-      const key = String(raw || '').trim().toLowerCase()
-      if (!key) continue
-      const meaning = LOCAL_JARGON_MAP.get(key) || '无内置解释，请结合聊天上下文理解。'
-      entries.push({ term: raw, meaning })
-    }
-    return entries
-  }
-
-  function lookupPlayerProfile ({ players = [], max = 3 } = {}) {
-    const results = []
-    const entries = Array.isArray(state.aiMemory?.entries) ? state.aiMemory.entries : []
-    for (const nameRaw of players) {
-      const name = String(nameRaw || '').trim()
-      if (!name) continue
-      const matched = entries.filter(entry => {
-        const summary = String(entry?.summary || entry?.text || '')
-        return summary.includes(name)
-      }).slice(-Math.max(1, max))
-      results.push({
-        player: name,
-        notes: matched.map(entry => ({
-          summary: entry.summary || entry.text,
-          tags: entry.tags || [],
-          updatedAt: entry.updatedAt
-        }))
-      })
-    }
-    return results
-  }
-
-  function lookupMcServerState () {
-    const zones = Array.isArray(state.worldMemoryZones) ? state.worldMemoryZones.slice(-5) : []
-    const extras = Array.isArray(state.aiExtras?.events) ? state.aiExtras.events.slice(-5) : []
-    return {
-      worldMemoryZones: zones,
-      recentEvents: extras,
-      observerSnapshot: buildGameContext()
-    }
-  }
-
-  initMemoryRetrievalPrompt({
-    chatHistorySearch: async (input) => searchChatHistory(input),
-    jargonLookup: async (input) => lookupJargon(input),
-    playerInfoLookup: async (input) => lookupPlayerProfile(input),
-    mcServerLookup: async () => lookupMcServerState()
-  })
-
-  async function runDeepseekCompletion ({ prompt, maxTokens = 256, temperature = 0.2 }) {
-    const { key, baseUrl, path, model } = state.ai
-    if (!key) throw new Error('AI key not configured')
-    const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
-    const messages = [{ role: 'user', content: String(prompt || '') }]
-    const estIn = H.estTokensFromText(messages.map(m => m.content).join(' '))
-    const afford = canAfford(estIn)
-    if (!afford.ok) throw new Error('budget_exceeded')
-    const body = {
-      model: model || defaults.DEFAULT_MODEL,
-      messages,
-      temperature,
-      max_tokens: Math.max(96, Math.min(maxTokens, state.ai.maxTokensPerCall || 256)),
-      stream: false
-    }
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-      body: JSON.stringify(body)
-    })
-    if (!res.ok) {
-      const text = await res.text().catch(() => String(res.status))
-      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
-    }
-    const data = await res.json()
-    const reply = data?.choices?.[0]?.message?.content || ''
-    const usage = data?.usage || {}
-    const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
-    const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : H.estTokensFromText(reply)
-    applyUsage(inTok, outTok)
-    return reply
-  }
-
-  const memoryRetrieval = createMemoryRetrievalSystem({
-    llmClient: {
-      complete: async (payload) => runDeepseekCompletion(payload)
-    },
-    thinkingBackStore,
-    now: () => new Date()
-  })
 
   let executor
   const pulse = createPulseService({
@@ -284,8 +148,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     canAfford,
     applyUsage,
     buildGameContext,
-    buildExtrasContext: pulse.buildExtrasContext,
-    memoryRetrieval
+    buildExtrasContext: pulse.buildExtrasContext
   })
 
   memory.setMessenger(pulse.sendDirectReply)
