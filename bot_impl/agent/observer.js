@@ -318,6 +318,12 @@ function detail (bot, args = {}) {
     const r = collectAnimals(bot, radius, null)
     return { ok: true, msg: `附近动物${r.count}个(半径${radius})`, data: r.list.slice(0, max) }
   }
+  if (what === 'inventory' || what === 'inv' || what === 'bag') {
+    const inv = collectInventorySummary(bot, 999)
+    const all = Array.isArray(inv.all) ? inv.all : []
+    const line = all.length ? all.map(it => `${it.name}x${it.count}`).join(', ') : '空'
+    return { ok: true, msg: `背包物品(${all.length}种): ${line}`, data: inv }
+  }
   if (what === 'cows' || what === 'cow') {
     const r = collectAnimals(bot, radius, 'cow')
     return { ok: true, msg: `附近奶牛${r.count}头(半径${radius})`, data: r.list.slice(0, max) }

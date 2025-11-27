@@ -59,7 +59,7 @@ function prepareAiState (state, opts = {}) {
         recentWindowSec: 300,
         recentStoreMax: 200,
         game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 },
-        memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200 }
+      memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200 }
       })
   const DEF_CTX = resolveContext()
   state.ai = state.ai || {

@@ -164,7 +164,7 @@ function createChatExecutor ({
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
-    const memoryCtx = memory.longTerm.buildContext()
+    const memoryCtx = await memory.longTerm.buildContext({ query: content })
     const allowSkip = options?.allowSkip === true
     const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
     const messages = [
@@ -177,9 +177,9 @@ function createChatExecutor ({
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
-        log.info('gameCtx ->', buildGameContext())
+        log.info('gameCtx ->', gameCtx)
         log.info('chatCtx ->', buildContextPrompt(username))
-        log.info('memoryCtx ->', memory.longTerm.buildContext())
+        log.info('memoryCtx ->', memoryCtx)
       } catch {}
     }
     const estIn = estTokensFromText(messages.map(m => m.content).join(' '))

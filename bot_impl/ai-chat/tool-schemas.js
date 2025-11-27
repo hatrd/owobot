@@ -1,20 +1,7 @@
 const ACTION_TOOL_DEFINITIONS = [
   {
-    name: 'observe_detail',
-    description: 'Inspect nearby world context (entities, drops) without changing the world.',
-    parameters: {
-      type: 'object',
-      properties: {
-        what: { type: 'string', description: 'Optional focus such as drops, players, mobs.' },
-        radius: { type: 'number', description: 'How far to look around the bot in blocks.' },
-        max: { type: 'number', description: 'Maximum rows/items to return.' }
-      },
-      additionalProperties: true
-    }
-  },
-  {
     name: 'observe_players',
-    description: 'Query the external map API for player locations and stats.',
+    description: 'Query the external map API for player locations.',
     parameters: {
       type: 'object',
       properties: {
@@ -407,7 +394,7 @@ const ACTION_TOOL_DEFINITIONS = [
 const SPECIAL_TOOLS = [
   {
     name: 'write_memory',
-    description: 'Persist or reinforce a long-term memory entry for the bot.',
+    description: 'Persist or reinforce a long-term memory entry for the bot. Should *only* be used if the player ask for memorizing, don\'t use it casually',
     parameters: {
       type: 'object',
       properties: {

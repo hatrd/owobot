@@ -1,9 +1,17 @@
+const fs = require('fs/promises')
+const path = require('path')
+const { randomUUID } = require('crypto')
+
 const MEMORY_REWRITE_SYSTEM_PROMPT = [
   '你是Minecraft服务器里的记忆整理助手。玩家会告诉你一条记忆，你需要判断是否值得记录。',
   '如果值得记录，请输出 JSON：{"status":"ok","instruction":"...", "triggers":["关键词"],"tags":["标签"],"summary":"一句总结","tone":"语气","location":{"x":0,"y":64,"z":0,"radius":30,"dim":"minecraft:overworld"},"feature":"景观特点","greet_suffix":"问候语","kind":"类别"}',
   '若无需记录，输出 {"status":"reject","reason":"原因"}；若需要玩家补充信息，输出 {"status":"clarify","question":"需要什么信息"}。',
   '所有 JSON 属性都必须双引号，内容用中文，禁止添加额外说明。'
 ].join('\n')
+
+const LOG_SEARCH_FILE_LIMIT = 4
+const LOG_SEARCH_TAIL_BYTES = 256 * 1024
+const LOG_SEARCH_FETCH_FACTOR = 4
 
 function createMemoryService ({
   state,
@@ -88,6 +96,7 @@ function createMemoryService ({
         i--
         continue
       }
+      ensureMemoryId(item)
       if (typeof item.text === 'string') item.text = normalizeMemoryText(item.text)
       if (!item.text) {
         arr.splice(i, 1)
@@ -260,6 +269,7 @@ function createMemoryService ({
         tone: extra?.tone ? normalizeMemoryText(extra.tone) : '',
         fromAI: extra?.fromAI !== false
       }
+      ensureMemoryId(entry)
       if (extra?.instruction) {
         entry.instruction = normalizeMemoryText(extra.instruction)
         entry.text = entry.instruction
@@ -309,6 +319,172 @@ function createMemoryService ({
     })
     if (!Number.isFinite(limit) || limit <= 0) return top
     return top.slice(0, limit)
+  }
+
+  function keywordMatchMemories (query, limit) {
+    const ask = normalizeMemoryText(query)
+    if (!ask) return []
+    const tokens = Array.from(new Set(ask.split(/\s+/g).map(t => t.trim()).filter(t => t.length >= 2)))
+    if (!tokens.length) return []
+    const entries = ensureMemoryEntries()
+    const scored = []
+    for (const entry of entries) {
+      const hay = [entry.summary, entry.text, entry.feature]
+      if (Array.isArray(entry.tags)) hay.push(entry.tags.join(' '))
+      if (Array.isArray(entry.triggers)) hay.push(entry.triggers.join(' '))
+      const haystack = hay.map(part => normalizeMemoryText(part || '')).filter(Boolean).join(' ')
+      if (!haystack) continue
+      let hits = 0
+      for (const tok of tokens) {
+        if (haystack.includes(tok)) hits += 1
+      }
+      if (!hits) continue
+      const ts = entry.updatedAt || entry.createdAt || 0
+      scored.push({ entry, score: hits + (ts / 1e15) })
+    }
+    if (!scored.length) return []
+    scored.sort((a, b) => b.score - a.score)
+    return scored.slice(0, limit).map(it => it.entry)
+  }
+
+  function resolveLogSearchRoot () {
+    const cwd = process.cwd()
+    const rawFile = process.env.MC_LOG_FILE
+    if (rawFile) {
+      const trimmed = String(rawFile).trim()
+      if (trimmed && trimmed.toLowerCase() !== 'off') {
+        return { files: [path.isAbsolute(trimmed) ? trimmed : path.join(cwd, trimmed)] }
+      }
+      if (trimmed.toLowerCase() === 'off') return null
+    }
+    const rawDir = process.env.MC_LOG_DIR
+    const dir = rawDir && String(rawDir).trim()
+      ? (path.isAbsolute(rawDir) ? rawDir : path.join(cwd, rawDir))
+      : path.join(cwd, 'logs')
+    return { dir }
+  }
+
+  async function listLogFilesForSearch () {
+    const root = resolveLogSearchRoot()
+    if (!root) return []
+    const stats = []
+    if (Array.isArray(root.files)) {
+      for (const filePath of root.files) {
+        if (!filePath) continue
+        try {
+          const st = await fs.stat(filePath)
+          if (!st || (typeof st.isFile === 'function' && !st.isFile())) continue
+          stats.push({ path: filePath, mtime: st.mtimeMs || 0 })
+        } catch {}
+      }
+      stats.sort((a, b) => b.mtime - a.mtime)
+      return stats.map(it => it.path)
+    }
+    const dir = root.dir
+    if (!dir) return []
+    let entries = []
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    for (const entry of entries) {
+      try {
+        if (!entry || typeof entry.isFile !== 'function' || !entry.isFile()) continue
+        const filePath = path.join(dir, entry.name)
+        const st = await fs.stat(filePath)
+        if (!st || (typeof st.isFile === 'function' && !st.isFile())) continue
+        stats.push({ path: filePath, mtime: st.mtimeMs || 0 })
+      } catch {}
+    }
+    if (!stats.length) return []
+    stats.sort((a, b) => b.mtime - a.mtime)
+    return stats.slice(0, LOG_SEARCH_FILE_LIMIT).map(it => it.path)
+  }
+
+  async function readLogTailForSearch (filePath) {
+    let handle
+    try {
+      handle = await fs.open(filePath, 'r')
+      const st = await handle.stat()
+      if (!st || !Number.isFinite(st.size) || st.size <= 0) return ''
+      const slice = Math.min(LOG_SEARCH_TAIL_BYTES, st.size)
+      const buffer = Buffer.alloc(slice)
+      await handle.read(buffer, 0, slice, st.size - slice)
+      return buffer.toString('utf8')
+    } catch {
+      return ''
+    } finally {
+      try { await handle?.close() } catch {}
+    }
+  }
+
+  function tokenizeLogQuery (query) {
+    const ask = normalizeMemoryText(query)
+    if (!ask) return []
+    const parts = ask.split(/[\s,，。!?！？]/g)
+      .map(t => t.trim().toLowerCase())
+      .filter(t => t.length >= 2)
+    if (!parts.length) parts.push(ask.toLowerCase())
+    const seen = new Set()
+    const out = []
+    for (const part of parts) {
+      if (!part || seen.has(part)) continue
+      seen.add(part)
+      out.push(part)
+      if (out.length >= 6) break
+    }
+    return out
+  }
+
+  async function searchLogSnippets (query, limit) {
+    const tokens = tokenizeLogQuery(query)
+    if (!tokens.length) return []
+    const files = await listLogFilesForSearch()
+    if (!files.length) return []
+    const finalLimit = Math.max(1, limit || 6)
+    const fetchCap = Math.max(finalLimit * LOG_SEARCH_FETCH_FACTOR, finalLimit + 2)
+    const results = []
+    const fileCount = Math.min(files.length, LOG_SEARCH_FILE_LIMIT)
+    for (let idx = 0; idx < fileCount; idx++) {
+      const filePath = files[idx]
+      const tail = await readLogTailForSearch(filePath)
+      if (!tail) continue
+      const lines = tail.split(/\r?\n/)
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const rawLine = lines[i]
+        if (!rawLine) continue
+        const norm = normalizeMemoryText(rawLine).toLowerCase()
+        if (!norm) continue
+        let hits = 0
+        for (const token of tokens) {
+          if (norm.includes(token)) hits += 1
+        }
+        if (!hits) continue
+        const trimmed = rawLine.trim()
+        if (!trimmed) continue
+        const snippet = trimmed.length > 220 ? `${trimmed.slice(0, 217)}...` : trimmed
+        results.push({
+          source: path.basename(filePath),
+          text: snippet,
+          score: hits + (fileCount - idx) * 0.001 - (i / Math.max(1, lines.length)) * 0.0001
+        })
+        if (results.length >= fetchCap) break
+      }
+      if (results.length >= fetchCap) break
+    }
+    if (!results.length) return []
+    results.sort((a, b) => b.score - a.score)
+    const seen = new Set()
+    const out = []
+    for (const item of results) {
+      const key = `${item.source}|${item.text}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(`${item.source}: ${item.text}`)
+      if (out.length >= finalLimit) break
+    }
+    return out
   }
 
   // --- Rewrite queue & background jobs ---
@@ -458,14 +634,28 @@ function createMemoryService ({
     processMemoryQueue().catch(() => {})
   }
 
-  function buildMemoryContext () {
+  async function buildMemoryContext (opts = {}) {
     const cfg = state.ai.context?.memory
     if (cfg && cfg.include === false) return ''
-    const limit = cfg?.max || 6
-    const top = topMemories(Math.max(1, limit))
-    if (!top.length) return ''
-    const parts = top.map((m, idx) => memoryLineWithMeta(m, idx))
-    return `长期记忆: ${parts.join(' | ')}`
+    const limit = Math.max(1, opts.limit || cfg?.max || 6)
+    const query = typeof opts.query === 'string' ? opts.query : ''
+    const sections = []
+    if (query) {
+      const logHits = await searchLogSnippets(query, limit)
+      if (logHits.length) {
+        const formatted = logHits.map((line, idx) => `${idx + 1}. ${line}`)
+        sections.push(`日志检索: ${formatted.join(' | ')}`)
+      }
+    }
+    let selected = []
+    if (query) selected = keywordMatchMemories(query, limit * 2)
+    if (!selected.length) selected = topMemories(limit)
+    if (selected.length) {
+      const slice = selected.slice(0, limit)
+      const parts = slice.map((m, idx) => memoryLineWithMeta(m, idx))
+      if (parts.length) sections.push(`长期记忆: ${parts.join(' | ')}`)
+    }
+    return sections.join(' ')
   }
 
   function memoryLineWithMeta (entry, idx) {
@@ -1172,6 +1362,16 @@ function createMemoryService ({
     dialogue,
     rewrite
   }
+}
+
+function ensureMemoryId (entry) {
+  if (!entry || typeof entry !== 'object') return null
+  if (typeof entry.id === 'string' && entry.id.trim()) return entry.id
+  const id = typeof randomUUID === 'function'
+    ? randomUUID()
+    : `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  entry.id = id
+  return id
 }
 
 module.exports = { createMemoryService }

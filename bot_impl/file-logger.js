@@ -7,7 +7,10 @@ const state = {
   installed: false,
   path: null,
   stream: null,
-  original: null
+  original: null,
+  mode: null,
+  dir: null,
+  currentStamp: null
 }
 
 function toAbsolute (input, cwd) {
@@ -15,16 +18,15 @@ function toAbsolute (input, cwd) {
   return path.isAbsolute(input) ? input : path.join(cwd, input)
 }
 
-function resolvePath (options = {}) {
+function resolveTarget (options = {}) {
   const cwd = process.cwd()
   const rawFile = options.file || process.env.MC_LOG_FILE
   if (rawFile && rawFile.toLowerCase() === 'off') return null
-  if (rawFile) return toAbsolute(rawFile, cwd)
+  if (rawFile) return { type: 'fixed', path: toAbsolute(rawFile, cwd) }
 
   const rawDir = options.dir || process.env.MC_LOG_DIR
   const dir = toAbsolute(rawDir, cwd) || path.join(cwd, 'logs')
-  const stamp = formatDateTz()
-  return path.join(dir, `bot-${stamp}.log`)
+  return { type: 'daily', dir }
 }
 
 function ensureStream (targetPath) {
@@ -54,6 +56,31 @@ function formatLine (level, args) {
   }
 }
 
+function rotateStreamIfNeeded () {
+  if (state.mode !== 'daily') return
+  const stamp = formatDateTz()
+  if (state.currentStamp === stamp && state.stream) return
+  const targetPath = path.join(state.dir, `bot-${stamp}.log`)
+  try { if (state.stream) state.stream.end() } catch {}
+  try {
+    state.stream = ensureStream(targetPath)
+    state.path = targetPath
+    state.currentStamp = stamp
+  } catch (err) {
+    state.stream = null
+    state.path = null
+    state.currentStamp = null
+    const msg = err?.stack || err?.message || String(err)
+    try {
+      if (state.original && typeof state.original.error === 'function') {
+        state.original.error('File logger rotation failed:', msg)
+      } else {
+        process.stderr.write(`File logger rotation failed: ${msg}\n`)
+      }
+    } catch {}
+  }
+}
+
 function overrideConsole () {
   const levelMap = new Map([
     ['log', 'INFO'],
@@ -69,6 +96,7 @@ function overrideConsole () {
     const original = state.original[method] || state.original.log
     console[method] = (...args) => {
       try {
+        if (state.mode === 'daily') rotateStreamIfNeeded()
         if (state.stream) state.stream.write(formatLine(level, args) + '\n')
       } catch {}
       try {
@@ -89,7 +117,7 @@ function attachFinalizers () {
 function install (options = {}) {
   if (state.installed) return { enabled: Boolean(state.stream), path: state.path }
 
-  const target = resolvePath(options)
+  const target = resolveTarget(options)
   if (!target) {
     state.installed = true
     state.path = null
@@ -105,8 +133,15 @@ function install (options = {}) {
       debug: console.debug,
       trace: console.trace
     }
-    state.stream = ensureStream(target)
-    state.path = target
+    state.mode = target.type
+    if (target.type === 'fixed') {
+      state.stream = ensureStream(target.path)
+      state.path = target.path
+      state.dir = path.dirname(target.path)
+    } else {
+      state.dir = target.dir
+      rotateStreamIfNeeded()
+    }
     overrideConsole()
     attachFinalizers()
     state.installed = true
