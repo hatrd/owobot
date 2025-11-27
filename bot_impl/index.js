@@ -22,6 +22,7 @@ let watcherManager = null
 const listeners = []
 let teleportResetPromise = null
 const TELEPORT_CHAT_COMMANDS = new Set(['tpa', 'tpaccept', 'tpahere', 'back', 'home', 'spawn', 'warp', 'rtp'])
+const CHAT_DISABLED_PATTERN = /chat disabled in client options/i
 
 function isTeleportChatCommandText (text) {
   try {
@@ -189,6 +190,43 @@ function activate (botInstance, options = {}) {
   })
 
   // Event: display server messages
+  let chatDisabledTriggered = false
+  function extractPlainText (message) {
+    try {
+      const text = typeof message.getText === 'function'
+        ? message.getText()
+        : (typeof message.toString === 'function' ? message.toString() : String(message))
+      if (!text) return ''
+      return String(text).replace(/\u00a7./g, '')
+    } catch (err) {
+      try { coreLog.warn('message text extract error:', err?.message || err) } catch {}
+      return ''
+    }
+  }
+
+  function handleChatDisabled (plainText) {
+    if (chatDisabledTriggered) return
+    chatDisabledTriggered = true
+    try {
+      state.lastChatDisabledAt = Date.now()
+      state.lastChatDisabledMessage = plainText
+    } catch {}
+    const reason = 'Server reported chat disabled; forcing reconnect'
+    try { coreLog.warn(`${reason}. message="${plainText}"`) } catch {}
+    try { console.log(`[${ts()}] ${reason}`) } catch {}
+    try {
+      if (typeof bot.quit === 'function') {
+        bot.quit('chat disabled in client options')
+      } else if (typeof bot.end === 'function') {
+        bot.end('chat disabled in client options')
+      } else if (bot._client && typeof bot._client.end === 'function') {
+        bot._client.end('chat disabled in client options')
+      }
+    } catch (err) {
+      try { coreLog.warn('Failed to terminate bot after chat disabled:', err?.message || err) } catch {}
+    }
+  }
+
   on('message', (message) => {
     try {
       const rendered = typeof message.toAnsi === 'function' ? message.toAnsi() : String(message)
@@ -198,6 +236,12 @@ function activate (botInstance, options = {}) {
     } catch (e) {
       try { console.log(String(message)) } catch {}
     }
+    try {
+      const plain = extractPlainText(message)
+      if (plain && CHAT_DISABLED_PATTERN.test(plain)) {
+        handleChatDisabled(plain)
+      }
+    } catch {}
   })
 
   function installModule (entry) {
