@@ -41,7 +41,7 @@ This document explains how `bot_impl/ai-chat.js` wires the trigger-based DeepSee
 - **`pushRecentChatEntry`:** Canonical helper invoked by player capture (`onChatCapture`) and bot chat (`recordBotChat` / `sendDirectReply`). Guarantees monotonically increasing `seq` IDs for later diffing.
 - **Single source of truth:** `state.aiRecent` now stores every player/机器人对话一次；不再维护额外的“含触发词”缓冲。`buildContextPrompt` 只依赖该数组，默认取最近 32 行（`recentCount`，可通过 `.ai context recent N` 或 `state.ai.context.recentCount` 覆盖）以及 `recentWindowSec`（秒级时间窗，默认 300s）。
 - **Overflow handling:** When `state.aiRecent` exceeds `recentStoreMax`, the oldest chunk is summarized through a lightweight DeepSeek call (20–40 chars) and stored in `state.aiLong` before trimming to size. `recentStoreMax` 可用 `.ai context recentmax N` 调整。
-- **Prompt assembly:** `buildContextPrompt` 渲染“当前对话玩家 + 最近聊天顺序（旧→新）”。其余上下文块按顺序拼接：`buildGameContext`（observer 快照）、`buildExtrasContext`（最近事件）、`buildMemoryContext`（长期记忆 Top N），最后才是玩家提问文本。`callAI()` 始终以此顺序向 DeepSeek 发送 system 消息。
+- **Prompt assembly:** `buildContextPrompt` 渲染“当前对话玩家 + 最近聊天顺序（旧→新）”。其余上下文块按顺序拼接：`buildGameContext`（observer 快照）、`buildExtrasContext`（最近事件）、`buildMemoryContext`（先用 `logs/` 日志检索补充相关片段，再附长期记忆 Top N），最后才是玩家提问文本。`callAI()` 始终以此顺序向 DeepSeek 发送 system 消息。
 
 ## 6. Pulse / Proactive Replies
 - **Enqueue (`enqueuePulse`):** Every stored chat line (even non-triggered) increments the player's pending count unless they received a reply within `PULSE_RECENT_REPLY_SUPPRESS_MS`. The per-user map keeps only counts and last timestamps; actual text lives in `state.aiRecent`.
@@ -54,7 +54,7 @@ This document explains how `bot_impl/ai-chat.js` wires the trigger-based DeepSee
 - **Recovery:** Failures restore `lastSeq`, `pendingByUser`, and re-arm timers to avoid losing messages.
 
 ## 7. CLI & Ops Controls
-- **`.ai ...`:** Existing controls for enabling/disabling, swapping API keys/models, budgeting, reply length, and context windows. 这些 CLI 现在集中在 `bot_impl/ai-chat/cli.js` 中，便于维护与扩展。`.ai clear` 会同时重置 `state.aiRecent` 与 `state.aiPulse.lastSeq`，保持热重载后一致。常用上下文调节：`.ai context recent 32|64`、`.ai context window 600`、`.ai context recentmax 400`。
+- **`.ai ...`:** Existing controls for enabling/disabling, swapping API keys/models, budgeting, reply length,和上下文窗口。`.ai clear` 会同时重置 `state.aiRecent` 与 `state.aiPulse.lastSeq`，保持热重载后一致。常用命令：`.ai context recent 32|64`、`.ai context window 600`、`.ai context recentmax 400`。
 - **`.pulse status|on|off|now`:**
   - Proactive replies start **disabled by default**; run `.pulse on` (or pass `--greet on`?) to enable during a session.
   - `status` prints pending counts, active-session totals, last flush time/reason, and top offending players.
