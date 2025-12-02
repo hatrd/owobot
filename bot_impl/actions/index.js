@@ -24,7 +24,8 @@ function createContext (bot, { log, on, registerCleanup } = {}) {
     guardTarget: null,
     cullInterval: null,
     miningAbort: false,
-    armorStandInterval: null
+    armorStandInterval: null,
+    armorStandDebug: { enabled: false, lastTick: null, _lastTickLog: { reason: null, targetId: null } }
   }
   let pathfinderPkg = null
   let guardDebug = false

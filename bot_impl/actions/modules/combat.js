@@ -3,7 +3,7 @@ const { countItemByName, ensureItemEquipped, itemsMatchingName } = require('../l
 const logging = require('../../logging')
 
 module.exports = function registerCombat (ctx) {
-  const { bot, register, ok, fail, wait, shared, assertCanEquipHand, isMainHandLocked, Vec3 } = ctx
+  const { bot, register, ok, fail, wait, shared, assertCanEquipHand, isMainHandLocked, Vec3, on } = ctx
   const pvp = ctx.pvp
   const log = ctx.log
   const registerCleanup = ctx.registerCleanup
@@ -12,6 +12,39 @@ module.exports = function registerCombat (ctx) {
     const ok = ctx.ensurePathfinder()
     if (ok) pathfinderPkg = ctx.pathfinder
     return ok
+  }
+
+  function ensureArmorDebugState () {
+    if (!shared.armorStandDebug) {
+      shared.armorStandDebug = { enabled: false, lastTick: null, _lastTickLog: { reason: null, targetId: null } }
+    } else if (!shared.armorStandDebug._lastTickLog) {
+      shared.armorStandDebug._lastTickLog = { reason: null, targetId: null }
+    }
+    return shared.armorStandDebug
+  }
+
+  ensureArmorDebugState()
+
+  function armorDebugEnabled () {
+    return Boolean(ensureArmorDebugState().enabled)
+  }
+
+  function armorLogEvent (event, payload) {
+    if (!armorDebugEnabled()) return
+    if (payload && Object.keys(payload).length) console.log('[ARMOR]', event, payload)
+    else console.log('[ARMOR]', event)
+  }
+
+  function armorTick (reason, extra = {}) {
+    const state = ensureArmorDebugState()
+    state.lastTick = { reason, extra, at: Date.now() }
+    if (!armorDebugEnabled()) return
+    const targetId = extra && extra.targetId != null ? extra.targetId : null
+    const prev = state._lastTickLog || {}
+    if (prev.reason === reason && prev.targetId === targetId) return
+    state._lastTickLog = { reason, targetId }
+    if (extra && Object.keys(extra).length) console.log('[ARMOR]', 'tick', reason, extra)
+    else console.log('[ARMOR]', 'tick', reason)
   }
 
   // --- legacy chunk begin ---
@@ -977,6 +1010,20 @@ module.exports = function registerCombat (ctx) {
     const anchorRange = parseAnchorDistance(args.anchorRange ?? args.anchorRadius ?? args.anchorTolerance, 0.75)
     const anchorTimeoutMs = clampTimeoutMs(args.anchorTimeoutMs ?? args.gotoTimeoutMs ?? 10000)
 
+    function fmtPos (pos) {
+      if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number' || typeof pos.z !== 'number') return null
+      return { x: Number(pos.x.toFixed(2)), y: Number(pos.y.toFixed(2)), z: Number(pos.z.toFixed(2)) }
+    }
+
+    armorLogEvent('start', {
+      radius,
+      attackRange,
+      intervalMs: Math.max(50, intervalMs),
+      anchor: fmtPos(anchorPos),
+      anchorRange,
+      anchorTimeoutMs
+    })
+
     function cleanLabel (v) {
       try {
         if (!v) return ''
@@ -1017,24 +1064,45 @@ module.exports = function registerCombat (ctx) {
 
     async function moveToAnchorIfNeeded () {
       if (!anchorPos) return true
-      if (!ensurePathfinder()) return false
+      if (!ensurePathfinder()) {
+        armorLogEvent('anchor.fail', { reason: 'no_pathfinder' })
+        return false
+      }
       const { Movements, goals } = pathfinderPkg
       const mcData = bot.mcData || require('minecraft-data')(bot.version)
       const m = new Movements(bot, mcData)
       m.allowSprinting = true
       m.canDig = (args.dig === true)
       bot.pathfinder.setMovements(m)
-      const goal = new goals.GoalNear(Math.round(anchorPos.x), Math.round(anchorPos.y), Math.round(anchorPos.z), Math.max(0.1, anchorRange))
-      bot.pathfinder.setGoal(goal, true)
+      const tolerance = Math.max(0.1, anchorRange)
+      const me = bot.entity?.position
+      if (me) {
+        const distHere = me.distanceTo(anchorPos)
+        if (distHere <= tolerance) {
+          armorLogEvent('anchor.within', { distance: Number(distHere.toFixed(2)), tolerance })
+          return true
+        }
+      }
+      const goal = new goals.GoalNear(Math.round(anchorPos.x), Math.round(anchorPos.y), Math.round(anchorPos.z), tolerance)
+      const start = Date.now()
+      try {
+        bot.pathfinder.setGoal(goal, true)
+        armorLogEvent('anchor.move_start', { distance: me ? Number(me.distanceTo(anchorPos).toFixed(2)) : null, tolerance, timeoutMs: anchorTimeoutMs })
+      } catch (err) {
+        armorLogEvent('anchor.fail', { reason: 'goal_set', error: err?.message || String(err) })
+        return false
+      }
       const until = Date.now() + anchorTimeoutMs
       let arrived = false
       while (Date.now() < until) {
         await wait(150)
         const here = bot.entity?.position
         if (!here) continue
-        if (here.distanceTo(anchorPos) <= Math.max(0.1, anchorRange)) { arrived = true; break }
+        if (here.distanceTo(anchorPos) <= tolerance) { arrived = true; break }
       }
       try { bot.pathfinder.setGoal(null) } catch {}
+      if (arrived) armorLogEvent('anchor.move_arrived', { elapsedMs: Date.now() - start })
+      else armorLogEvent('anchor.move_fail', { reason: 'timeout', elapsedMs: Date.now() - start })
       return arrived
     }
 
@@ -1047,12 +1115,14 @@ module.exports = function registerCombat (ctx) {
 
     const initial = findNearestArmorStand()
     if (!initial || !Number.isFinite(initial.distance) || initial.distance > attackRange) {
+      armorLogEvent('start.fail', { reason: 'no_target', attackRange })
       return fail('攻击范围内没有盔甲架')
     }
 
     if (shared.armorStandInterval) {
       try { clearInterval(shared.armorStandInterval) } catch {}
       shared.armorStandInterval = null
+      armorLogEvent('loop.replace', {})
     }
 
     let loopTimer = null
@@ -1060,7 +1130,9 @@ module.exports = function registerCombat (ctx) {
 
     const taskName = '敲盔甲架'
 
-    const stopLoop = () => {
+    const stopLoop = (why = 'manual') => {
+      armorLogEvent('loop.stop', { reason: why })
+      armorTick('stopped', { reason: why })
       if (loopTimer) {
         try { clearInterval(loopTimer) } catch {}
         if (shared.armorStandInterval === loopTimer) shared.armorStandInterval = null
@@ -1079,13 +1151,20 @@ module.exports = function registerCombat (ctx) {
       if (running) return
       running = true
       try {
-        try { if (bot.state && bot.state.externalBusy) return } catch {}
-        if (!bot.entity || !bot.entity.position) return
+        try {
+          if (bot.state && bot.state.externalBusy) { armorTick('skip_external'); return }
+        } catch {}
+        if (!bot.entity || !bot.entity.position) { armorTick('not_ready'); return }
         const info = findNearestArmorStand()
-        if (!info || !info.entity || !info.entity.position) return
-        if (!Number.isFinite(info.distance) || info.distance > attackRange) return
+        if (!info || !info.entity || !info.entity.position) { armorTick('no_target', { radius }); return }
+        if (!Number.isFinite(info.distance) || info.distance > attackRange) {
+          const distReport = Number.isFinite(info.distance) ? Number(info.distance.toFixed(2)) : null
+          armorTick('out_of_range', { distance: distReport, attackRange })
+          return
+        }
         const target = bot.entities?.[info.entity.id] || info.entity
-        if (!target || !target.position) return
+        if (!target || !target.position) { armorTick('target_missing', { targetId: info.entity && info.entity.id }); return }
+        armorTick('attack', { targetId: target.id, distance: Number(info.distance.toFixed(2)) })
         try { await pvp.ensureBestWeapon(bot) } catch {}
         try { bot.lookAt(target.position.offset(0, 1.2, 0), true) } catch {}
         try { bot.attack(target) } catch {}
@@ -1098,10 +1177,11 @@ module.exports = function registerCombat (ctx) {
     kick()
     loopTimer = setInterval(kick, Math.max(50, intervalMs))
     shared.armorStandInterval = loopTimer
+    armorLogEvent('loop.start', { intervalMs: Math.max(50, intervalMs) })
 
-    try { bot.once('agent:stop_all', stopLoop) } catch {}
-    try { bot.once('end', stopLoop) } catch {}
-    try { if (typeof registerCleanup === 'function') registerCleanup(stopLoop) } catch {}
+    try { bot.once('agent:stop_all', () => stopLoop('agent:stop_all')) } catch {}
+    try { bot.once('end', () => stopLoop('end')) } catch {}
+    try { if (typeof registerCleanup === 'function') registerCleanup(() => stopLoop('cleanup')) } catch {}
     try { if (bot.state) bot.state.currentTask = { name: taskName, source: 'player', startedAt: Date.now() } } catch {}
 
     const ticks = Math.max(1, Math.round(Math.max(50, intervalMs) / 50))
@@ -2939,6 +3019,63 @@ module.exports = function registerCombat (ctx) {
   async function withdraw_all (args = {}) { return withdraw({ ...args, all: true }) }
 
   // --- legacy chunk end ---
+
+  if (typeof on === 'function') {
+    const armorCliHandler = (payload) => {
+      try {
+        const cmd = String(payload?.cmd || '').toLowerCase()
+        if (cmd !== 'armorstand' && cmd !== 'armor') return
+        const args = payload?.args || []
+        const state = ensureArmorDebugState()
+        const sub = String(args[0] || 'status').toLowerCase()
+        const parseOn = (value, fallback = true) => {
+          if (value == null || value === '') return fallback
+          const raw = String(value).toLowerCase()
+          return !(raw === 'off' || raw === '0' || raw === 'false' || raw === 'no')
+        }
+        const printStatus = () => {
+          const last = state.lastTick
+          if (last) {
+            const age = Date.now() - (last.at || Date.now())
+            console.log('[ARMOR]', 'status', { debug: state.enabled, last: last.reason, ageMs: Math.max(0, Math.round(age)), detail: last.extra || null })
+          } else {
+            console.log('[ARMOR]', 'status', { debug: state.enabled, last: null })
+          }
+        }
+        switch (sub) {
+          case 'on':
+            state.enabled = true
+            state._lastTickLog = { reason: null, targetId: null }
+            console.log('[ARMOR]', 'debug=', state.enabled)
+            break
+          case 'off':
+            state.enabled = false
+            console.log('[ARMOR]', 'debug=', state.enabled)
+            break
+          case 'debug':
+          case 'log':
+            state.enabled = parseOn(args[1], true)
+            if (state.enabled) state._lastTickLog = { reason: null, targetId: null }
+            console.log('[ARMOR]', 'debug=', state.enabled)
+            break
+          case 'status':
+            printStatus()
+            break
+          case 'help':
+            console.log('[ARMOR]', 'usage: .armorstand status|on|off|debug on|off')
+            break
+          default:
+            printStatus()
+        }
+      } catch (err) {
+        console.log('[ARMOR]', 'cli error:', err?.message || err)
+      }
+    }
+    on('cli', armorCliHandler)
+    if (typeof registerCleanup === 'function') {
+      registerCleanup(() => { try { bot.off('cli', armorCliHandler) } catch {} })
+    }
+  }
 
   register('hunt_player', hunt_player)
   register('break_blocks', break_blocks)
