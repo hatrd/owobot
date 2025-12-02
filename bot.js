@@ -138,6 +138,9 @@ function startBot() {
     bot = mineflayer.createBot(options)
     try { console.log(`[${ts()}] Starting (re)connection...`) } catch {}
     reconnectAttempts = 0 // reset backoff on successful create
+    try {
+      if (sharedState) sharedState.hasSpawned = false
+    } catch {}
     attachCoreBotListeners()
     loadPlugin()
   } catch (e) {

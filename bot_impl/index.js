@@ -326,8 +326,14 @@ function activate (botInstance, options = {}) {
 
   // If plugin reloads after spawn, re-initialize immediately
   if (state.hasSpawned) {
-    dlog('Plugin loaded post-spawn; initializing features now')
-    initAfterSpawn()
+    const entityReady = bot && bot.entity && bot.entity.position
+    if (entityReady) {
+      dlog('Plugin loaded post-spawn; initializing features now')
+      initAfterSpawn()
+    } else {
+      dlog('Spawn flag present but bot entity unavailable; deferring until next spawn')
+      try { state.hasSpawned = false } catch {}
+    }
   }
 
   on('end', () => {
@@ -335,6 +341,7 @@ function activate (botInstance, options = {}) {
     try { greetingManager?.deactivate() } catch {}
     try { watcherManager?.shutdown() } catch {}
     greetingManager = null
+    try { state.hasSpawned = false } catch {}
   })
 
   on('kicked', (reason) => { dlog('Kicked:', reason) })

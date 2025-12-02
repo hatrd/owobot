@@ -8,14 +8,13 @@ class WatcherManager {
     this.fireTimer = null
     this.idleTimer = null
     this.explosionCleanup = null
+    this.lastFireReconnectAt = 0
   }
 
   onSpawn() {
     this.stopTimers()
     this.fireTimer = setInterval(() => {
-      this.extinguishNearbyFire().catch((err) => {
-        console.log('Fire watcher error:', err.message || err)
-      })
+      this.extinguishNearbyFire().catch((err) => this.handleFireWatcherError(err))
     }, 1500)
     this.idleTimer = setInterval(() => this.trackNearbyEntity(), 120)
     this.registerExplosionGuard()
@@ -24,6 +23,38 @@ class WatcherManager {
   stopTimers() {
     if (this.fireTimer) { clearInterval(this.fireTimer); this.fireTimer = null }
     if (this.idleTimer) { clearInterval(this.idleTimer); this.idleTimer = null }
+  }
+
+  handleFireWatcherError (err) {
+    const message = err?.message || err
+    try { console.log('Fire watcher error:', message) } catch {}
+    const msgText = typeof message === 'string' ? message : ''
+    if (!msgText || !/position/i.test(msgText)) return
+    const now = Date.now()
+    if (now - this.lastFireReconnectAt < 5000) return
+    this.lastFireReconnectAt = now
+    try {
+      console.log(`[${new Date().toISOString()}] Fire watcher forcing reconnect due to invalid bot state`)
+    } catch {}
+    this.forceReconnect('fire watcher invalid state')
+  }
+
+  forceReconnect (reason) {
+    try {
+      if (typeof this.bot.quit === 'function') {
+        this.bot.quit(reason)
+        return
+      }
+      if (typeof this.bot.end === 'function') {
+        this.bot.end(reason)
+        return
+      }
+      if (this.bot._client && typeof this.bot._client.end === 'function') {
+        this.bot._client.end(reason)
+      }
+    } catch (e) {
+      try { console.log('Failed to terminate bot after fire watcher error:', e?.message || e) } catch {}
+    }
   }
 
   registerExplosionGuard() {
