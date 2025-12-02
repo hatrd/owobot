@@ -86,7 +86,8 @@ Default digging policy (simplified)
 - Defend area: `defend_area{radius?,tickMs?,dig?}` — stand near the anchor, attack hostiles; no digging by default. For mob farms exposing only feet, the bot cycles multiple aim heights to land hits.
 - Defend player: `defend_player{name, radius?, followRange?, tickMs?, dig?}` — follows the player and clears hostiles nearby.
 - Cull hostiles: `cull_hostiles{radius?,tickMs?}`
- - Ranged attack: `range_attack{name?, match?, radius?, followRange?, durationMs?}` — use bow/crossbow via HawkEye to attack a specific player (explicit `name`) or nearest entity matching `match` (e.g., `iron_golem`). For players, you must provide an exact name.
+- Ranged attack: `range_attack{name?, match?, radius?, followRange?, durationMs?}` — use bow/crossbow via HawkEye to attack a specific player (explicit `name`) or nearest entity matching `match` (e.g., `iron_golem`). For players, you must provide an exact name.
+- Armor stand attack: `attack_armor_stand{radius?,range?,rate?,pos?,x?,y?,z?,dig?}` — stand still and swing at armor stands already within melee range; optionally supply `pos` or `x/y/z` to walk to that block once before holding position (rate accepts values such as `20gt` or `1000ms`).
 
 ## Farming & Ranching
 - Harvest and replant crops: `harvest{only?, radius?, replant?, sowOnly?}`

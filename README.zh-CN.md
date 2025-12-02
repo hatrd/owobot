@@ -87,7 +87,8 @@
 - 守点清怪：`defend_area{radius?,tickMs?,dig?}`（默认不挖掘；刷怪塔“只露脚”会尝试多种瞄准高度）
 - 护卫玩家：`defend_player{name, radius?, followRange?, tickMs?, dig?}`（跟随并清怪）
 - 半径清怪：`cull_hostiles{radius?,tickMs?}`
- - 远程射击：`range_attack{name?, match?, radius?, followRange?, durationMs?}` — 使用弓/弩通过 HawkEye 射击目标。玩家需指名 `name`；非玩家可用 `match`（如 `iron_golem`）。
+- 远程射击：`range_attack{name?, match?, radius?, followRange?, durationMs?}` — 使用弓/弩通过 HawkEye 射击目标。玩家需指名 `name`；非玩家可用 `match`（如 `iron_golem`）。
+- 敲盔甲架：`attack_armor_stand{radius?,range?,rate?,pos?,x?,y?,z?,dig?}` —— 默认原地输出、只攻击攻击范围内的盔甲架；可传入 `pos` 或 `x/y/z` 先走到该坐标后静止攻击（`rate` 支持 `20gt`、`1000ms` 等写法）。
 
 ## CLI 命令
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`

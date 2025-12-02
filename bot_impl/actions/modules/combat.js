@@ -907,6 +907,208 @@ module.exports = function registerCombat (ctx) {
     return ok(name ? `开始远程射击玩家 ${name}` : `开始远程射击（匹配:${String(match)}）`)
   }
 
+  // --- Armor stand bonking ---
+  async function attack_armor_stand (args = {}) {
+    if (!bot.entity || !bot.entity.position) return fail('未就绪')
+
+    function parseIntervalMs (value, fallbackTicks = 20) {
+      const fallback = Math.max(1, fallbackTicks) * 50
+      if (value == null) return fallback
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(1, value) * 50
+      }
+      const raw = String(value).trim().toLowerCase()
+      if (!raw) return fallback
+      const msMatch = raw.match(/^(\d+)\s*ms$/)
+      if (msMatch) return Math.max(50, parseInt(msMatch[1], 10))
+      const gtMatch = raw.match(/^(\d+)\s*(gt|tick|ticks)?$/)
+      if (gtMatch) return Math.max(1, parseInt(gtMatch[1], 10)) * 50
+      const num = parseInt(raw, 10)
+      if (Number.isFinite(num)) return Math.max(1, num) * 50
+      return fallback
+    }
+    function parseRangeValue (value, fallback, min = 1.2) {
+      if (value == null) return fallback
+      const num = typeof value === 'number' ? value : parseFloat(String(value))
+      if (!Number.isFinite(num)) return fallback
+      return Math.max(min, num)
+    }
+    function parseAnchorDistance (value, fallback = 0.75) {
+      if (value == null) return fallback
+      const num = typeof value === 'number' ? value : parseFloat(String(value))
+      if (!Number.isFinite(num)) return fallback
+      return Math.max(0.1, num)
+    }
+    function clampTimeoutMs (value, fallback = 10000) {
+      const num = typeof value === 'number' ? value : parseInt(String(value), 10)
+      if (!Number.isFinite(num)) return fallback
+      return Math.max(2000, Math.min(30000, num))
+    }
+    function vecFromCandidate (candidate) {
+      if (!candidate || typeof candidate !== 'object') return null
+      const cx = Number(candidate.x)
+      const cy = Number(candidate.y)
+      const cz = Number(candidate.z)
+      if ([cx, cy, cz].every(Number.isFinite)) return new Vec3(cx, cy, cz)
+      return null
+    }
+    function resolveAnchorPosition () {
+      const cands = [args.pos, args.position, args.anchor, args.target, args.to, args.stand]
+      for (const cand of cands) {
+        const vec = vecFromCandidate(cand)
+        if (vec) return vec
+      }
+      if ([args.x, args.y, args.z].every(v => Number.isFinite(Number(v)))) {
+        return new Vec3(Number(args.x), Number(args.y), Number(args.z))
+      }
+      return null
+    }
+
+    const attackRange = parseRangeValue(args.range, 2.8)
+    const baseRadius = (() => {
+      if (args.radius == null) return 12
+      const num = parseFloat(String(args.radius))
+      if (!Number.isFinite(num)) return 12
+      return Math.max(2, num)
+    })()
+    const radius = Math.max(baseRadius, attackRange)
+    const intervalMs = parseIntervalMs(args.rate ?? args.interval ?? args.tick ?? args.tickMs, 20)
+    const anchorPos = resolveAnchorPosition()
+    const anchorRange = parseAnchorDistance(args.anchorRange ?? args.anchorRadius ?? args.anchorTolerance, 0.75)
+    const anchorTimeoutMs = clampTimeoutMs(args.anchorTimeoutMs ?? args.gotoTimeoutMs ?? 10000)
+
+    function cleanLabel (v) {
+      try {
+        if (!v) return ''
+        const s = String(v)
+        return s.toLowerCase().replace(/\u00a7./g, '')
+      } catch { return '' }
+    }
+    function entityName (ent) {
+      if (!ent) return ''
+      if (ent.name) return cleanLabel(ent.name)
+      if (ent.displayName && typeof ent.displayName.toString === 'function') return cleanLabel(ent.displayName.toString())
+      if (ent.displayName) return cleanLabel(ent.displayName)
+      if (ent.kind) return cleanLabel(ent.kind)
+      if (ent.type) return cleanLabel(ent.type)
+      return ''
+    }
+    function isArmorStandEntity (ent) {
+      const label = entityName(ent).replace(/\s+/g, '')
+      if (!label) return false
+      if (label.includes('armorstand')) return true
+      if (label.includes('armor_stand')) return true
+      return false
+    }
+    function findNearestArmorStand () {
+      const me = bot.entity?.position
+      if (!me) return null
+      let best = null; let bestD = Infinity
+      for (const e of Object.values(bot.entities || {})) {
+        if (!e || e === bot.entity || !e.position) continue
+        if (!isArmorStandEntity(e)) continue
+        const d = e.position.distanceTo(me)
+        if (!Number.isFinite(d) || d > radius) continue
+        if (d < bestD) { best = e; bestD = d }
+      }
+      if (!best) return null
+      return { entity: best, distance: bestD }
+    }
+
+    async function moveToAnchorIfNeeded () {
+      if (!anchorPos) return true
+      if (!ensurePathfinder()) return false
+      const { Movements, goals } = pathfinderPkg
+      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const m = new Movements(bot, mcData)
+      m.allowSprinting = true
+      m.canDig = (args.dig === true)
+      bot.pathfinder.setMovements(m)
+      const goal = new goals.GoalNear(Math.round(anchorPos.x), Math.round(anchorPos.y), Math.round(anchorPos.z), Math.max(0.1, anchorRange))
+      bot.pathfinder.setGoal(goal, true)
+      const until = Date.now() + anchorTimeoutMs
+      let arrived = false
+      while (Date.now() < until) {
+        await wait(150)
+        const here = bot.entity?.position
+        if (!here) continue
+        if (here.distanceTo(anchorPos) <= Math.max(0.1, anchorRange)) { arrived = true; break }
+      }
+      try { bot.pathfinder.setGoal(null) } catch {}
+      return arrived
+    }
+
+    if (anchorPos) {
+      const okMove = await moveToAnchorIfNeeded()
+      if (!okMove) return fail('无法到达指定坐标')
+    } else {
+      try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {}
+    }
+
+    const initial = findNearestArmorStand()
+    if (!initial || !Number.isFinite(initial.distance) || initial.distance > attackRange) {
+      return fail('攻击范围内没有盔甲架')
+    }
+
+    if (shared.armorStandInterval) {
+      try { clearInterval(shared.armorStandInterval) } catch {}
+      shared.armorStandInterval = null
+    }
+
+    let loopTimer = null
+    let running = false
+
+    const taskName = '敲盔甲架'
+
+    const stopLoop = () => {
+      if (loopTimer) {
+        try { clearInterval(loopTimer) } catch {}
+        if (shared.armorStandInterval === loopTimer) shared.armorStandInterval = null
+        loopTimer = null
+      } else if (shared.armorStandInterval) {
+        try { clearInterval(shared.armorStandInterval) } catch {}
+        shared.armorStandInterval = null
+      }
+      try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {}
+      try {
+        if (bot.state && bot.state.currentTask && bot.state.currentTask.name === taskName) bot.state.currentTask = null
+      } catch {}
+    }
+
+    const tick = async () => {
+      if (running) return
+      running = true
+      try {
+        try { if (bot.state && bot.state.externalBusy) return } catch {}
+        if (!bot.entity || !bot.entity.position) return
+        const info = findNearestArmorStand()
+        if (!info || !info.entity || !info.entity.position) return
+        if (!Number.isFinite(info.distance) || info.distance > attackRange) return
+        const target = bot.entities?.[info.entity.id] || info.entity
+        if (!target || !target.position) return
+        try { await pvp.ensureBestWeapon(bot) } catch {}
+        try { bot.lookAt(target.position.offset(0, 1.2, 0), true) } catch {}
+        try { bot.attack(target) } catch {}
+      } finally {
+        running = false
+      }
+    }
+
+    const kick = () => { tick().catch(() => {}) }
+    kick()
+    loopTimer = setInterval(kick, Math.max(50, intervalMs))
+    shared.armorStandInterval = loopTimer
+
+    try { bot.once('agent:stop_all', stopLoop) } catch {}
+    try { bot.once('end', stopLoop) } catch {}
+    try { if (typeof registerCleanup === 'function') registerCleanup(stopLoop) } catch {}
+    try { if (bot.state) bot.state.currentTask = { name: taskName, source: 'player', startedAt: Date.now() } } catch {}
+
+    const ticks = Math.max(1, Math.round(Math.max(50, intervalMs) / 50))
+    const msg = anchorPos ? `已就位，${ticks}gt 间隔敲击盔甲架` : `开始敲击盔甲架（${ticks}gt间隔）`
+    return ok(msg)
+  }
+
   // --- Mount player: empty-hand right click on a player entity
   async function mount_player (args = {}) {
     const { name, range = 1.2, followRange = 1.2, timeoutMs = 10000, tickMs = 120, sneak = false } = args
@@ -2743,6 +2945,7 @@ module.exports = function registerCombat (ctx) {
   register('mount_near', mount_near)
   register('dismount', dismount)
   register('range_attack', range_attack)
+  register('attack_armor_stand', attack_armor_stand)
   register('mount_player', mount_player)
   register('cull_hostiles', cull_hostiles)
   register('defend_area', defend_area)

@@ -5,7 +5,7 @@ const LONG_TASK_TOOLS = new Set([
   'goto', 'goto_block', 'follow_player', 'hunt_player', 'defend_area', 'defend_player',
   'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest',
   'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'autofish', 'mine_ore',
-  'range_attack', 'skill_start', 'sort_chests', 'deposit', 'deposit_all', 'withdraw',
+  'range_attack', 'attack_armor_stand', 'skill_start', 'sort_chests', 'deposit', 'deposit_all', 'withdraw',
   'withdraw_all'
 ])
 const TELEPORT_COMMANDS = new Set(['tpa', 'tpaccept', 'tpahere', 'back', 'home', 'spawn', 'warp', 'rtp'])

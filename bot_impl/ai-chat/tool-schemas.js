@@ -379,6 +379,45 @@ const ACTION_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'attack_armor_stand',
+    description: 'Stay put and repeatedly attack armor stands; optionally path to a provided absolute coordinate before swinging.',
+    parameters: {
+      type: 'object',
+      properties: {
+        radius: { type: 'number', description: 'Search radius when locating armor stands.' },
+        range: { type: 'number', description: 'Skip pathing when already within this melee range.' },
+        rate: { type: ['string', 'number'], description: 'Attack cadence, e.g. 20gt or 1000ms.' },
+        pos: {
+          type: 'object',
+          description: 'Absolute coordinate (x,y,z) to stand on before attacking.',
+          properties: {
+            x: { type: 'number' },
+            y: { type: 'number' },
+            z: { type: 'number' }
+          },
+          additionalProperties: true
+        },
+        position: {
+          type: 'object',
+          description: 'Alias for pos; provide {x,y,z}.',
+          properties: {
+            x: { type: 'number' },
+            y: { type: 'number' },
+            z: { type: 'number' }
+          },
+          additionalProperties: true
+        },
+        x: { type: 'number', description: 'Shortcut for pos.x (absolute coordinate).' },
+        y: { type: 'number', description: 'Shortcut for pos.y (absolute coordinate).' },
+        z: { type: 'number', description: 'Shortcut for pos.z (absolute coordinate).' },
+        anchorRange: { type: 'number', description: 'Distance tolerance when snapping to the absolute coordinate.' },
+        anchorTimeoutMs: { type: 'number', description: 'Timeout while traveling to the absolute coordinate.' },
+        dig: { type: 'boolean', description: 'Allow digging while pathing toward the provided coordinate.' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
     name: 'sort_chests',
     description: 'Sort chest contents based on frame hints within a radius.',
     parameters: {
