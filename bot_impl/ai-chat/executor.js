@@ -478,6 +478,10 @@ function createChatExecutor ({
   async function handleChat (username, message) {
     const raw = String(message || '')
     const trimmed = raw.trim()
+    if (!username || username === bot.username) {
+      traceChat('[chat] ignore self', { username, text: trimmed })
+      return
+    }
     const trig = triggerWord()
     const startRe = new RegExp('^' + trig, 'i')
     if (!startRe.test(trimmed)) {
