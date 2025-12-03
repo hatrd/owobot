@@ -4,6 +4,7 @@
 const { Vec3 } = require('vec3')
 
 const PROMPT_VALID_MS = 180000
+const DEATH_ACK_GRACE_MS = 5000
 
 function wait (ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 
@@ -30,6 +31,8 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   if (typeof state.autoBackActiveDeathId !== 'number') state.autoBackActiveDeathId = 0
   if (typeof state.autoBackAwaitingPrompt !== 'boolean') state.autoBackAwaitingPrompt = false
   if (typeof state.autoBackAwaitingRespawn !== 'boolean') state.autoBackAwaitingRespawn = false
+  if (typeof state.autoBackPendingDeathAckId !== 'number') state.autoBackPendingDeathAckId = 0
+  if (typeof state.autoBackPendingDeathAckAt !== 'number') state.autoBackPendingDeathAckAt = 0
   if (typeof state.backLastPromptAt !== 'number') state.backLastPromptAt = 0
   let attemptId = 0
   let fallbackCollectQueued = null
@@ -46,6 +49,8 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     state.autoBackActiveDeathId = 0
     state.autoBackAwaitingRespawn = false
     state.backLastPromptAt = 0
+    state.autoBackPendingDeathAckId = 0
+    state.autoBackPendingDeathAckAt = 0
     if (reason) debug('auto-back context cleared', { reason })
   }
 
@@ -312,28 +317,50 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     }
   }
 
+  function synthesizeDeathContextFromPrompt (now, message) {
+    state.autoBackDeathId = (state.autoBackDeathId || 0) + 1
+    state.autoBackAwaitingPrompt = true
+    state.autoBackAwaitingRespawn = true
+    state.autoBackActiveDeathId = 0
+    state.backLastPromptAt = 0
+    state.autoBackPendingDeathAckId = state.autoBackDeathId
+    state.autoBackPendingDeathAckAt = now
+    debug('prompt arrived without prior death event; synthesized context', { deathId: state.autoBackDeathId, message })
+  }
+
+  function beginBackAttempt (now, source) {
+    if (now < (state.autoBackCooldownUntil || 0)) return false
+    state.autoBackCooldownUntil = now + 15000 // 15s debounce
+    state.autoBackAwaitingPrompt = false
+    state.backInProgress = true
+    state.autoBackActiveDeathId = state.autoBackDeathId
+    state.backLastPromptAt = now
+    try { if (bot.state) bot.state.externalBusy = true } catch {}
+    state.backLastCmdAt = now
+    attemptId++
+    const payload = { attemptId }
+    if (source) payload.source = source
+    debug('detected back prompt, issuing /back', payload)
+    try { bot.chat('/back') } catch {}
+    runPickupRoutine(attemptId).catch(() => {})
+    return true
+  }
+
   async function onMessage (message) {
     try {
       const s = normalizeMessage(message)
       const now = Date.now()
       if (shouldTriggerBack(s)) {
+        let source = 'chat'
         if (!state.autoBackAwaitingPrompt) {
-          debug('ignored /back prompt without matching death', { message: s })
-          return
+          if (state.backInProgress) {
+            debug('ignored /back prompt without matching death (already running)', { message: s })
+            return
+          }
+          synthesizeDeathContextFromPrompt(now, s)
+          source = 'prompt-first'
         }
-        if (now < (state.autoBackCooldownUntil || 0)) return
-        state.autoBackCooldownUntil = now + 15000 // 15s debounce
-        state.autoBackAwaitingPrompt = false
-        state.backInProgress = true
-        state.autoBackActiveDeathId = state.autoBackDeathId
-        state.backLastPromptAt = now
-        try { if (bot.state) bot.state.externalBusy = true } catch {}
-        state.backLastCmdAt = now
-        attemptId++
-        debug('detected back prompt, issuing /back', { attemptId })
-        try { bot.chat('/back') } catch {}
-        // Run pickup routine but do not block the main thread
-        runPickupRoutine(attemptId).catch(() => {})
+        beginBackAttempt(now, source)
         return
       }
       const info = parseDeathChestLocation(s)
@@ -403,6 +430,18 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
 
   on('death', () => {
     try {
+      const now = Date.now()
+      const pendingAckId = state.autoBackPendingDeathAckId || 0
+      const ackAge = now - (state.autoBackPendingDeathAckAt || 0)
+      if (pendingAckId && pendingAckId === state.autoBackDeathId && ackAge >= 0 && ackAge <= DEATH_ACK_GRACE_MS && state.backInProgress) {
+        state.autoBackPendingDeathAckId = 0
+        state.autoBackPendingDeathAckAt = 0
+        state.autoBackAwaitingRespawn = true
+        debug('death event acknowledged for prompt-first flow', { deathId: state.autoBackDeathId })
+        return
+      }
+      state.autoBackPendingDeathAckId = 0
+      state.autoBackPendingDeathAckAt = 0
       attemptId++
       state.autoBackDeathId = (state.autoBackDeathId || 0) + 1
       state.autoBackAwaitingPrompt = true
