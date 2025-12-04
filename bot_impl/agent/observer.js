@@ -185,7 +185,12 @@ function collectEnv (bot) {
   try {
     const pos = bot.entity?.position
     const here = pos ? bot.blockAt(pos) : null
-    const weather = (bot.isRaining ? '下雨' : '晴')
+    const rainLevel = Number(bot.rainState)
+    const thunderLevel = Number(bot.thunderState)
+    const raining = Number.isFinite(rainLevel) ? rainLevel > 0 : Boolean(bot.isRaining)
+    const storming = Number.isFinite(thunderLevel) ? thunderLevel > 0 : false
+    // Use rain/thunder states because modern servers emit level_change packets instead of start/stop events.
+    const weather = storming && raining ? '雷雨' : (raining ? '下雨' : '晴')
     // Note: biome intentionally omitted from prompt context per policy
     return { weather }
   } catch { return { weather: '' } }
