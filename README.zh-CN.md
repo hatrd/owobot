@@ -91,6 +91,7 @@
 - 敲盔甲架：`attack_armor_stand{radius?,range?,rate?,pos?,x?,y?,z?,dig?}` —— 默认原地输出、只攻击攻击范围内的盔甲架；可传入 `pos` 或 `x/y/z` 先走到该坐标后静止攻击（`rate` 支持 `20gt`、`1000ms` 等写法）。
 
 ## CLI 命令
+- `.tab` — 打印当前玩家列表（含延迟），效果与客户端 Tab 一致
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]`（别名 `.plant`；如放置按钮会默认使用 `on=solid` 且间距为 1）
 - `.spawnproof [radius=N] [item=name] [on=solid|block,...] [max=N] [spacing=N] [collect=true|false]` — 默认使用磨制黑石按钮并针对任意实体方块铺设，便于快速做防刷怪地毯；纯数字参数会视为半径，单独写 `collect` 会开启回收

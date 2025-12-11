@@ -22,6 +22,7 @@ const MODULES = [
   { id: 'collect-cli', path: './collect-cli', logger: 'collect', kind: 'cli', description: 'CLI command for collecting drops around the bot' },
   { id: 'place-cli', path: './place-cli', logger: 'place', kind: 'cli', description: 'CLI command for block placement utilities' },
   { id: 'spawnproof-cli', path: './spawnproof-cli', logger: 'spawnproof', kind: 'cli', description: 'CLI command to place spawn-proofing blocks' },
+  { id: 'tab-cli', path: './tab-cli', logger: 'tab', kind: 'cli', description: 'CLI command to print current tablist players with ping' },
   { id: 'status-cli', path: './status-cli', logger: 'status', kind: 'cli', description: 'CLI snapshot of bot status' },
   { id: 'mine-cli', path: './mine-cli', logger: 'mine', kind: 'cli', description: 'CLI command to start/stop ore mining' },
   { id: 'debug-cli', path: './debug-cli', logger: 'dbg', kind: 'cli', description: 'CLI debug helpers (entities/inventory/position etc.)' }

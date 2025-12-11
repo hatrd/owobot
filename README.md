@@ -94,6 +94,7 @@ Default digging policy (simplified)
 - Feed animals: `feed_animals{species?, item?, radius?, max?}`
   - Example: feed nearby cows with wheat: `{"species":"cow","item":"wheat"}`
 ## CLI Commands
+- `.tab` — print current tab list (players + ping) to the internal console
 - `.collect [radius=N] [max=N] [match=substr|names=a,b] [until=exhaust|all]`
 - `.place <item> [on=a,b|solid] [radius=N] [max=N] [spacing=N] [collect=true|false]` (alias `.plant`; buttons default to `on=solid`, `spacing=1`)
 - `.spawnproof [radius=N] [item=name] [on=solid|block,...] [max=N] [spacing=N] [collect=true|false]` — defaults to polished blackstone buttons on any solid floor for rapid spawn-proofing; bare numbers set radius and standalone `collect` toggles pickup
