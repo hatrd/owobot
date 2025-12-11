@@ -14,12 +14,6 @@ function install (bot, { on, registerCleanup, log }) {
     }
   }
 
-  function stripPingSuffix (s) {
-    try {
-      return String(s || '').replace(/\s*[\[(]?\s*\d+\s*ms\s*[\])]?$/i, '').trim()
-    } catch { return s }
-  }
-
   function formatPing (v) {
     const n = Number(v)
     if (!Number.isFinite(n) || n < 0) return '?'
@@ -37,11 +31,10 @@ function install (bot, { on, registerCleanup, log }) {
       entries.sort(([a], [b]) => String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base' }))
       const rows = entries.map(([name, rec]) => {
         const baseName = String(rec?.username || name || 'unknown')
-        let label = cleanName(rec, baseName)
-        label = stripPingSuffix(label)
-        if (!label) label = baseName
-        const ping = formatPing(rec?.ping)
-        return `${label}(${ping})`
+        const label = cleanName(rec, baseName)
+        const hasPingInLabel = /\d+\s*ms/i.test(label)
+        const ping = hasPingInLabel ? '' : `(${formatPing(rec?.ping)})`
+        return `${label}${ping}`
       })
       print(`${rows.length} 玩家`, rows.join(', '))
     } catch (e) {
