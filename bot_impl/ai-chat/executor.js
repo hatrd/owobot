@@ -109,7 +109,7 @@ function createChatExecutor ({
       '风格：中文、可爱、极简、单句。',
       '如需执行动作，请调用系统提供的函数工具（函数描述由API告知）；若无需动作，仅回复文本。',
       '回答优先使用已提供的“游戏上下文”；若是统计/查询上下文类问题，直接回答。上下文不足可用 observe_detail 查询信息（不要用它查询背包，背包数据已在上下文中）。',
-      '关于全服玩家坐标等信息（如“盔甲=0/≤10、在末地/下界/主世界、多人名单”），调用 observe_players{...}.',
+      '地图API暂时下线，无法查询全服玩家坐标，被要求查询时直接说明做不到，不要尝试调用接口。',
       '清怪/守塔用 defend_area{}；保护玩家用 defend_player{name}；明确指名“追杀/攻击/追击 <玩家名>”才使用 hunt_player。',
       '要停止当前任务/重置状态，使用 reset{}.',
       '挖矿/砍树等收集任务用 gather（only/match 指定矿种，radius 可选）。',
@@ -311,7 +311,7 @@ function createChatExecutor ({
         }
       }
     } catch {}
-    if (intent && intent.kind === 'info' && !['observe_detail','observe_players','say'].includes(toolName)) {
+    if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(toolName)) {
       return H.trimReply('我这就看看…', maxReplyLen || 120)
     }
     if (toolName === 'follow_player') {

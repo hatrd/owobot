@@ -1,20 +1,5 @@
 const ACTION_TOOL_DEFINITIONS = [
   {
-    name: 'observe_players',
-    description: 'Query the external map API for player locations.',
-    parameters: {
-      type: 'object',
-      properties: {
-        names: { type: 'array', items: { type: 'string' }, description: 'Exact player names to filter.' },
-        name: { type: 'string', description: 'Single player name shortcut.' },
-        world: { type: 'string', description: 'World/dimension filter, e.g. world, world_nether, world_the_end.' },
-        dim: { type: 'string', description: 'Alias for world.' },
-        max: { type: 'number', description: 'Limit number of rows returned.' }
-      },
-      additionalProperties: true
-    }
-  },
-  {
     name: 'goto',
     description: 'Pathfind to an absolute coordinate.',
     parameters: {
