@@ -412,6 +412,44 @@ const ACTION_TOOL_DEFINITIONS = [
       },
       additionalProperties: true
     }
+  },
+  {
+    name: 'query_player_stats',
+    description: '查询玩家统计数据（在线时长、聊天次数、死亡次数）',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '玩家名称，必填' },
+        period: { type: 'string', description: '时间范围: all(总计)/today(今日)，默认all' },
+        type: { type: 'string', description: '统计类型: online/chat/deaths/all，默认all' }
+      },
+      required: ['name'],
+      additionalProperties: true
+    }
+  },
+  {
+    name: 'query_leaderboard',
+    description: '查询排行榜，返回活跃度最高的玩家列表',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: '排行类型: online(在线时长)/chat(聊天)/deaths(死亡)/score(活跃度)，默认score' },
+        period: { type: 'string', description: '时间范围: all(总计)/today(今日)，默认all' },
+        limit: { type: 'number', description: '返回数量，默认5' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
+    name: 'announce_daily_star',
+    description: '播报今日之星（昨日最活跃玩家）',
+    parameters: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: '日期 YYYY-MM-DD，默认昨日' }
+      },
+      additionalProperties: true
+    }
   }
 ]
 

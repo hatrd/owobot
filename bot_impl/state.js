@@ -29,6 +29,9 @@ function prepareSharedState (existing, { greetEnabled, loginPassword } = {}) {
   state.externalBusy = Boolean(state.externalBusy)
   if (!state.currentTask) state.currentTask = null
   if (loginPassword) state.loginPassword = loginPassword
+  // Player stats module state
+  if (!state.playerStats) state.playerStats = {}
+  state.playerStats.activeSessions = ensureMap(state.playerStats.activeSessions)
   return state
 }
 

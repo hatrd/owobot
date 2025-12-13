@@ -25,7 +25,8 @@ const MODULES = [
   { id: 'tab-cli', path: './tab-cli', logger: 'tab', kind: 'cli', description: 'CLI command to print current tablist players with ping' },
   { id: 'status-cli', path: './status-cli', logger: 'status', kind: 'cli', description: 'CLI snapshot of bot status' },
   { id: 'mine-cli', path: './mine-cli', logger: 'mine', kind: 'cli', description: 'CLI command to start/stop ore mining' },
-  { id: 'debug-cli', path: './debug-cli', logger: 'dbg', kind: 'cli', description: 'CLI debug helpers (entities/inventory/position etc.)' }
+  { id: 'debug-cli', path: './debug-cli', logger: 'dbg', kind: 'cli', description: 'CLI debug helpers (entities/inventory/position etc.)' },
+  { id: 'player-stats', path: './player-stats', logger: 'stats', kind: 'feature', description: 'Player statistics and leaderboard tracking' }
 ]
 
 module.exports = { MODULES }
