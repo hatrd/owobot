@@ -182,7 +182,7 @@ function install (bot, { on, state, registerCleanup, log }) {
           case 'score':
           default: {
             const totalMins = Math.floor((player.stats.totalOnlineMs || 0) / 60000)
-            value = totalMins + (player.stats.totalMessages || 0)
+            value = totalMins * dailyStar.WEIGHTS.onlineMinute + (player.stats.totalMessages || 0) * dailyStar.WEIGHTS.message
           }
         }
       }

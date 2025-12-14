@@ -1,9 +1,9 @@
 const dm = require('./data-manager')
 
-// Score weights: 1 minute online = 1 point, 1 message = 1 point
+// Score weights: 1 minute online = 1 point, 1 message = 10 points
 const WEIGHTS = {
   onlineMinute: 1,
-  message: 1,
+  message: 10,
   death: 0  // Deaths don't affect score
 }
 
