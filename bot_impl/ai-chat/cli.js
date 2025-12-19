@@ -15,7 +15,8 @@ function createAiCliHandler (options = {}) {
     actionsMod,
     feedbackCollector = null,
     introspection = null,
-    memory = null
+    memory = null,
+    mind = null
   } = options
 
   return function handleAiCli (payload) {
@@ -244,6 +245,43 @@ function createAiCliHandler (options = {}) {
           print('使用次数:', stats.totalUsed)
           print('有效反馈:', stats.totalHelpful, '| 无效反馈:', stats.totalUnhelpful)
           print('有效率:', (stats.effectivenessRate * 100).toFixed(1) + '%')
+          break
+        }
+        case 'mind': {
+          const k = (rest[0] || '').toLowerCase()
+          if (k === 'status' || !k) {
+            const status = mind?.getStatus?.() || {}
+            print('运行中:', status.running ? '是' : '否')
+            print('惊讶度:', (status.surprise * 100).toFixed(0) + '%')
+            print('好奇:', status.curious || '无')
+            print('已知状态:', status.knownStates)
+          } else if (k === 'history') {
+            const status = mind?.getStatus?.() || {}
+            const history = status.history || []
+            if (!history.length) {
+              print('暂无记录')
+            } else {
+              for (const h of history) {
+                print(`  ${(h.surprise * 100).toFixed(0)}% ${h.thought}`)
+              }
+            }
+          } else if (k === 'follows') {
+            const pattern = rest.slice(1).join(' ') || ''
+            if (!pattern) {
+              print('用法: .ai mind follows <状态片段>')
+            } else {
+              const results = mind?.whatFollows?.(pattern) || []
+              if (!results.length) {
+                print(`不知道 ${pattern} 之后会发生什么`)
+              } else {
+                for (const r of results.slice(0, 5)) {
+                  print(`  ${r.from} → ${r.to} (${(r.probability * 100).toFixed(0)}%, ${r.count}次)`)
+                }
+              }
+            }
+          } else {
+            print('用法: .ai mind [status|history|follows <模式>]')
+          }
           break
         }
         case 'info':

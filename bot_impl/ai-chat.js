@@ -9,6 +9,7 @@ const { createMemoryService } = require('./ai-chat/memory')
 const { createChatExecutor } = require('./ai-chat/executor')
 const { createFeedbackCollector } = require('./ai-chat/feedback-collector')
 const { createIntrospectionEngine } = require('./ai-chat/introspection')
+const { createPureSurprise } = require('./ai-chat/pure-surprise')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
@@ -184,6 +185,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   })
   introspection.start()
 
+  // REFS: 纯粹惊讶引擎（意识最简原理）
+  const mind = createPureSurprise({
+    state,
+    bot,
+    observer,
+    log,
+    now
+  })
+  mind.start()
+
   // REFS: 监听玩家消息以收集反馈
   const onFeedbackCapture = (username, message) => {
     try {
@@ -235,7 +246,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     monthStart,
     feedbackCollector,
     introspection,
-    memory
+    memory,
+    mind
   })
 
   on('cli', pulse.handlePulseCli)
@@ -252,6 +264,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { clearInterval(decayTimer) } catch {}
     pulse.stop()
     introspection.stop()
+    mind.stop()
     executor.abortActive()
   })
 }
