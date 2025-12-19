@@ -12,7 +12,10 @@ function createAiCliHandler (options = {}) {
     dayStart,
     monthStart,
     log,
-    actionsMod
+    actionsMod,
+    feedbackCollector = null,
+    introspection = null,
+    memory = null
   } = options
 
   return function handleAiCli (payload) {
@@ -180,6 +183,67 @@ function createAiCliHandler (options = {}) {
             default:
               print('context =', state.ai.context)
           }
+          break
+        }
+        // REFS: 反馈/自省/人格 命令
+        case 'refs':
+        case 'feedback': {
+          const k = (rest[0] || '').toLowerCase()
+          if (k === 'stats') {
+            const stats = feedbackCollector?.getStats?.() || {}
+            print('正面反馈:', stats.positive, '| 负面反馈:', stats.negative)
+            print('反馈正面率:', (stats.feedbackRatio * 100).toFixed(1) + '%')
+            print('动作成功:', stats.actionSuccess, '| 动作失败:', stats.actionFail)
+            print('动作成功率:', (stats.actionSuccessRate * 100).toFixed(1) + '%')
+          } else if (k === 'recent') {
+            const signals = feedbackCollector?.getRecentSignals?.(30 * 60 * 1000) || []
+            print('最近30分钟信号数:', signals.length)
+            for (const s of signals.slice(-5)) {
+              print(`  ${s.isPositive ? '+' : s.isNegative ? '-' : '~'} "${s.botMessage?.slice(0, 30)}..." -> ${s.signals?.map(x => x.type).join(',')}`)
+            }
+          } else {
+            print('用法: .ai feedback stats|recent')
+          }
+          break
+        }
+        case 'introspect': {
+          const k = (rest[0] || '').toLowerCase()
+          if (k === 'now' || k === 'run') {
+            print('触发自省...')
+            introspection?.runIntrospection?.('manual').then(r => {
+              if (r) {
+                print('自省完成:', r.self_narrative)
+                if (r.insights?.length) print('洞察:', r.insights.join(' | '))
+              }
+            }).catch(e => print('自省失败:', e?.message))
+          } else if (k === 'status') {
+            const status = introspection?.getStatus?.() || {}
+            print('上次自省:', status.lastRun ? new Date(status.lastRun).toLocaleString() : '无')
+            print('历史记录:', status.historyCount, '条')
+            print('连续负面:', status.consecutiveNegative)
+            print('情感状态:', status.emotionalState?.current, '强度:', status.emotionalState?.intensity)
+          } else {
+            print('用法: .ai introspect now|status')
+          }
+          break
+        }
+        case 'personality': {
+          const effective = introspection?.getEffectivePersonality?.() || state.aiPersonality?.traits || {}
+          const mods = state.aiPersonality?.modifiers || {}
+          print('当前人格特质 (基础+修正):')
+          for (const [k, v] of Object.entries(effective)) {
+            const mod = mods[k] || 0
+            print(`  ${k}: ${v.toFixed(2)}${mod !== 0 ? ` (${mod > 0 ? '+' : ''}${mod.toFixed(2)})` : ''}`)
+          }
+          print('情感状态:', state.aiEmotionalState?.current || 'content')
+          break
+        }
+        case 'memstats': {
+          const stats = memory?.longTerm?.getStats?.() || {}
+          print('记忆条目:', stats.totalEntries)
+          print('使用次数:', stats.totalUsed)
+          print('有效反馈:', stats.totalHelpful, '| 无效反馈:', stats.totalUnhelpful)
+          print('有效率:', (stats.effectivenessRate * 100).toFixed(1) + '%')
           break
         }
         case 'info':

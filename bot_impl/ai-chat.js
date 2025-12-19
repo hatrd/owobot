@@ -7,6 +7,8 @@ const { createAiCliHandler } = require('./ai-chat/cli')
 const { createPulseService } = require('./ai-chat/pulse')
 const { createMemoryService } = require('./ai-chat/memory')
 const { createChatExecutor } = require('./ai-chat/executor')
+const { createFeedbackCollector } = require('./ai-chat/feedback-collector')
+const { createIntrospectionEngine } = require('./ai-chat/introspection')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
@@ -108,9 +110,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const defaults = { DEFAULT_MODEL, DEFAULT_BASE, DEFAULT_PATH, DEFAULT_RECENT_COUNT, DEFAULT_MEMORY_STORE_MAX, buildDefaultContext }
   const memory = createMemoryService({ state, log, memoryStore, defaults, bot, traceChat, now })
   const persistedMemory = memoryStore.load()
+  const persistedEvolution = memoryStore.loadEvolution()
   prepareAiState(state, {
     defaults,
     persistedMemory,
+    persistedEvolution,
     trimConversationStore: memory.dialogue.trimStore,
     updateWorldMemoryZones: memory.longTerm.updateWorldZones,
     dayStart,
@@ -118,6 +122,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   })
   if (!state.aiExtras || typeof state.aiExtras !== 'object') state.aiExtras = { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
+
+  // REFS: 创建反馈收集器
+  const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore })
 
   let executor
   const pulse = createPulseService({
@@ -132,7 +139,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     buildContextPrompt: (name) => executor.buildContextPrompt(name),
     buildGameContext,
     traceChat,
-    memory
+    memory,
+    feedbackCollector
   })
   executor = createChatExecutor({
     state,
@@ -163,6 +171,54 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   pulse.start()
   memory.rewrite.processQueue().catch(() => {})
 
+  // REFS: 创建自省引擎
+  const introspection = createIntrospectionEngine({
+    state,
+    bot,
+    log,
+    now,
+    feedbackCollector,
+    memory,
+    memoryStore,
+    aiCall: null // 将在后续版本中实现 AI 调用接口
+  })
+  introspection.start()
+
+  // REFS: 监听玩家消息以收集反馈
+  const onFeedbackCapture = (username, message) => {
+    try {
+      if (username === bot.username) return
+      const result = feedbackCollector.processPlayerMessage(username, message)
+      if (result && result.signals?.length) {
+        // 如果有信号，检查是否需要紧急自省
+        introspection.checkEmergencyIntrospection()
+      }
+    } catch {}
+  }
+  on('chat', onFeedbackCapture)
+
+  // REFS: 监听技能结束事件
+  const onSkillEnd = (data) => {
+    try {
+      feedbackCollector.recordActionOutcome({
+        taskName: data.name,
+        success: data.status === 'succeeded',
+        duration: data.duration,
+        failureReason: data.failureReason,
+        triggeredBy: data.triggeredBy
+      })
+    } catch {}
+  }
+  bot.on('skill:end', onSkillEnd)
+
+  // REFS: 定时衰减和持久化
+  const decayTimer = setInterval(() => {
+    try {
+      memory.longTerm.decayUnused()
+      feedbackCollector.persistState()
+    } catch {}
+  }, 60 * 60 * 1000) // 每小时
+
   const aiCliHandler = createAiCliHandler({
     bot,
     state,
@@ -176,7 +232,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     DEFAULT_RECENT_COUNT,
     rollSpendWindows,
     dayStart,
-    monthStart
+    monthStart,
+    feedbackCollector,
+    introspection,
+    memory
   })
 
   on('cli', pulse.handlePulseCli)
@@ -185,10 +244,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   registerCleanup && registerCleanup(() => {
     try { bot.off('chat', onChat) } catch {}
     try { bot.off('chat', onChatCapture) } catch {}
+    try { bot.off('chat', onFeedbackCapture) } catch {}
     try { bot.off('message', onMessage) } catch {}
     try { bot.off('cli', pulse.handlePulseCli) } catch {}
     try { bot.off('cli', aiCliHandler) } catch {}
+    try { bot.off('skill:end', onSkillEnd) } catch {}
+    try { clearInterval(decayTimer) } catch {}
     pulse.stop()
+    introspection.stop()
     executor.abortActive()
   })
 }

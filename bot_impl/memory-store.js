@@ -3,6 +3,7 @@ const path = require('path')
 
 const DATA_DIR = path.resolve(process.cwd(), 'data')
 const DATA_FILE = path.join(DATA_DIR, 'ai-memory.json')
+const EVOLUTION_FILE = path.join(DATA_DIR, 'ai-evolution.json')
 
 function safeArray (value) {
   return Array.isArray(value) ? value : []
@@ -41,7 +42,46 @@ function save (data = {}) {
   } catch {}
 }
 
+// --- REFS: Evolution data persistence ---
+
+function loadEvolution () {
+  try {
+    const raw = fs.readFileSync(EVOLUTION_FILE, 'utf8')
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return {
+      personality: parsed?.personality || null,
+      emotionalState: parsed?.emotionalState || null,
+      feedbackStats: parsed?.feedbackStats || null,
+      introspectionHistory: safeArray(parsed?.introspectionHistory),
+      lastIntrospection: parsed?.lastIntrospection || null
+    }
+  } catch {
+    return {}
+  }
+}
+
+function saveEvolution (data = {}) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true })
+  } catch {}
+  const payload = {
+    version: 1,
+    personality: data.personality || null,
+    emotionalState: data.emotionalState || null,
+    feedbackStats: data.feedbackStats || null,
+    introspectionHistory: safeArray(data.introspectionHistory),
+    lastIntrospection: data.lastIntrospection || null,
+    savedAt: Date.now()
+  }
+  try {
+    fs.writeFileSync(EVOLUTION_FILE, JSON.stringify(payload, null, 2))
+  } catch {}
+}
+
 module.exports = {
   load,
-  save
+  save,
+  loadEvolution,
+  saveEvolution
 }

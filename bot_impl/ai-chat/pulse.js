@@ -19,7 +19,8 @@ function createPulseService ({
   buildContextPrompt,
   buildGameContext,
   traceChat = () => {},
-  memory
+  memory,
+  feedbackCollector = null
 }) {
   const pulseCtrl = { running: false, abort: null }
   let pulseTimer = null
@@ -377,6 +378,18 @@ function createPulseService ({
     sendDirectReply(username, text)
     activateSession(username, opts.reason || 'chat')
     touchConversationSession(username)
+    // REFS: 打开反馈窗口
+    if (feedbackCollector && typeof feedbackCollector.openFeedbackWindow === 'function') {
+      try {
+        feedbackCollector.openFeedbackWindow({
+          botMessage: text,
+          targetUser: username,
+          memoryRefs: opts.memoryRefs || [],
+          toolUsed: opts.toolUsed || null,
+          context: opts.reason || 'chat'
+        })
+      } catch {}
+    }
   }
 
   function shouldFlushByCount () {

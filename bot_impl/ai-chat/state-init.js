@@ -164,6 +164,48 @@ function prepareAiState (state, opts = {}) {
     month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 },
     total: { inTok: 0, outTok: 0, cost: 0 }
   }
+
+  // --- REFS: 反馈系统状态初始化 ---
+  const persistedEvolution = opts.persistedEvolution || {}
+
+  // 反馈收集状态
+  state.aiFeedback = state.aiFeedback || {
+    windows: new Map(),
+    stats: {
+      positive: persistedEvolution.feedbackStats?.positive || 0,
+      negative: persistedEvolution.feedbackStats?.negative || 0,
+      actionSuccess: persistedEvolution.feedbackStats?.actionSuccess || 0,
+      actionFail: persistedEvolution.feedbackStats?.actionFail || 0
+    },
+    recentSignals: [],
+    lastWindowId: null
+  }
+  if (!(state.aiFeedback.windows instanceof Map)) state.aiFeedback.windows = new Map()
+  if (!Array.isArray(state.aiFeedback.recentSignals)) state.aiFeedback.recentSignals = []
+
+  // 人格特质状态
+  const defaultTraits = { playfulness: 0.7, helpfulness: 0.8, curiosity: 0.6, assertiveness: 0.4, emotionality: 0.5 }
+  state.aiPersonality = state.aiPersonality || {
+    traits: { ...defaultTraits, ...(persistedEvolution.personality?.traits || {}) },
+    modifiers: { ...(persistedEvolution.personality?.modifiers || {}) },
+    lastAdjustment: persistedEvolution.personality?.lastAdjustment || null
+  }
+
+  // 情感状态
+  state.aiEmotionalState = state.aiEmotionalState || {
+    current: persistedEvolution.emotionalState?.current || 'content',
+    intensity: persistedEvolution.emotionalState?.intensity ?? 0.5,
+    lastUpdate: persistedEvolution.emotionalState?.lastUpdate || nowTs,
+    triggers: []
+  }
+  if (!Array.isArray(state.aiEmotionalState.triggers)) state.aiEmotionalState.triggers = []
+
+  // 自省历史
+  state.aiIntrospection = state.aiIntrospection || {
+    history: Array.isArray(persistedEvolution.introspectionHistory) ? persistedEvolution.introspectionHistory : [],
+    lastRun: persistedEvolution.lastIntrospection || null,
+    consecutiveNegative: 0
+  }
 }
 
 module.exports = { prepareAiState }

@@ -123,7 +123,18 @@ function install (bot, { on, registerCleanup, log }) {
           if (res.status !== 'running') {
             S.tasks.delete(task.id)
             info('end', task.name, 'id=', task.id, 'status=', res.status)
-            try { bot.emit('skill:end', { id: task.id, name: task.name, status: res.status }) } catch {}
+            // REFS: 扩展 skill:end 事件数据
+            const endEvent = {
+              id: task.id,
+              name: task.name,
+              status: res.status,
+              duration: Date.now() - task.createdAt,
+              progress: task.progress,
+              args: task.args,
+              events: task.events.slice(-10),
+              triggeredBy: task.triggeredBy || 'unknown'
+            }
+            try { bot.emit('skill:end', endEvent) } catch {}
           }
         } else {
           task.progress = Number.isFinite(res.progress) ? res.progress : task.progress
@@ -134,7 +145,19 @@ function install (bot, { on, registerCleanup, log }) {
         pushEvents(task, [{ type: 'error', error: String(e?.message || e) }])
         S.tasks.delete(task.id)
         info('end', task.name, 'id=', task.id, 'status=failed')
-        try { bot.emit('skill:end', { id: task.id, name: task.name, status: 'failed' }) } catch {}
+        // REFS: 扩展 skill:end 事件数据（失败情况）
+        const endEvent = {
+          id: task.id,
+          name: task.name,
+          status: 'failed',
+          duration: Date.now() - task.createdAt,
+          progress: task.progress,
+          args: task.args,
+          events: task.events.slice(-10),
+          triggeredBy: task.triggeredBy || 'unknown',
+          failureReason: String(e?.message || e)
+        }
+        try { bot.emit('skill:end', endEvent) } catch {}
       }
     }
   }

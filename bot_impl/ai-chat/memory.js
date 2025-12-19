@@ -267,7 +267,10 @@ function createMemoryService ({
         tags: uniqueStrings(extra?.tags || []),
         summary: extra?.summary ? normalizeMemoryText(extra.summary) : '',
         tone: extra?.tone ? normalizeMemoryText(extra.tone) : '',
-        fromAI: extra?.fromAI !== false
+        fromAI: extra?.fromAI !== false,
+        // REFS: 效能追踪字段
+        effectiveness: { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0 },
+        decayInfo: { lastDecayAt: null, protected: false }
       }
       ensureMemoryId(entry)
       if (extra?.instruction) {
@@ -1330,6 +1333,117 @@ function createMemoryService ({
 
   function delay (ms) { return new Promise(resolve => setTimeout(resolve, Math.max(0, ms || 0))) }
 
+  // --- REFS: 记忆-反馈耦合 ---
+
+  function findMemoryById (memoryId) {
+    const entries = ensureMemoryEntries()
+    return entries.find(e => e.id === memoryId) || null
+  }
+
+  function applyFeedbackToMemory (memoryIds, feedbackScore) {
+    if (!Array.isArray(memoryIds) || !memoryIds.length) return
+    const entries = ensureMemoryEntries()
+    const nowTs = now()
+    let changed = false
+
+    for (const memoryId of memoryIds) {
+      const entry = entries.find(e => e.id === memoryId)
+      if (!entry) continue
+
+      // 确保效能字段存在
+      if (!entry.effectiveness) {
+        entry.effectiveness = { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0 }
+      }
+      entry.effectiveness.timesUsed++
+
+      const score = Number(feedbackScore) || 0
+      if (score > 0.3) {
+        // 正面反馈 → 强化
+        entry.effectiveness.timesHelpful++
+        const boost = Math.ceil(Math.abs(score))
+        entry.count = Math.min((entry.count || 1) + boost, 100)
+        entry.updatedAt = nowTs
+        changed = true
+      } else if (score < -0.3) {
+        // 负面反馈 → 衰减
+        entry.effectiveness.timesUnhelpful++
+        const penalty = Math.ceil(Math.abs(score))
+        entry.count = Math.max((entry.count || 1) - penalty, 1)
+        entry.updatedAt = nowTs
+        changed = true
+      }
+
+      // 更新平均分
+      const total = entry.effectiveness.timesHelpful + entry.effectiveness.timesUnhelpful
+      if (total > 0) {
+        entry.effectiveness.averageScore = (entry.effectiveness.timesHelpful - entry.effectiveness.timesUnhelpful) / total
+      }
+    }
+
+    if (changed) {
+      persistMemoryState()
+    }
+  }
+
+  function decayUnusedMemories () {
+    const entries = ensureMemoryEntries()
+    const nowTs = now()
+    const DECAY_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000 // 7天
+    let changed = false
+
+    for (const entry of entries) {
+      // 跳过受保护的记忆
+      if (entry.decayInfo?.protected) continue
+
+      // 计算最后有效使用时间
+      const lastUseful = Math.max(
+        entry.effectiveness?.lastPositiveFeedback || 0,
+        entry.updatedAt || entry.createdAt || 0
+      )
+
+      const timeSinceUseful = nowTs - lastUseful
+      if (timeSinceUseful < DECAY_THRESHOLD_MS) continue
+
+      // 计算衰减
+      const decayRate = entry.decayInfo?.decayRate || 0.1
+      const decayAmount = Math.ceil((entry.count || 1) * decayRate)
+
+      if (decayAmount > 0 && entry.count > 1) {
+        entry.count = Math.max((entry.count || 1) - decayAmount, 1)
+        if (!entry.decayInfo) entry.decayInfo = {}
+        entry.decayInfo.lastDecayAt = nowTs
+        changed = true
+        traceChat('[REFS] memory decay', entry.id, '-' + decayAmount, 'remaining:', entry.count)
+      }
+    }
+
+    if (changed) {
+      persistMemoryState()
+    }
+    return changed
+  }
+
+  function getMemoryStats () {
+    const entries = ensureMemoryEntries()
+    let totalUsed = 0
+    let totalHelpful = 0
+    let totalUnhelpful = 0
+    for (const entry of entries) {
+      if (entry.effectiveness) {
+        totalUsed += entry.effectiveness.timesUsed || 0
+        totalHelpful += entry.effectiveness.timesHelpful || 0
+        totalUnhelpful += entry.effectiveness.timesUnhelpful || 0
+      }
+    }
+    return {
+      totalEntries: entries.length,
+      totalUsed,
+      totalHelpful,
+      totalUnhelpful,
+      effectivenessRate: totalUsed > 0 ? totalHelpful / totalUsed : 0
+    }
+  }
+
   const longTerm = {
     persistState: persistMemoryState,
     updateWorldZones: updateWorldMemoryZones,
@@ -1337,7 +1451,12 @@ function createMemoryService ({
     addEntry: addMemoryEntry,
     findLocationAnswer: findLocationMemoryAnswer,
     extractCommand: extractMemoryCommand,
-    normalizeText: normalizeMemoryText
+    normalizeText: normalizeMemoryText,
+    // REFS: 新增
+    findById: findMemoryById,
+    applyFeedback: applyFeedbackToMemory,
+    decayUnused: decayUnusedMemories,
+    getStats: getMemoryStats
   }
 
   const dialogue = {
