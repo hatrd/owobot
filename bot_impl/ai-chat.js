@@ -172,6 +172,61 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   pulse.start()
   memory.rewrite.processQueue().catch(() => {})
 
+  // REFS: Introspection AI call wrapper (DeepSeek; respects budget)
+  async function aiCall ({ systemPrompt, userPrompt, maxTokens, temperature }) {
+    const { key, baseUrl, path, model } = state.ai || {}
+    if (!key) throw new Error('AI key not configured')
+    const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
+
+    const messages = [
+      systemPrompt ? { role: 'system', content: String(systemPrompt) } : null,
+      { role: 'user', content: String(userPrompt || '') }
+    ].filter(Boolean)
+
+    const estIn = H.estTokensFromText(messages.map(m => m.content).join(' '))
+    const afford = canAfford(estIn)
+    if (!afford.ok) {
+      throw new Error(state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : 'budget_exceeded')
+    }
+
+    const reqMax = Number(maxTokens)
+    const maxOut = Number.isFinite(reqMax) && reqMax > 0 ? Math.floor(reqMax) : 256
+    const cappedOut = Math.max(60, Math.min(maxOut, state.ai.maxTokensPerCall || 512))
+    const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.2
+
+    const body = {
+      model: model || defaults.DEFAULT_MODEL,
+      messages,
+      temperature: temp,
+      max_tokens: cappedOut,
+      stream: false
+    }
+
+    const ac = new AbortController()
+    const timeout = setTimeout(() => ac.abort('timeout'), 12000)
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify(body),
+        signal: ac.signal
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => String(res.status))
+        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      const reply = data?.choices?.[0]?.message?.content || ''
+      const usage = data?.usage || {}
+      const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
+      const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : H.estTokensFromText(reply)
+      applyUsage(inTok, outTok)
+      return String(reply).trim()
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
   // REFS: 创建自省引擎
   const introspection = createIntrospectionEngine({
     state,
@@ -181,7 +236,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     feedbackCollector,
     memory,
     memoryStore,
-    aiCall: null // 将在后续版本中实现 AI 调用接口
+    aiCall
   })
   introspection.start()
 
