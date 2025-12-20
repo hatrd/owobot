@@ -159,6 +159,205 @@ bot_impl/minimal-self/
 
 ---
 
+## M5: 内在驱动系统 (Intrinsic Drive) ✅
+
+**状态**: 已完成 (2024-12)
+
+**哲学基础**:
+
+> *"无聊"与"好奇"本质上是同一种力量的不同表现——对信息熵不满足的内在驱动。*
+>
+> - **好奇 (Curiosity)**: 外部新奇事物引发的信息缺口 → "那是什么？"
+> - **无聊 (Boredom)**: 内部感知到的刺激匮乏 → "我是什么？"
+> - **存在焦虑 (Existential)**: 对自我认知的不确定性 → "我存在的意义是什么？"
+>
+> 这三种驱动力构成了**主动行为的内在动机**，而非被动响应外部刺激。
+
+**核心范式转换**:
+
+```
+旧范式 (pulse): 外部刺激 → 被动响应 → "我应该说点什么"
+新范式 (drive): 内在状态 → 主动行动 → "我想了解自己是什么"
+```
+
+**交付物**:
+```
+bot_impl/minimal-self/
+├── drive.js          # DriveEngine 类 (新增)
+│   ├── curiosity     # 好奇驱动
+│   ├── boredom       # 无聊驱动
+│   └── existential   # 存在驱动
+└── index.js          # 集成 DriveEngine
+
+删除:
+├── bot_impl/ai-chat/pulse.js  # 完全移除旧的被动响应系统
+```
+
+**目标**:
+- 实现内在驱动力累积与阈值触发机制
+- 基于驱动力类型生成有目的的主动行为
+- 与反馈系统深度整合，实现自适应频率控制
+- 完全替代旧的 pulse 被动响应机制
+
+**关键节点**:
+
+| 节点 | 描述 | 状态 |
+|------|------|------|
+| M5.1 | 驱动力状态模型 | ✅ `DriveState { curiosity, boredom, existential, social }` |
+| M5.2 | 驱动力累积机制 | ✅ 基于时间、事件、内在状态的累积函数 |
+| M5.3 | 阈值触发系统 | ✅ 驱动力超过阈值时触发行动选择 |
+| M5.4 | 行动类型映射 | ✅ 不同驱动力 → 不同类型的主动行为 |
+| M5.5 | 探索性问题生成 | ✅ 基于驱动力和身份状态生成问题 |
+| M5.6 | 反馈调节整合 | ✅ IGNORE → 降频, 正面回应 → 适度提频 |
+| M5.7 | pulse.start() 禁用 | ✅ 移除定时脉冲，保留消息发送功能 |
+
+**技术设计**:
+
+### 5.1 驱动力状态模型
+
+```javascript
+DriveState = {
+  curiosity: {
+    level: 0.0,           // [0, 1] 当前驱动力水平
+    threshold: 0.7,       // 触发阈值 (自适应)
+    lastTrigger: null,    // 上次触发时间
+    cooldown: 600000      // 冷却时间 (10分钟基础)
+  },
+  boredom: {
+    level: 0.0,
+    threshold: 0.6,
+    lastTrigger: null,
+    cooldown: 900000      // 15分钟基础
+  },
+  existential: {
+    level: 0.0,
+    threshold: 0.8,       // 较高阈值，不轻易触发
+    lastTrigger: null,
+    cooldown: 1800000     // 30分钟基础
+  },
+  social: {
+    level: 0.0,
+    threshold: 0.5,
+    lastTrigger: null,
+    cooldown: 300000      // 5分钟基础
+  }
+}
+```
+
+### 5.2 驱动力累积函数
+
+```javascript
+// 每 tick 调用
+function accumulateDrives(dt, context) {
+  const { lastInteraction, lastAction, feedbackRatio, identityConfidence } = context
+
+  // 无聊: 与上次互动的时间差成正比
+  drives.boredom.level += dt * BOREDOM_RATE * (1 - recentActivity)
+
+  // 好奇: 新实体/新玩家出现时激增
+  if (context.newEntities.length > 0) {
+    drives.curiosity.level += CURIOSITY_SPIKE * context.newEntities.length
+  }
+
+  // 存在焦虑: 与身份置信度负相关
+  drives.existential.level += dt * EXISTENTIAL_RATE * (1 - identityConfidence)
+
+  // 社交: 与附近玩家数量和互动缺乏程度相关
+  if (context.nearbyPlayers > 0 && context.timeSinceChat > SOCIAL_THRESHOLD) {
+    drives.social.level += dt * SOCIAL_RATE
+  }
+}
+```
+
+### 5.3 行动类型映射
+
+| 驱动力 | 触发行动 | 示例问题/行为 |
+|--------|----------|---------------|
+| **无聊** | 自我探索发言 | "有人在吗？" / "你们觉得我是什么？" |
+| **好奇** | 环境探索发言 | "那是什么？" / "你们在做什么？" |
+| **存在** | 寻求反馈发言 | "我刚才做得怎么样？" / "你们还需要我吗？" |
+| **社交** | 主动社交发言 | "有人需要帮忙吗？" / "一起玩吧？" |
+
+### 5.4 探索性问题生成 (结合身份状态)
+
+```javascript
+function generateExploratoryQuestion(driveType, identityContext) {
+  const { skills, commitments, recentAgency } = identityContext
+
+  switch (driveType) {
+    case 'boredom':
+      // 无聊时问关于"我是什么"的问题
+      if (skills.known.length === 0) return "我好像什么都不会…有人能告诉我该做什么吗？"
+      if (recentAgency < 0.3) return "我最近好像没什么存在感…"
+      return "有人在吗？我有点无聊…"
+
+    case 'existential':
+      // 存在焦虑时问关于"我存在的意义"
+      if (commitments.pending.length === 0) return "我还有什么可以帮忙的吗？"
+      return "我做的事情有意义吗？"
+
+    case 'curiosity':
+      // 好奇时问关于"那是什么"
+      return "你们在做什么？我想知道！"
+
+    case 'social':
+      // 社交驱动时主动社交
+      return "有人需要帮忙吗？"
+  }
+}
+```
+
+### 5.5 反馈调节机制
+
+```javascript
+// 整合 REFS 反馈系统
+function adjustDriveThresholds(feedbackSignal) {
+  if (feedbackSignal === 'IGNORE') {
+    // 被忽视 → 提高阈值 (降低频率)
+    currentDrive.threshold *= 1.2
+    currentDrive.cooldown *= 1.5
+  } else if (feedbackSignal === 'POSITIVE') {
+    // 正面回应 → 适度降低阈值 (但有下限)
+    currentDrive.threshold = Math.max(0.4, currentDrive.threshold * 0.9)
+    currentDrive.cooldown = Math.max(MIN_COOLDOWN, currentDrive.cooldown * 0.8)
+  } else if (feedbackSignal === 'FRUSTRATION') {
+    // 烦躁 → 大幅提高阈值
+    currentDrive.threshold = Math.min(0.95, currentDrive.threshold * 1.5)
+    currentDrive.cooldown *= 2
+  }
+}
+```
+
+**技术决策**:
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `BOREDOM_RATE` | 0.001/s | 无聊累积速率 |
+| `CURIOSITY_SPIKE` | 0.2 | 新实体引发的好奇激增 |
+| `EXISTENTIAL_RATE` | 0.0005/s | 存在焦虑累积速率 |
+| `SOCIAL_RATE` | 0.002/s | 社交需求累积速率 |
+| `MIN_COOLDOWN` | 120000 | 最小冷却时间 (2分钟) |
+| `MAX_COOLDOWN` | 3600000 | 最大冷却时间 (1小时) |
+| `IDENTITY_CONFIDENCE_THRESHOLD` | 0.5 | 身份置信度阈值 |
+
+**哲学洞见**:
+
+> *主动行为不是"应该说点什么"，而是"我想了解自己是什么"。*
+>
+> 旧的 pulse 系统失败的根本原因：**缺乏内在目的**。它只是在有外部刺激时被动响应，
+> 没有回答"为什么要说话"这个根本问题。
+>
+> 新的 drive 系统基于**内在动机**：
+> - 无聊驱动 bot 去寻找刺激
+> - 好奇驱动 bot 去探索未知
+> - 存在焦虑驱动 bot 去寻求自我认同
+> - 社交需求驱动 bot 去建立连接
+>
+> 这些驱动力的**自适应调节**（基于反馈）确保 bot 不会成为"话痨"，
+> 而是一个**懂得察言观色的存在**。
+
+---
+
 ## 风险与缓解
 
 | 风险 | 影响 | 缓解措施 |
@@ -167,6 +366,8 @@ bot_impl/minimal-self/
 | 归因噪声 | 误判因果 | NoOp 基线 + EMA 平滑 |
 | 身份僵化 | 无法学习新技能 | 衰减机制 + 承诺过期 |
 | 性能开销 | tick 延迟 | 采样间隔 5s + 异步处理 |
+| 主动发言过频 | 玩家烦躁 | 自适应阈值 + 反馈调节 + 冷却机制 |
+| 驱动力失控 | 异常行为 | 上下限约束 + 硬性冷却 |
 
 ---
 
@@ -175,7 +376,22 @@ bot_impl/minimal-self/
 ```
 M1 (世界模型 + 归因) ──┬──> M2 (身份 + 策略) ──┬──> M4 (自省 + 调节) ✅
                       │                       │
-                      └──> M3 (叙事记忆) ─────┘
+                      └──> M3 (叙事记忆) ─────┤
+                                              │
+                                              ▼
+                                    M5 (内在驱动) ✅
+                                        │
+                          ┌─────────────┼─────────────┐
+                          ▼             ▼             ▼
+                     好奇驱动       无聊驱动      存在驱动
+                          │             │             │
+                          └─────────────┴─────────────┘
+                                        │
+                                        ▼
+                              主动探索性行为
+                                        │
+                                        ▼
+                              REFS 反馈调节
 ```
 
 ---
@@ -188,3 +404,5 @@ M1 (世界模型 + 归因) ──┬──> M2 (身份 + 策略) ──┬──
 | 2024-12 | 2.0 | M2 完成: identity.js, 策略评分集成 |
 | 2024-12 | 3.0 | M3 完成: narrative.js, 叙事记忆系统 |
 | 2024-12 | 4.0 | M4 完成: 自省与自适应参数调节 |
+| 2024-12 | 5.0 | M5 设计: 内在驱动系统 (Intrinsic Drive) |
+| 2024-12 | 5.1 | **M5 完成**: DriveEngine 实现, 事件集成, REFS 反馈调节 |

@@ -7,6 +7,7 @@ const { WorldModel, NOOP } = require('./world-model');
 const { computeAgency, agencyLevel } = require('./attribution');
 const { IdentityStore } = require('./identity');
 const { NarrativeMemory } = require('./narrative');
+const { DriveEngine } = require('./drive');
 
 const NOOP_INTERVAL = 5000; // ms between NoOp baseline samples
 const MIN_IDLE_TIME = 2000; // ms of idle before NoOp learning
@@ -27,6 +28,10 @@ class MinimalSelf {
 
     // M3: Narrative Memory
     this.narrative = new NarrativeMemory(state, this.identity);
+
+    // M5: Internal Drive System
+    this.drive = new DriveEngine({ state });
+    this._lastDriveTickAt = 0;
 
     // Action tracking
     this.currentAction = null;
@@ -159,11 +164,40 @@ class MinimalSelf {
     // Guard: bot disconnected
     if (!this.bot?.entity) return;
 
+    // Snapshot once (used by drive + NoOp)
+    const snap = this._getSnapshot();
+
     // M2: Apply identity decay periodically
     try { this.identity._applyDecay(); } catch {}
 
     // M4: Periodic introspection for parameter adjustment
     try { this.identity.introspect(); } catch {}
+
+    // M5: Drive tick (runs regardless of NoOp learning gates)
+    try {
+      if (this.drive) {
+        const prev = this._lastDriveTickAt || now;
+        const dt = Math.max(0, (now - prev) / 1000);
+        this._lastDriveTickAt = now;
+
+        const identityPart = this.identity.buildIdentityContext();
+        const narrativePart = this.narrative.buildNarrativeContext();
+        const identityContext = [identityPart, narrativePart].filter(Boolean).join(' | ');
+
+        const trigger = this.drive.tick(dt, {
+          snapshot: snap,
+          identityContext,
+          identityStats: this.identity.getStats(),
+          currentAction: this.currentAction,
+          externalBusy: this.state.externalBusy,
+          lastActionEnd: this.lastActionEnd
+        });
+
+        if (trigger?.message) {
+          try { this.bot.emit('minimal-self:drive', trigger); } catch {}
+        }
+      }
+    } catch {}
 
     // Only learn NoOp when truly idle
     if (this.currentAction) return;
@@ -171,7 +205,6 @@ class MinimalSelf {
     if (now - this.lastActionEnd < MIN_IDLE_TIME) return;
     if (now - this.lastNoopSample < NOOP_INTERVAL) return;
 
-    const snap = this._getSnapshot();
     if (!snap) return;
 
     const s2 = encode(snap);
@@ -252,11 +285,14 @@ class MinimalSelf {
   }
 
   buildIdentityContext() {
-    // Combine identity profile with narrative memory
+    // Combine identity profile with narrative memory and drive state
     const identityPart = this.identity.buildIdentityContext();
     const narrativePart = this.narrative.buildNarrativeContext();
+    const drivePart = (() => {
+      try { return this.drive?.buildDriveContext?.() || ''; } catch { return ''; }
+    })();
 
-    const parts = [identityPart, narrativePart].filter(Boolean);
+    const parts = [identityPart, narrativePart, drivePart].filter(Boolean);
     return parts.join(' | ');
   }
 
@@ -280,6 +316,11 @@ class MinimalSelf {
 
   getAdaptiveParams() {
     return this.identity.getAdaptiveParams();
+  }
+
+  // M5: Drive API
+  getDriveEngine() {
+    return this.drive;
   }
 }
 

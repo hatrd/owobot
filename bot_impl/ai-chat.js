@@ -169,7 +169,36 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   on('chat', onChatCapture)
   on('message', onMessage)
 
-  pulse.start()
+  // M5: Internal Drive System replaces proactive pulse timer
+  const onDriveTrigger = (payload) => {
+    try {
+      if (!payload || typeof payload !== 'object') return
+      const text = String(payload.message || '').trim()
+      if (!text) return
+      const driveType = String(payload.type || 'drive')
+      const target = (() => {
+        const hinted = String(payload.targetUser || '').trim()
+        if (hinted) return hinted
+        const recent = Array.isArray(state.aiRecent) ? state.aiRecent : []
+        for (let i = recent.length - 1; i >= 0; i--) {
+          const e = recent[i]
+          if (!e || e.kind !== 'player') continue
+          const u = String(e.user || '').trim()
+          if (u) return u
+        }
+        const players = Object.keys(bot.players || {}).filter(n => n && n !== bot.username)
+        return players.length ? players[0] : null
+      })()
+      if (target) {
+        pulse.sendChatReply(target, text, { reason: 'drive', toolUsed: `drive:${driveType}` })
+      } else {
+        pulse.sendDirectReply(null, text)
+      }
+    } catch {}
+  }
+  bot.on('minimal-self:drive', onDriveTrigger)
+
+  // Note: pulse.start() removed - drive system handles proactive messages
   memory.rewrite.processQueue().catch(() => {})
 
   // REFS: Introspection AI call wrapper (DeepSeek; respects budget)
@@ -305,7 +334,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     mind
   })
 
-  on('cli', pulse.handlePulseCli)
   on('cli', aiCliHandler)
 
   registerCleanup && registerCleanup(() => {
@@ -313,7 +341,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { bot.off('chat', onChatCapture) } catch {}
     try { bot.off('chat', onFeedbackCapture) } catch {}
     try { bot.off('message', onMessage) } catch {}
-    try { bot.off('cli', pulse.handlePulseCli) } catch {}
+    try { bot.off('minimal-self:drive', onDriveTrigger) } catch {}
     try { bot.off('cli', aiCliHandler) } catch {}
     try { bot.off('skill:end', onSkillEnd) } catch {}
     try { clearInterval(decayTimer) } catch {}
