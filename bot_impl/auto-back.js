@@ -5,6 +5,9 @@ const { Vec3 } = require('vec3')
 
 const PROMPT_VALID_MS = 180000
 const DEATH_ACK_GRACE_MS = 5000
+const DUP_PROMPT_SUPPRESS_MS = 250
+const BACK_RETRY_INTERVAL_MS = 5000
+const BACK_RETRY_SPAWN_DELAY_MS = 1400
 
 function wait (ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 
@@ -22,6 +25,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   }
 
   if (typeof state.autoBackCooldownUntil !== 'number') state.autoBackCooldownUntil = 0
+  if (typeof state.autoBackCooldownDeathId !== 'number') state.autoBackCooldownDeathId = 0
   if (typeof state.backInProgress !== 'boolean') state.backInProgress = false
   if (typeof state.backLastCmdAt !== 'number') state.backLastCmdAt = 0
   if (!state.deathChestInfo || typeof state.deathChestInfo !== 'object') state.deathChestInfo = null
@@ -34,14 +38,46 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   if (typeof state.autoBackPendingDeathAckId !== 'number') state.autoBackPendingDeathAckId = 0
   if (typeof state.autoBackPendingDeathAckAt !== 'number') state.autoBackPendingDeathAckAt = 0
   if (typeof state.backLastPromptAt !== 'number') state.backLastPromptAt = 0
+  if (typeof state.autoBackLastDeathAt !== 'number') state.autoBackLastDeathAt = 0
+  if (typeof state.autoBackWantedUntil !== 'number') state.autoBackWantedUntil = 0
+  if (typeof state.autoBackWantedDeathId !== 'number') state.autoBackWantedDeathId = 0
+  if (typeof state.autoBackRetryAt !== 'number') state.autoBackRetryAt = 0
+  if (typeof state.autoBackRetryCount !== 'number') state.autoBackRetryCount = 0
+  if (typeof state.autoBackLastDisconnectAt !== 'number') state.autoBackLastDisconnectAt = 0
   let attemptId = 0
   let fallbackCollectQueued = null
   let fallbackCollectPromise = null
+  let backRetryTimer = null
 
   function hasActivePromptContext () {
     if (!state.autoBackActiveDeathId || state.autoBackActiveDeathId !== state.autoBackDeathId) return false
     const last = state.backLastPromptAt || 0
     return last > 0 && (Date.now() - last) <= PROMPT_VALID_MS
+  }
+
+  function hasWantedContext (now = Date.now()) {
+    const until = state.autoBackWantedUntil || 0
+    const wantedId = state.autoBackWantedDeathId || 0
+    const deathId = state.autoBackDeathId || 0
+    if (!until || now > until) return false
+    if (!wantedId || wantedId !== deathId) return false
+    return true
+  }
+
+  function markWantedContext (now, reason) {
+    state.autoBackWantedDeathId = state.autoBackDeathId || 0
+    state.autoBackWantedUntil = now + PROMPT_VALID_MS
+    if (reason) debug('marked wanted back context', { deathId: state.autoBackWantedDeathId, reason })
+  }
+
+  function clearWantedContext (reason) {
+    state.autoBackWantedUntil = 0
+    state.autoBackWantedDeathId = 0
+    state.autoBackRetryAt = 0
+    state.autoBackRetryCount = 0
+    state.autoBackAwaitingPrompt = false
+    state.autoBackAwaitingRespawn = false
+    if (reason) debug('cleared wanted back context', { reason })
   }
 
   function clearActiveBackContext (reason) {
@@ -101,6 +137,9 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   function isTeleportPreparing (s) {
     if (!s) return false
     if (/准备传送/.test(s)) return true
+    // Common CN teleport flow (Essentials-like)
+    if (/正在回到先前的位置/.test(s)) return true
+    if (/传送将在\s*\d+\s*秒内开始/.test(s) && /不要移动/.test(s)) return true
     if (/teleport/i.test(s) && /(prepare|preparing)/i.test(s)) return true
     if (/teleport will commence/i.test(s)) return true
     return false
@@ -109,6 +148,23 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   function isDeathChestDisappeared (s) {
     if (!s) return false
     return /deathchest[^\n]*has disappeared/i.test(s) || /死亡箱子[^\n]*已(?:经)?消失/.test(s)
+  }
+
+  function isDeathChestLooted (s) {
+    if (!s) return false
+    return /successfully looted your deathchest/i.test(s) || /已成功(?:拾取|领取).*死亡箱子/i.test(s)
+  }
+
+  function isBackDenied (s) {
+    if (!s) return false
+    // Best-effort patterns: different servers/plugins vary a lot.
+    if (/没有[^\n]*可[^\n]*返回/.test(s)) return true
+    if (/无法[^\n]*返回/.test(s) && /back/i.test(s)) return true
+    if (/你[^\n]*不能[^\n]*使用[^\n]*\/back/i.test(s)) return true
+    if (/you (have )?no (previous|last) (location|position)/i.test(s)) return true
+    if (/you can('| no)t use .*\/back/i.test(s)) return true
+    if (/unknown command/i.test(s) && /\/back/i.test(s)) return true
+    return false
   }
 
   function findContainerBlock (pos) {
@@ -280,15 +336,23 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     if (!actions) return
     try { bot.emit('external:begin', { source: 'auto', tool: 'back_collect' }) } catch {}
     try { if (bot.state) bot.state.externalBusy = true } catch {}
+    let teleportConfirmed = false
     try {
       debug('pickup routine started', { attemptId: id })
       // Allow teleport settle (base wait)
       await wait(1500)
-      const waitTeleportUntil = Date.now() + 10000
+      const waitTeleportUntil = Date.now() + 12000
       while (state.backInProgress && id === attemptId && state.deathChestTeleportAttemptId !== id && Date.now() < waitTeleportUntil) {
         debug('waiting for teleport readiness', { attemptId: id })
         await wait(200)
       }
+      // If teleport never confirmed, don't start looting/pathing/collecting from a random position.
+      if (id !== attemptId || !state.backInProgress) return
+      if (state.deathChestTeleportAttemptId !== id) {
+        debug('teleport not confirmed; aborting pickup routine', { attemptId: id })
+        return
+      }
+      teleportConfirmed = true
       if (state.deathChestTeleportAttemptId === id) {
         const extra = (state.deathChestTeleportReadyAt || 0) + 2000 - Date.now()
         if (extra > 0) await wait(extra)
@@ -308,6 +372,10 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
       try { if (bot.state) bot.state.externalBusy = false } catch {}
       // Clear back-in-progress after routine finishes (or is skipped)
       if (attemptId === id) clearActiveBackContext('pickup routine finished')
+      // If we didn't even confirm teleport, keep trying while still in the wanted window (prompt-missed/disconnect/cancel cases).
+      if (attemptId === id && !teleportConfirmed && hasWantedContext()) scheduleBackRetry('teleport not confirmed', BACK_RETRY_INTERVAL_MS)
+      // If teleport was confirmed and we completed the routine without being superseded, consider this death handled.
+      if (attemptId === id && teleportConfirmed && hasWantedContext()) clearWantedContext('pickup routine finished after confirmed teleport')
       const queued = fallbackCollectQueued
       fallbackCollectQueued = null
       if (queued && queued.id === id) {
@@ -325,42 +393,90 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     state.backLastPromptAt = 0
     state.autoBackPendingDeathAckId = state.autoBackDeathId
     state.autoBackPendingDeathAckAt = now
+    state.autoBackLastDeathAt = now
+    markWantedContext(now, 'prompt-synthesized')
     debug('prompt arrived without prior death event; synthesized context', { deathId: state.autoBackDeathId, message })
   }
 
-  function beginBackAttempt (now, source) {
-    if (now < (state.autoBackCooldownUntil || 0)) return false
+  function beginBackAttempt (now, source, opts = {}) {
+    const hasPrompt = opts && opts.hasPrompt === true
+    const currentDeathId = state.autoBackDeathId || 0
+    if (now < (state.autoBackCooldownUntil || 0) && (state.autoBackCooldownDeathId || 0) === currentDeathId) return false
     state.autoBackCooldownUntil = now + 15000 // 15s debounce
+    state.autoBackCooldownDeathId = currentDeathId
     state.autoBackAwaitingPrompt = false
     state.backInProgress = true
     state.autoBackActiveDeathId = state.autoBackDeathId
-    state.backLastPromptAt = now
+    if (hasPrompt) state.backLastPromptAt = now
     try { if (bot.state) bot.state.externalBusy = true } catch {}
     state.backLastCmdAt = now
     attemptId++
+    state.deathChestTeleportAttemptId = 0
+    state.deathChestTeleportReadyAt = 0
     const payload = { attemptId }
     if (source) payload.source = source
+    payload.hasPrompt = hasPrompt
     debug('detected back prompt, issuing /back', payload)
     try { bot.chat('/back') } catch {}
     runPickupRoutine(attemptId).catch(() => {})
     return true
   }
 
+  function scheduleBackRetry (reason, delayMs = BACK_RETRY_INTERVAL_MS) {
+    try {
+      if (!hasWantedContext()) return
+      if (backRetryTimer) return
+      const now = Date.now()
+      const dueAt = Math.max(now + Math.max(50, delayMs), (state.autoBackRetryAt || 0) + BACK_RETRY_INTERVAL_MS)
+      state.autoBackRetryAt = dueAt
+      state.autoBackRetryCount = (state.autoBackRetryCount || 0) + 1
+      backRetryTimer = setTimeout(() => {
+        backRetryTimer = null
+        const tsNow = Date.now()
+        if (!hasWantedContext(tsNow)) return
+        if (state.backInProgress) return
+        if (tsNow - (state.backLastCmdAt || 0) < 800) return
+        debug('retrying /back (wanted context)', { reason, retryCount: state.autoBackRetryCount, deathId: state.autoBackDeathId })
+        beginBackAttempt(tsNow, `retry:${reason || 'unknown'}`, { hasPrompt: false })
+      }, Math.max(0, dueAt - now))
+    } catch {}
+  }
+
   async function onMessage (message) {
     try {
       const s = normalizeMessage(message)
       const now = Date.now()
+      if (isDeathChestLooted(s)) {
+        clearWantedContext('deathchest looted')
+        state.deathChestInfo = null
+        clearActiveBackContext('deathchest looted')
+      }
+      if (isBackDenied(s)) {
+        debug('back denied by server', { message: s })
+        clearActiveBackContext('back denied')
+        if (hasWantedContext(now)) scheduleBackRetry('back denied', BACK_RETRY_INTERVAL_MS)
+        return
+      }
       if (shouldTriggerBack(s)) {
         let source = 'chat'
         if (!state.autoBackAwaitingPrompt) {
           if (state.backInProgress) {
-            debug('ignored /back prompt without matching death (already running)', { message: s })
-            return
+            const lastCmdAt = state.backLastCmdAt || 0
+            const lastPromptAt = state.backLastPromptAt || 0
+            if ((now - lastCmdAt) >= 0 && (now - lastCmdAt) < DUP_PROMPT_SUPPRESS_MS) {
+              debug('suppressed duplicate /back prompt (already running)', { message: s })
+              return
+            }
+            if ((now - lastPromptAt) >= 0 && (now - lastPromptAt) < DUP_PROMPT_SUPPRESS_MS) {
+              debug('suppressed duplicate /back prompt (already running)', { message: s })
+              return
+            }
+            debug('received /back prompt while already running; starting new attempt', { message: s })
           }
           synthesizeDeathContextFromPrompt(now, s)
-          source = 'prompt-first'
+          source = state.backInProgress ? 'prompt-while-running' : 'prompt-first'
         }
-        beginBackAttempt(now, source)
+        beginBackAttempt(now, source, { hasPrompt: true })
         return
       }
       const info = parseDeathChestLocation(s)
@@ -382,20 +498,15 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
       }
       // Retry if teleport request got canceled
       if (/待处理的传送请求已被取消/i.test(s)) {
-        if (!state.backInProgress || !hasActivePromptContext()) return
+        if (!hasWantedContext(now) && !hasActivePromptContext()) return
         // Re-issue /back shortly after (avoid immediate spam)
         if (now - (state.backLastCmdAt || 0) < 800) return
-        debug('teleport request canceled, scheduling retry', { attemptId })
-        setTimeout(() => {
-          try {
-            state.backLastCmdAt = Date.now()
-            attemptId++
-            state.backInProgress = true
-            debug('retrying /back after cancel', { attemptId })
-            bot.chat('/back')
-            runPickupRoutine(attemptId).catch(() => {})
-          } catch {}
-        }, 800)
+        debug('teleport request canceled, scheduling retry', { attemptId, backInProgress: state.backInProgress })
+        if (state.backInProgress) {
+          // Let the current routine exit; next attempt will supersede.
+          try { state.backInProgress = false } catch {}
+        }
+        scheduleBackRetry('teleport canceled', 900)
         return
       }
     } catch {}
@@ -404,15 +515,19 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   // If we respawn while in back flow, try /back again after a short delay
   on('respawn', () => {
     try {
-      if (state.autoBackAwaitingRespawn && !state.backInProgress) state.autoBackAwaitingRespawn = false
-      if (!state.backInProgress) return
+      const now = Date.now()
+      if (!state.backInProgress) {
+        // Common failure mode: died during /back teleport; prompt may not repeat after respawn.
+        if (hasWantedContext(now)) scheduleBackRetry('respawn resume', BACK_RETRY_SPAWN_DELAY_MS)
+        if (state.autoBackAwaitingRespawn && !hasWantedContext(now)) state.autoBackAwaitingRespawn = false
+        return
+      }
       if (!state.autoBackAwaitingRespawn) return
-      if (!hasActivePromptContext()) {
+      if (!hasActivePromptContext() && !hasWantedContext(now)) {
         clearActiveBackContext('stale respawn context')
         return
       }
       state.autoBackAwaitingRespawn = false
-      const now = Date.now()
       if (now - (state.backLastCmdAt || 0) < 800) return
       debug('respawn detected, scheduling /back retry')
       setTimeout(() => {
@@ -444,6 +559,8 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
       state.autoBackPendingDeathAckAt = 0
       attemptId++
       state.autoBackDeathId = (state.autoBackDeathId || 0) + 1
+      state.autoBackLastDeathAt = now
+      markWantedContext(now, 'death event')
       state.autoBackAwaitingPrompt = true
       state.autoBackAwaitingRespawn = true
       state.autoBackActiveDeathId = 0
@@ -457,13 +574,31 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     try {
       fallbackCollectQueued = null
       clearActiveBackContext('bot disconnected')
-      state.autoBackAwaitingPrompt = false
+      state.autoBackLastDisconnectAt = Date.now()
+      // Keep wanted context across reconnects (bounded by autoBackWantedUntil).
+      if (!hasWantedContext()) {
+        state.autoBackAwaitingPrompt = false
+      } else {
+        state.autoBackAwaitingPrompt = true
+      }
+    } catch {}
+  })
+
+  on('spawn', () => {
+    try {
+      const now = Date.now()
+      // After reconnect or respawn, /back prompts may not repeat. If we are within the wanted window, retry proactively.
+      if (!hasWantedContext(now)) return
+      if (state.backInProgress) return
+      scheduleBackRetry('spawn resume', BACK_RETRY_SPAWN_DELAY_MS)
     } catch {}
   })
 
   on('message', onMessage)
   registerCleanup && registerCleanup(() => {
     fallbackCollectQueued = null
+    try { if (backRetryTimer) clearTimeout(backRetryTimer) } catch {}
+    backRetryTimer = null
     try { bot.off('message', onMessage) } catch {}
   })
 }
