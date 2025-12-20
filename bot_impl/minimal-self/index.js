@@ -5,6 +5,7 @@
 const { encode } = require('./state-encode');
 const { WorldModel, NOOP } = require('./world-model');
 const { computeAgency, agencyLevel } = require('./attribution');
+const { IdentityStore } = require('./identity');
 
 const NOOP_INTERVAL = 5000; // ms between NoOp baseline samples
 const MIN_IDLE_TIME = 2000; // ms of idle before NoOp learning
@@ -19,6 +20,9 @@ class MinimalSelf {
     if (state.minimalSelf?.worldModel) {
       this.W.deserialize(state.minimalSelf.worldModel);
     }
+
+    // M2: Identity Store
+    this.identity = new IdentityStore(state);
 
     // Action tracking
     this.currentAction = null;
@@ -100,7 +104,11 @@ class MinimalSelf {
 
     // Compute and record agency
     const agency = computeAgency(this.W, s1, action, s2);
-    this._recordAgency(action, agency, data?.success);
+    const success = data?.success ?? (data?.status === 'succeeded');
+    this._recordAgency(action, agency, success);
+
+    // M2: Update identity store with skill outcome
+    this.identity.recordSkillOutcome(action, success, agency);
 
     // Reset
     this.currentAction = null;
@@ -133,6 +141,9 @@ class MinimalSelf {
 
     // Guard: bot disconnected
     if (!this.bot?.entity) return;
+
+    // M2: Apply identity decay periodically
+    try { this.identity._applyDecay(); } catch {}
 
     // Only learn NoOp when truly idle
     if (this.currentAction) return;
@@ -183,7 +194,8 @@ class MinimalSelf {
     return {
       worldModel: this.W.getStats(),
       agencyHistory: this.agencyHistory.length,
-      avgAgency: this._avgAgency()
+      avgAgency: this._avgAgency(),
+      identity: this.identity.getStats()
     };
   }
 
@@ -211,6 +223,19 @@ class MinimalSelf {
           ? 'Partially my doing'
           : 'Environment caused this'
     };
+  }
+
+  // M2: Identity API
+  getIdentity() {
+    return this.identity;
+  }
+
+  buildIdentityContext() {
+    return this.identity.buildIdentityContext();
+  }
+
+  scoreAction(action, baseValue = 1.0) {
+    return this.identity.scoreAction(action, baseValue);
   }
 }
 

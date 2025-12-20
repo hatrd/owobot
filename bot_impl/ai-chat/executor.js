@@ -165,12 +165,20 @@ function createChatExecutor ({
     const gameCtx = buildGameContext()
     const extrasCtx = buildExtrasContext()
     const memoryCtx = await memory.longTerm.buildContext({ query: content })
+    // M2: Identity context from minimal-self
+    const identityCtx = (() => {
+      try {
+        const ms = require('../minimal-self').getInstance()
+        return ms?.buildIdentityContext?.() || ''
+      } catch { return '' }
+    })()
     const allowSkip = options?.allowSkip === true
     const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
     const messages = [
       { role: 'system', content: systemPrompt() },
       extrasCtx ? { role: 'system', content: extrasCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
+      identityCtx ? { role: 'system', content: identityCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,
       { role: 'system', content: contextPrompt },
       { role: 'user', content: userContent }

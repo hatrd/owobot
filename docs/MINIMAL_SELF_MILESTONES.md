@@ -41,9 +41,19 @@ bot_impl/minimal-self/
 
 ---
 
-## M2: 身份存储 + 策略评分 (待启动)
+## M2: 身份存储 + 策略评分 ✅
 
-**状态**: 规划中
+**状态**: 已完成 (2024-12)
+
+**交付物**:
+```
+bot_impl/minimal-self/
+├── identity.js       # IdentityStore 类 (新增)
+└── index.js          # 集成 IdentityStore
+
+bot_impl/ai-chat/
+└── executor.js:168   # buildIdentityContext() 注入点
+```
 
 **目标**:
 - 实现 `IdentityStore { skills: Map<ActionType, SuccessStats>, commitments: Commitment[] }`
@@ -51,15 +61,23 @@ bot_impl/minimal-self/
 
 **关键节点**:
 
-| 节点 | 描述 | 依赖 |
+| 节点 | 描述 | 状态 |
 |------|------|------|
-| M2.1 | 技能统计收集 | 累积各 action 的成功/失败率 | M1.4 |
-| M2.2 | expectedAgency() | 基于历史预测动作归因值 | M1.4, M2.1 |
-| M2.3 | 承诺系统 | 记录对玩家的承诺及兑现状态 | - |
-| M2.4 | identityPenalty() | 评估动作对身份一致性的代价 | M2.1, M2.3 |
-| M2.5 | 策略集成 | 修改 AI 决策流程注入 Score(a) | M2.2, M2.4 |
+| M2.1 | 技能统计收集 | ✅ `recordSkillOutcome()` |
+| M2.2 | expectedAgency() | ✅ 基于历史 avgAgency + trend |
+| M2.3 | 承诺系统 | ✅ `addCommitment/fulfillCommitment` |
+| M2.4 | identityPenalty() | ✅ 含衰减机制防止僵化 |
+| M2.5 | 策略集成 | ✅ `buildIdentityContext()` 注入 AI prompt |
 
-**待定参数**: λ (身份权重), β (能动性权重)
+**技术决策**:
+- 技能成熟阈值: SKILL_MATURITY_THRESHOLD = 5 次尝试
+- 身份衰减率: IDENTITY_DECAY_RATE = 0.02/小时
+- 策略参数: λ = 0.3 (身份权重), β = 0.2 (能动性权重)
+- 承诺过期: 默认 24 小时
+
+**哲学洞见**:
+> *身份不是被声明的，而是从行动模式中涌现的。*
+> identityPenalty 维护自我一致性，但通过衰减机制允许"身份扩展"。
 
 ---
 
@@ -119,3 +137,4 @@ M1 (世界模型 + 归因) ──┬──> M2 (身份 + 策略)
 | 日期 | 版本 | 变更 |
 |------|------|------|
 | 2024-12 | 1.0 | M1 完成，文档创建 |
+| 2024-12 | 2.0 | M2 完成: identity.js, 策略评分集成 |
