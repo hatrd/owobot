@@ -31,6 +31,7 @@ class MinimalSelf {
     // Action tracking
     this.currentAction = null;
     this.actionStartState = null;
+    this.actionPredictedScore = null; // M4: Track predicted score
     this.lastActionEnd = 0;
 
     // NoOp baseline tracking
@@ -89,8 +90,12 @@ class MinimalSelf {
     const snap = this._getSnapshot();
     if (!snap) return;
 
-    this.currentAction = data?.name || 'skill';
+    this.currentAction = String(data?.name || 'skill');
     this.actionStartState = encode(snap);
+
+    // M4: Capture predicted score for later outcome recording
+    const scoreResult = this.identity.scoreAction(this.currentAction);
+    this.actionPredictedScore = scoreResult?.score ?? 0.5;
   }
 
   _handleSkillEnd(data) {
@@ -108,15 +113,23 @@ class MinimalSelf {
 
     // Compute and record agency
     const agency = computeAgency(this.W, s1, action, s2);
-    const success = data?.success ?? (data?.status === 'succeeded');
+    const success = typeof data?.success === 'boolean'
+      ? data.success
+      : (data?.status === 'succeeded');
     this._recordAgency(action, agency, success);
 
     // M2: Update identity store with skill outcome
     this.identity.recordSkillOutcome(action, success, agency);
 
+    // M4: Record decision outcome for introspection
+    if (this.actionPredictedScore != null) {
+      this.identity.recordDecisionOutcome(action, this.actionPredictedScore, success);
+    }
+
     // Reset
     this.currentAction = null;
     this.actionStartState = null;
+    this.actionPredictedScore = null;
     this.lastActionEnd = Date.now();
   }
 
@@ -148,6 +161,9 @@ class MinimalSelf {
 
     // M2: Apply identity decay periodically
     try { this.identity._applyDecay(); } catch {}
+
+    // M4: Periodic introspection for parameter adjustment
+    try { this.identity.introspect(); } catch {}
 
     // Only learn NoOp when truly idle
     if (this.currentAction) return;
@@ -255,6 +271,15 @@ class MinimalSelf {
 
   refreshNarrative() {
     return this.narrative.refresh();
+  }
+
+  // M4: Introspection API
+  triggerIntrospect() {
+    return this.identity.introspect();
+  }
+
+  getAdaptiveParams() {
+    return this.identity.getAdaptiveParams();
   }
 }
 

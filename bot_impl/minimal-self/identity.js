@@ -7,6 +7,20 @@ const MAX_COMMITMENTS = 20;
 const MAX_SKILLS = 100;              // Prevent unbounded growth
 const COMMITMENT_EXPIRE_MS = 24 * 60 * 60 * 1000; // 24h default
 
+// M4: Self-Reflection Constants
+const INTROSPECT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const PARAM_ADJUST_RATE = 0.05;               // Conservative learning rate
+const MIN_OUTCOMES_FOR_ADJUST = 10;
+const MAX_OUTCOMES = 50;
+const DEFAULT_LAMBDA = 0.3;
+const DEFAULT_BETA = 0.2;
+
+function clampFinite(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
 class IdentityStore {
   constructor(state) {
     this.state = state;
@@ -22,6 +36,16 @@ class IdentityStore {
 
     // Last decay timestamp
     this.lastDecayAt = saved.lastDecayAt || Date.now();
+
+    // M4: Adaptive parameters and introspection state
+    this.adaptiveParams = {
+      lambda: clampFinite(saved.adaptiveParams?.lambda, 0.1, 0.5, DEFAULT_LAMBDA),
+      beta: clampFinite(saved.adaptiveParams?.beta, 0.1, 0.4, DEFAULT_BETA)
+    };
+    this.lastIntrospect = saved.lastIntrospect || 0;
+    this.recentOutcomes = Array.isArray(saved.recentOutcomes)
+      ? saved.recentOutcomes.slice(-MAX_OUTCOMES)
+      : [];
   }
 
   // === M2.1: Skill Statistics ===
@@ -227,13 +251,22 @@ class IdentityStore {
 
   // === M2.5: Policy Scoring ===
 
-  scoreAction(action, baseValue = 1.0, lambda = 0.3, beta = 0.2) {
+  scoreAction(action, baseValue = 1.0, lambda = null, beta = null) {
+    const safeBaseValue = Number.isFinite(baseValue) ? baseValue : 1.0;
+    const effectiveLambda = clampFinite(
+      lambda ?? this.adaptiveParams.lambda, 0.1, 0.5, DEFAULT_LAMBDA
+    );
+    const effectiveBeta = clampFinite(
+      beta ?? this.adaptiveParams.beta, 0.1, 0.4, DEFAULT_BETA
+    );
+
     const penalty = this.identityPenalty(action);
     const agency = this.expectedAgency(action);
 
     // Check pending commitments related to this action
     const pending = this.getPendingCommitments();
-    const actionLower = action.toLowerCase();
+    const actionStr = String(action || '');
+    const actionLower = actionStr.toLowerCase();
     const hasRelatedCommitment = pending.some(c =>
       c.action.toLowerCase() === actionLower
     );
@@ -242,15 +275,15 @@ class IdentityStore {
     const commitmentBonus = hasRelatedCommitment ? 0.3 : 0;
 
     // Score(a) = Value(a) - λ·IdentityPenalty(a) + β·ExpectedAgency(a) + commitmentBonus
-    const score = baseValue - lambda * penalty + beta * agency + commitmentBonus;
+    const score = safeBaseValue - effectiveLambda * penalty + effectiveBeta * agency + commitmentBonus;
 
     return {
-      action,
+      action: actionStr,
       score,
       components: {
-        baseValue,
-        penalty: -lambda * penalty,
-        agency: beta * agency,
+        baseValue: safeBaseValue,
+        penalty: -effectiveLambda * penalty,
+        agency: effectiveBeta * agency,
         commitment: commitmentBonus
       }
     };
@@ -302,6 +335,98 @@ class IdentityStore {
     return lines.length ? '身份画像: ' + lines.join(' | ') : '';
   }
 
+  // === M4: Self-Reflection ===
+
+  recordDecisionOutcome(action, predictedScore, actualSuccess) {
+    if (!action) return;
+    this.recentOutcomes.push({
+      action: String(action).toLowerCase(),
+      predictedScore: Number.isFinite(predictedScore) ? predictedScore : 0.5,
+      actualSuccess: Boolean(actualSuccess),
+      timestamp: Date.now()
+    });
+    if (this.recentOutcomes.length > MAX_OUTCOMES) {
+      this.recentOutcomes.shift();
+    }
+    this._persist();
+  }
+
+  introspect() {
+    const now = Date.now();
+    if (now - this.lastIntrospect < INTROSPECT_INTERVAL_MS) return null;
+    if (this.recentOutcomes.length < MIN_OUTCOMES_FOR_ADJUST) return null;
+
+    const analysis = this._analyzePerformance();
+    const adjustments = this._computeAdjustments(analysis);
+
+    // Apply bounded adjustments
+    this.adaptiveParams.lambda = clampFinite(
+      this.adaptiveParams.lambda + adjustments.deltaLambda,
+      0.1, 0.5, DEFAULT_LAMBDA
+    );
+    this.adaptiveParams.beta = clampFinite(
+      this.adaptiveParams.beta + adjustments.deltaBeta,
+      0.1, 0.4, DEFAULT_BETA
+    );
+
+    this.lastIntrospect = now;
+    this._persist();
+
+    return { analysis, adjustments, params: { ...this.adaptiveParams } };
+  }
+
+  _analyzePerformance() {
+    const outcomes = this.recentOutcomes.filter(o => Number.isFinite(o?.predictedScore));
+    const sorted = outcomes.slice().sort((a, b) => a.predictedScore - b.predictedScore);
+    const bandSize = Math.max(1, Math.floor(sorted.length * 0.3));
+    const lowScore = sorted.slice(0, bandSize);
+    const highScore = sorted.slice(-bandSize);
+
+    const calcRate = arr => arr.length > 0
+      ? arr.filter(o => o.actualSuccess).length / arr.length
+      : null;
+
+    return {
+      totalOutcomes: outcomes.length,
+      highScoreSuccessRate: calcRate(highScore),
+      lowScoreSuccessRate: calcRate(lowScore),
+      overallSuccessRate: calcRate(outcomes)
+    };
+  }
+
+  _computeAdjustments(analysis) {
+    let deltaLambda = 0;
+    let deltaBeta = 0;
+
+    // High-score actions failing often → too optimistic → increase penalty
+    if (analysis.highScoreSuccessRate !== null) {
+      if (analysis.highScoreSuccessRate < 0.6) {
+        deltaLambda += PARAM_ADJUST_RATE;
+      } else if (analysis.highScoreSuccessRate > 0.85) {
+        deltaLambda += -PARAM_ADJUST_RATE * 0.5;
+      }
+    }
+
+    // Low-score actions succeeding often → too cautious → decrease penalty
+    if (analysis.lowScoreSuccessRate !== null && analysis.lowScoreSuccessRate > 0.5) {
+      deltaLambda += -PARAM_ADJUST_RATE;
+    }
+
+    // Adjust beta based on overall success stability (subtle)
+    if (analysis.overallSuccessRate !== null) {
+      const deviation = Math.abs(analysis.overallSuccessRate - 0.7);
+      if (deviation > 0.2) {
+        deltaBeta += deviation > 0.3 ? PARAM_ADJUST_RATE * 0.5 : 0;
+      }
+    }
+
+    return { deltaLambda, deltaBeta };
+  }
+
+  getAdaptiveParams() {
+    return { ...this.adaptiveParams };
+  }
+
   // === Internal ===
 
   _pruneSkills() {
@@ -346,7 +471,11 @@ class IdentityStore {
     this.state.minimalSelf.identity = {
       skills: Array.from(this.skills.entries()),
       commitments: this.commitments,
-      lastDecayAt: this.lastDecayAt
+      lastDecayAt: this.lastDecayAt,
+      // M4: Persist adaptive state
+      adaptiveParams: this.adaptiveParams,
+      lastIntrospect: this.lastIntrospect,
+      recentOutcomes: this.recentOutcomes
     };
   }
 
@@ -354,7 +483,10 @@ class IdentityStore {
     return {
       skillsTracked: this.skills.size,
       commitments: this.getCommitmentStats(),
-      profile: this.getSkillProfile()
+      profile: this.getSkillProfile(),
+      // M4: Include adaptive params
+      adaptiveParams: { ...this.adaptiveParams },
+      recentOutcomesCount: this.recentOutcomes.length
     };
   }
 }
