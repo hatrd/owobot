@@ -3,11 +3,13 @@
 
 const MIN_COOLDOWN = 120000;    // 2 min
 const MAX_COOLDOWN = 3600000;   // 1 hour
+const MIN_GLOBAL_TRIGGER_GAP = 30000; // 30s between any triggers
 
-const BOREDOM_RATE = 0.001;     // /sec
-const CURIOSITY_SPIKE = 0.2;    // per new entity
-const EXISTENTIAL_RATE = 0.0005; // /sec
-const SOCIAL_RATE = 0.002;      // /sec
+const BOREDOM_RATE = 0.002;     // /sec (doubled: ~5min to reach 0.6)
+const CURIOSITY_SPIKE = 0.25;   // per new entity (slightly higher)
+const EXISTENTIAL_RATE = 0.001; // /sec (doubled for faster identity questioning)
+const SOCIAL_RATE = 0.003;      // /sec (increased for more social initiative)
+const DECAY_RATE = 0.001;       // /sec (halved: slower decay to let drives accumulate)
 
 function clamp01(x) {
   const n = Number(x);
@@ -23,10 +25,10 @@ function clampFinite(x, lo, hi, fallback) {
 
 function defaultDriveState() {
   return {
-    curiosity: { level: 0.0, threshold: 0.7, lastTrigger: null, cooldown: 600000 },
-    boredom: { level: 0.0, threshold: 0.6, lastTrigger: null, cooldown: 900000 },
-    existential: { level: 0.0, threshold: 0.8, lastTrigger: null, cooldown: 1800000 },
-    social: { level: 0.0, threshold: 0.5, lastTrigger: null, cooldown: 300000 }
+    curiosity: { level: 0.0, threshold: 0.55, lastTrigger: null, cooldown: 300000 },   // 5min CD
+    boredom: { level: 0.0, threshold: 0.45, lastTrigger: null, cooldown: 600000 },     // 10min CD
+    existential: { level: 0.0, threshold: 0.65, lastTrigger: null, cooldown: 1200000 }, // 20min CD
+    social: { level: 0.0, threshold: 0.40, lastTrigger: null, cooldown: 180000 }        // 3min CD
   };
 }
 
@@ -44,6 +46,8 @@ function ensureDriveState(root) {
     }
   }
   if (!Number.isFinite(Number(root.lastTickAt))) root.lastTickAt = 0;
+  if (!Number.isFinite(Number(root.lastAnyTriggerAt))) root.lastAnyTriggerAt = 0;
+  if (!Number.isFinite(Number(root.lastFeedbackAt))) root.lastFeedbackAt = 0;
   if (!Array.isArray(root._processedWindows)) root._processedWindows = [];
   if (!root._seen || typeof root._seen !== 'object') root._seen = {};
   if (!Array.isArray(root._seen.nearPlayers)) root._seen.nearPlayers = [];
@@ -169,12 +173,20 @@ class DriveEngine {
       : [];
     const nearbyCount = nearPlayers.length;
 
+    // Fallback: server online players for social drive
+    const onlinePlayers = Array.isArray(context.onlinePlayers) ? context.onlinePlayers : [];
+    const hasOnline = onlinePlayers.length > 0;
+
+    // Active chat detection: strong trigger condition
+    const hasActiveChat = timeSinceChat < 60;    // Player chatted within 1min
+    const hasRecentChat = timeSinceChat < 300;   // Player chatted within 5min
+
     // Activity proxy: recent chat reduces boredom/social accumulation
     const recentChatFactor = timeSinceChat === Infinity ? 1 : clamp01(timeSinceChat / 120);
     const recentActivity = 1 - recentChatFactor;
 
-    // Gentle decay to avoid saturation (0.2%/sec instead of 6%/sec)
-    const decay = Math.exp(-0.002 * dt);
+    // Gentle decay to avoid saturation (using DECAY_RATE constant)
+    const decay = Math.exp(-DECAY_RATE * dt);
     for (const rec of Object.values(this.drives)) {
       rec.level = clamp01(Number(rec.level) * decay);
     }
@@ -189,8 +201,16 @@ class DriveEngine {
       this.drives.existential.level + dt * EXISTENTIAL_RATE * (1 - identityConfidence)
     );
 
-    // Social: players nearby but no recent chat
-    if (nearbyCount > 0 && timeSinceChat > 30) {
+    // Social: tiered accumulation based on chat activity
+    // Active chat = strongest trigger (player is talking to bot NOW)
+    if (hasActiveChat) {
+      // 5x rate when player actively chatting - this is the "very strong trigger"
+      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * 5);
+    } else if (hasRecentChat && (nearbyCount > 0 || hasOnline)) {
+      // 2x rate when recent chat + players available
+      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * 2);
+    } else if ((nearbyCount > 0 || hasOnline) && timeSinceChat > 30) {
+      // Normal rate: players exist but no recent chat
       this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE);
     }
 
@@ -225,20 +245,39 @@ class DriveEngine {
     const gatingBusy = Boolean(context.currentAction) || Boolean(context.externalBusy);
     if (gatingBusy) return null;
 
+    // Global trigger gap: prevent rapid-fire triggers
+    const lastAny = this.root.lastAnyTriggerAt || 0;
+    if ((nowTs - lastAny) < MIN_GLOBAL_TRIGGER_GAP) return null;
+
     const snap = context.snapshot || null;
     const nearPlayers = Array.isArray(snap?.nearby?.players) ? snap.nearby.players : [];
     const hasNearby = nearPlayers.length > 0;
+
+    // Fallback: use server online players if no nearby players
+    const onlinePlayers = Array.isArray(context.onlinePlayers) ? context.onlinePlayers : [];
+    const hasOnline = onlinePlayers.length > 0;
+
     const lastSpeaker = getLastPlayerSpeaker(this.state);
     const timeSinceChat = timeSinceLastPlayerChatSec(this.state, nowTs);
     const hasRecentSpeaker = Boolean(lastSpeaker) && timeSinceChat < 10 * 60;
 
-    // Don't trigger if no one to talk to
-    if (!hasNearby && !hasRecentSpeaker) return null;
+    // Active chat: player chatted within 60s - strong trigger condition
+    const hasActiveChat = Boolean(lastSpeaker) && timeSinceChat < 60;
+
+    // Relaxed condition: trigger if ANY of these is true:
+    // 1. Players nearby (16 blocks)
+    // 2. Recent speaker within 10 minutes
+    // 3. Server has online players (fallback for survival servers)
+    if (!hasNearby && !hasRecentSpeaker && !hasOnline) return null;
 
     let best = null;
     for (const [type, rec] of Object.entries(this.drives)) {
       const level = clamp01(rec.level);
-      const threshold = clampFinite(rec.threshold, 0.2, 0.98, 0.7);
+      let threshold = clampFinite(rec.threshold, 0.2, 0.98, 0.7);
+
+      // Active chat lowers threshold by 30% for social drive only
+      if (hasActiveChat && type === 'social') threshold *= 0.7;
+
       if (level < threshold) continue;
       if (!this._cooldownReady(type, nowTs)) continue;
       const ratio = threshold > 0 ? level / threshold : 0;
@@ -301,6 +340,8 @@ class DriveEngine {
       d.threshold = clampFinite(Math.min(0.95, d.threshold * 1.35), 0.2, 0.98, d.threshold);
       d.cooldown = clampFinite(d.cooldown * 1.8, MIN_COOLDOWN, MAX_COOLDOWN, d.cooldown);
     }
+
+    this.root.lastFeedbackAt = this.now();
   }
 
   _applyFeedbackFromRefs() {
@@ -361,6 +402,7 @@ class DriveEngine {
       null;
 
     this.drives[type].lastTrigger = nowTs;
+    this.root.lastAnyTriggerAt = nowTs;
     // Lower level after triggering to avoid immediate re-trigger
     this.drives[type].level = clamp01(this.drives[type].level * 0.35);
     this.root.lastTickAt = nowTs;

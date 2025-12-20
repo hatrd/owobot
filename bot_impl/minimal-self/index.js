@@ -184,13 +184,26 @@ class MinimalSelf {
         const narrativePart = this.narrative.buildNarrativeContext();
         const identityContext = [identityPart, narrativePart].filter(Boolean).join(' | ');
 
+        // Collect online players from bot.players (Mineflayer API)
+        const onlinePlayers = (() => {
+          try {
+            const players = this.bot?.players;
+            if (!players || typeof players !== 'object') return [];
+            const botName = this.bot?.username || '';
+            return Object.keys(players)
+              .filter(n => n && n !== botName)
+              .map(n => ({ name: n }));
+          } catch { return []; }
+        })();
+
         const trigger = this.drive.tick(dt, {
           snapshot: snap,
           identityContext,
           identityStats: this.identity.getStats(),
           currentAction: this.currentAction,
           externalBusy: this.state.externalBusy,
-          lastActionEnd: this.lastActionEnd
+          lastActionEnd: this.lastActionEnd,
+          onlinePlayers
         });
 
         if (trigger?.message) {
