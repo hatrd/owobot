@@ -17,12 +17,8 @@
 
 ## AI 协作
 - 提供上下文时遵循“切片”思维：只给模型必要的输入，避免堆 dump。
-- 搜索或对齐代码背景优先用 `acemcp` 给出聚焦片段，用引用替代表述，为后续自动化留出空间。
+- 搜索或对齐代码背景优先用 `auggie` 给出聚焦片段，用引用替代表述，为后续自动化留出空间。
 - 技术细节、热重载模板等全部收录在 `docs/`，在这里只保留原则。当前必读：`docs/hot-reload.md`。
-
-## MCP Rules
-
-Tool Selection: Choose the most appropriate MCP service based on the task intent; avoid unnecessary calls. If you need search_code, use acemcp first!
 
 ## customModes
 ### linus-review
