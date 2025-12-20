@@ -59,6 +59,19 @@ const COMMAND_PREFIXES = ['.', '/', '!', ':']
 function createTracker (bot, state, log) {
   const sessions = state.playerStats.activeSessions
 
+  function normalizeSession (session, name) {
+    const now = Date.now()
+    if (!session || typeof session !== 'object') return null
+    if (name && !session.name) session.name = name
+    if (!Number.isFinite(session.joinedAt)) session.joinedAt = now
+    if (!Number.isFinite(session.sessionStartedAt)) session.sessionStartedAt = session.joinedAt
+    if (!Number.isFinite(session.messages)) session.messages = 0
+    if (!Number.isFinite(session.deaths)) session.deaths = 0
+    if (!Number.isFinite(session.totalMessages)) session.totalMessages = session.messages
+    if (!Number.isFinite(session.totalDeaths)) session.totalDeaths = session.deaths
+    return session
+  }
+
   function resolveUUID (player) {
     if (!player) return null
     if (typeof player === 'string') {
@@ -81,15 +94,26 @@ function createTracker (bot, state, log) {
       if (!uuid || !name) return
       if (name === bot.username) return
 
+      const existing = sessions.get(uuid)
+      if (existing) {
+        const normalized = normalizeSession(existing, name)
+        if (normalized) normalized.name = name
+        return
+      }
+
       // Create or update player data file
       dm.getOrCreatePlayerData(uuid, name)
 
       // Start session tracking
+      const now = Date.now()
       sessions.set(uuid, {
         name,
-        joinedAt: Date.now(),
+        joinedAt: now, // last segment start (since last flush)
+        sessionStartedAt: now, // stable for the whole online session
         messages: 0,
-        deaths: 0
+        deaths: 0,
+        totalMessages: 0,
+        totalDeaths: 0
       })
 
       if (log?.info) log.info(`[STATS] Player joined: ${name} (${uuid})`)
@@ -107,19 +131,22 @@ function createTracker (bot, state, log) {
 
       const session = sessions.get(uuid)
       if (!session) return
+      const normalized = normalizeSession(session, name)
+      if (!normalized) return
 
-      // Calculate session duration
-      const duration = Date.now() - session.joinedAt
+      const now = Date.now()
+      const segmentDuration = Math.max(0, now - normalized.joinedAt)
+      const totalDuration = Math.max(0, now - normalized.sessionStartedAt)
 
       // Persist to file
-      persistSession(uuid, session.name, duration, session.messages, session.deaths)
+      persistSession(uuid, normalized.name || name, segmentDuration, normalized.messages, normalized.deaths)
 
       // Remove session
       sessions.delete(uuid)
 
       if (log?.info) {
-        const mins = Math.floor(duration / 60000)
-        log.info(`[STATS] Player left: ${name} (online ${mins}m, ${session.messages} msgs, ${session.deaths} deaths)`)
+        const mins = Math.floor(totalDuration / 60000)
+        log.info(`[STATS] Player left: ${name || normalized.name} (online ${mins}m, ${normalized.totalMessages} msgs, ${normalized.totalDeaths} deaths)`)
       }
     } catch (err) {
       if (log?.warn) log.warn('[STATS] onPlayerLeave error:', err?.message || err)
@@ -173,7 +200,10 @@ function createTracker (bot, state, log) {
 
       const session = sessions.get(uuid)
       if (session) {
-        session.messages++
+        const normalized = normalizeSession(session, username)
+        if (!normalized) return
+        normalized.messages++
+        normalized.totalMessages++
       } else {
         // Player not in active session, update file directly
         const data = dm.findPlayerByName(username)
@@ -221,7 +251,10 @@ function createTracker (bot, state, log) {
           if (uuid) {
             const session = sessions.get(uuid)
             if (session) {
-              session.deaths++
+              const normalized = normalizeSession(session, deadPlayer)
+              if (!normalized) return
+              normalized.deaths++
+              normalized.totalDeaths++
               if (log?.info) log.info(`[STATS] Death detected: ${deadPlayer}`)
             } else {
               // Update file directly
@@ -247,19 +280,24 @@ function createTracker (bot, state, log) {
     }
   }
 
-  function flushAll () {
+  function flushAll (opts = {}) {
     try {
       const now = Date.now()
+      const before = sessions.size
       for (const [uuid, session] of sessions.entries()) {
-        const duration = now - session.joinedAt
-        persistSession(uuid, session.name, duration, session.messages, session.deaths)
-        // Reset session counters but keep joinedAt as now
-        session.joinedAt = now
-        session.messages = 0
-        session.deaths = 0
+        const normalized = normalizeSession(session, session?.name)
+        if (!normalized) continue
+        const duration = Math.max(0, now - normalized.joinedAt)
+        persistSession(uuid, normalized.name, duration, normalized.messages, normalized.deaths)
+        if (opts.clear === true) continue
+        // Reset segment counters but keep session totals
+        normalized.joinedAt = now
+        normalized.messages = 0
+        normalized.deaths = 0
       }
       state.playerStats.lastFlushAt = now
-      if (log?.info) log.info(`[STATS] Flushed ${sessions.size} active sessions`)
+      if (opts.clear === true) sessions.clear()
+      if (log?.info) log.info(`[STATS] Flushed ${before} active sessions`)
     } catch (err) {
       if (log?.warn) log.warn('[STATS] flushAll error:', err?.message || err)
     }
@@ -274,12 +312,20 @@ function createTracker (bot, state, log) {
         if (!uuid) continue
         if (!sessions.has(uuid)) {
           dm.getOrCreatePlayerData(uuid, name)
+          const now = Date.now()
           sessions.set(uuid, {
             name,
-            joinedAt: Date.now(),
+            joinedAt: now,
+            sessionStartedAt: now,
             messages: 0,
-            deaths: 0
+            deaths: 0,
+            totalMessages: 0,
+            totalDeaths: 0
           })
+        } else {
+          const session = sessions.get(uuid)
+          const normalized = normalizeSession(session, name)
+          if (normalized) normalized.name = name
         }
       }
       if (log?.info) log.info(`[STATS] Initialized ${sessions.size} existing players`)

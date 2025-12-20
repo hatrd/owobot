@@ -299,7 +299,7 @@ function install (bot, { on, state, registerCleanup, log }) {
 
   // Flush on disconnect
   on('end', () => {
-    tracker.flushAll()
+    tracker.flushAll({ clear: true })
   })
 
   if (log?.info) log.info('[STATS] Player stats module installed')
