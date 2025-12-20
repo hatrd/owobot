@@ -6,6 +6,7 @@ const { encode } = require('./state-encode');
 const { WorldModel, NOOP } = require('./world-model');
 const { computeAgency, agencyLevel } = require('./attribution');
 const { IdentityStore } = require('./identity');
+const { NarrativeMemory } = require('./narrative');
 
 const NOOP_INTERVAL = 5000; // ms between NoOp baseline samples
 const MIN_IDLE_TIME = 2000; // ms of idle before NoOp learning
@@ -23,6 +24,9 @@ class MinimalSelf {
 
     // M2: Identity Store
     this.identity = new IdentityStore(state);
+
+    // M3: Narrative Memory
+    this.narrative = new NarrativeMemory(state, this.identity);
 
     // Action tracking
     this.currentAction = null;
@@ -195,7 +199,8 @@ class MinimalSelf {
       worldModel: this.W.getStats(),
       agencyHistory: this.agencyHistory.length,
       avgAgency: this._avgAgency(),
-      identity: this.identity.getStats()
+      identity: this.identity.getStats(),
+      narrative: this.narrative.getStats()
     };
   }
 
@@ -231,11 +236,25 @@ class MinimalSelf {
   }
 
   buildIdentityContext() {
-    return this.identity.buildIdentityContext();
+    // Combine identity profile with narrative memory
+    const identityPart = this.identity.buildIdentityContext();
+    const narrativePart = this.narrative.buildNarrativeContext();
+
+    const parts = [identityPart, narrativePart].filter(Boolean);
+    return parts.join(' | ');
   }
 
   scoreAction(action, baseValue = 1.0) {
     return this.identity.scoreAction(action, baseValue);
+  }
+
+  // M3: Narrative API
+  getNarrative() {
+    return this.narrative;
+  }
+
+  refreshNarrative() {
+    return this.narrative.refresh();
   }
 }
 
