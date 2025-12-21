@@ -76,11 +76,15 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
   // 修剪过期窗口
   function pruneWindows () {
     ensureState()
-    const cutoff = now() - IGNORE_WINDOW_MS
+    const nowTs = now()
+    const resolveCutoff = nowTs - FEEDBACK_WINDOW_MS
+    const deleteCutoff = nowTs - IGNORE_WINDOW_MS
     const windows = state.aiFeedback.windows
     for (const [id, win] of windows.entries()) {
-      if (win.timestamp < cutoff || win.resolved) {
-        if (!win.resolved) resolveWindow(id)
+      if (!win.resolved && win.timestamp < resolveCutoff) {
+        resolveWindow(id)
+      }
+      if (win.resolved || win.timestamp < deleteCutoff) {
         windows.delete(id)
       }
     }
@@ -111,7 +115,6 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
     ensureState()
     const windows = state.aiFeedback.windows
     const signals = detectSignals(text)
-    if (!signals.length) return null
 
     // 查找该用户最近的未解析窗口
     let targetWindow = null
@@ -124,8 +127,16 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
     }
 
     if (!targetWindow) {
-      debug('no active window for', username, 'signals:', signals.map(s => s.type).join(','))
+      if (signals.length) debug('no active window for', username, 'signals:', signals.map(s => s.type).join(','))
       return null
+    }
+
+    // 如果没有显式信号，把持续聊天视为参与，避免被误记为忽视
+    if (!signals.length) {
+      const engagementText = String(text || '').slice(0, 100)
+      const engagement = { type: 'ENGAGEMENT', weight: 0.6, timestamp: currentTime, text: engagementText }
+      targetWindow.signals.push(engagement)
+      return { windowId: targetWindow.id, signals: [engagement] }
     }
 
     // 记录信号到窗口
@@ -209,6 +220,7 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
     }
 
     info('window resolved:', windowId, 'score:', averageScore.toFixed(2), isPositive ? '(+)' : isNegative ? '(-)' : '(~)')
+    persistState()
     return signalRecord
   }
 

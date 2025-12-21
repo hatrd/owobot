@@ -128,6 +128,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // REFS: 创建反馈收集器
   const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore })
 
+  // 定时刷新反馈窗口，防止无新消息时反馈卡住
+  const feedbackTimer = setInterval(() => {
+    try { feedbackCollector.tick() } catch {}
+  }, 10000)
+
   // REFS: 创建上下文总线
   const contextBus = createContextBus({ state, now })
 
@@ -497,6 +502,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { bot.off('move', onMove) } catch {}
     try { bot.off('entityHurt', onEntityHurt) } catch {}
     try { bot.off('explosion', onExplosion) } catch {}
+    try { clearInterval(feedbackTimer) } catch {}
     try { clearInterval(decayTimer) } catch {}
     pulse.stop()
     introspection.stop()
