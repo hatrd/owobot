@@ -185,15 +185,21 @@ class DriveEngine {
     const recentChatFactor = timeSinceChat === Infinity ? 1 : clamp01(timeSinceChat / 120);
     const recentActivity = 1 - recentChatFactor;
 
+    // Busy factor: reduce accumulation when actively executing tasks
+    const pending = Array.isArray(context.pendingCommitments) ? context.pendingCommitments : [];
+    const hasPathfinderGoal = Boolean(context.hasPathfinderGoal);
+    const hasPendingCommitments = pending.length > 0;
+    const busyFactor = (hasPathfinderGoal || hasPendingCommitments) ? 0.2 : 1.0;
+
     // Gentle decay to avoid saturation (using DECAY_RATE constant)
     const decay = Math.exp(-DECAY_RATE * dt);
     for (const rec of Object.values(this.drives)) {
       rec.level = clamp01(Number(rec.level) * decay);
     }
 
-    // Boredom: grows when no interactions
+    // Boredom: grows when no interactions (suppressed when busy)
     this.drives.boredom.level = clamp01(
-      this.drives.boredom.level + dt * BOREDOM_RATE * (1 - recentActivity)
+      this.drives.boredom.level + dt * BOREDOM_RATE * (1 - recentActivity) * busyFactor
     );
 
     // Existential: grows when identity confidence is low
@@ -201,17 +207,17 @@ class DriveEngine {
       this.drives.existential.level + dt * EXISTENTIAL_RATE * (1 - identityConfidence)
     );
 
-    // Social: tiered accumulation based on chat activity
+    // Social: tiered accumulation based on chat activity (suppressed when busy)
     // Active chat = strongest trigger (player is talking to bot NOW)
     if (hasActiveChat) {
       // 5x rate when player actively chatting - this is the "very strong trigger"
-      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * 5);
+      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * 5 * busyFactor);
     } else if (hasRecentChat && (nearbyCount > 0 || hasOnline)) {
       // 2x rate when recent chat + players available
-      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * 2);
+      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * 2 * busyFactor);
     } else if ((nearbyCount > 0 || hasOnline) && timeSinceChat > 30) {
       // Normal rate: players exist but no recent chat
-      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE);
+      this.drives.social.level = clamp01(this.drives.social.level + dt * SOCIAL_RATE * busyFactor);
     }
 
     // Curiosity: spikes on new nearby players
@@ -244,6 +250,15 @@ class DriveEngine {
     const nowTs = this.now();
     const gatingBusy = Boolean(context.currentAction) || Boolean(context.externalBusy);
     if (gatingBusy) return null;
+
+    // Gate on active pathfinder goal (movement in progress)
+    if (context.hasPathfinderGoal) return null;
+
+    // Gate on recent pending commitments (within 5 minutes of creation)
+    const pending = Array.isArray(context.pendingCommitments) ? context.pendingCommitments : [];
+    const recentCommitmentCutoff = nowTs - 5 * 60 * 1000;
+    const hasRecentCommitment = pending.some(c => c.createdAt && c.createdAt > recentCommitmentCutoff);
+    if (hasRecentCommitment) return null;
 
     // Global trigger gap: prevent rapid-fire triggers
     const lastAny = this.root.lastAnyTriggerAt || 0;
@@ -291,6 +306,10 @@ class DriveEngine {
     const idCtx = String(identityContext || '');
 
     if (type === 'boredom') {
+      // Context-aware: if commitments exist, use task-relevant message
+      if (/待完成承诺:/.test(idCtx)) {
+        return '我正在执行任务中…还有什么需要我做的吗？';
+      }
       if (!idCtx) return '有人在吗？我有点无聊…我该做点什么？';
       if (/擅长:/.test(idCtx) && !/学习中:/.test(idCtx)) return '我有点无聊…要不要给我一个小目标？';
       return '有人在吗？我有点无聊…';

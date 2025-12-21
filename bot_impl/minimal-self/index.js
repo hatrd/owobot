@@ -196,6 +196,11 @@ class MinimalSelf {
           } catch { return []; }
         })();
 
+        // Detect pathfinder movement state
+        const hasPathfinderGoal = !!(this.bot.pathfinder && this.bot.pathfinder.goal);
+        // Get pending commitments for drive gating
+        const pendingCommitments = this.identity.getPendingCommitments();
+
         const trigger = this.drive.tick(dt, {
           snapshot: snap,
           identityContext,
@@ -203,7 +208,9 @@ class MinimalSelf {
           currentAction: this.currentAction,
           externalBusy: this.state.externalBusy,
           lastActionEnd: this.lastActionEnd,
-          onlinePlayers
+          onlinePlayers,
+          hasPathfinderGoal,
+          pendingCommitments
         });
 
         if (trigger?.message) {

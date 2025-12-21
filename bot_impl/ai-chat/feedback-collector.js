@@ -14,6 +14,15 @@ const REACTION_SIGNALS = {
   AFFECTION: { weight: 1.5, patterns: [/喜欢|可爱|萌|cute|love|❤|好喜欢|太可爱/i] },
   LAUGHTER: { weight: 1.0, patterns: [/哈哈|233|lol|haha|笑死|绝了|乐/i] },
   AGREEMENT: { weight: 0.8, patterns: [/对|是的|没错|确实|exactly|yes|yep|嗯嗯/i] },
+  // 任务给予信号（中性偏正面，表示玩家在互动）
+  // Use word boundaries for English tokens to avoid false positives like "good"/"target"/"welcome".
+  TASK_GIVEN: {
+    weight: 0.5,
+    patterns: [
+      /帮我|给我|去|来|过来|跟我|找|拿|挖|采|砍|建|做|收集/i,
+      /\b(?:gather|get|go|come|find|mine|chop|build)\b/i
+    ]
+  },
   // 负面信号
   FRUSTRATION: { weight: -2.0, patterns: [/烦|别|停|闭嘴|shut up|stop|annoying|够了|滚|别说了/i] },
   CORRECTION: { weight: -1.0, patterns: [/不对|错了|wrong|不是|no that|瞎说|胡说/i] },
