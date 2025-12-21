@@ -3,6 +3,7 @@ const DEFAULT_MAX_ENTRIES = 200
 const DEFAULT_WINDOW_SEC = 24 * 60 * 60
 const STACK_WINDOW_MS = 5000
 const EVENT_DATA_MAX = 100
+const NUMERIC_STACK_EVENTS = ['heal']
 
 function createContextBus ({ state, now = () => Date.now() }) {
   function ensureStore () {
@@ -82,6 +83,35 @@ function createContextBus ({ state, now = () => Date.now() }) {
     return `${b}${suffix}`
   }
 
+  function isNumericStackEvent (eventType) {
+    if (!eventType) return false
+    return NUMERIC_STACK_EVENTS.includes(eventType) || /^hurt\./.test(eventType)
+  }
+
+  function parseNumericEvent (data) {
+    const str = String(data ?? '').slice(0, EVENT_DATA_MAX)
+    const m = str.match(/^(.+?):([+-]?\d+(?:\.\d+)?)(?:x(\d+))?$/)
+    if (!m) return null
+    const subject = String(m[1] ?? '').trim()
+    const amount = Number(m[2])
+    const count = Math.max(1, Math.floor(m[3] ? Number(m[3]) : 1))
+    if (!subject || !Number.isFinite(amount) || !Number.isFinite(count)) return null
+    return { subject, amount, count, total: amount * count }
+  }
+
+  function formatNumericTotal (subject, total) {
+    if (!subject || !Number.isFinite(total)) return ''
+    const rounded = Math.round(total * 10) / 10
+    const safe = Math.abs(rounded) < 1e-6 ? 0 : rounded
+    const body = Math.abs(safe) === Math.floor(Math.abs(safe))
+      ? String(Math.abs(safe))
+      : Math.abs(safe).toFixed(1)
+    const signed = safe > 0 ? `+${body}` : safe < 0 ? `-${body}` : '0'
+    const maxSubjectLen = Math.max(0, EVENT_DATA_MAX - signed.length - 1)
+    const trimmedSubject = String(subject ?? '').slice(0, maxSubjectLen)
+    return `${trimmedSubject}:${signed}`
+  }
+
   function tryStackEvent (eventType, data) {
     const store = ensureStore()
     if (!store.length) return null
@@ -90,6 +120,21 @@ function createContextBus ({ state, now = () => Date.now() }) {
     const nowTs = now()
     if (!Number.isFinite(last.t) || (nowTs - last.t) > STACK_WINDOW_MS) return null
     if (String(last.payload.eventType || '') !== String(eventType || '')) return null
+
+    if (isNumericStackEvent(eventType)) {
+      const prev = parseNumericEvent(last.payload.data)
+      const next = parseNumericEvent(data)
+      if (prev && next && prev.subject === next.subject) {
+        const mergedTotal = prev.total + next.total
+        const merged = formatNumericTotal(prev.subject, mergedTotal)
+        if (merged) {
+          last.payload.data = merged
+          last.t = nowTs
+          return last
+        }
+      }
+    }
+
     const prev = parseStackKey(eventType, last.payload.data)
     const next = parseStackKey(eventType, data)
     if (prev.base !== next.base) return null

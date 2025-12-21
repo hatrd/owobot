@@ -8,6 +8,7 @@ const ACTIVE_CHAT_WINDOW_MS = 60 * 1000
 const ACTIVE_FOLLOW_DELAY_MS = 5 * 1000
 const PLAYER_CHAT_DEDUPE_MS = 1200
 const CHAT_EVENT_DEDUPE_MS = 250
+const DEATHCHEST_DEDUPE_MS = 8000
 
 function createPulseService ({
   state,
@@ -327,6 +328,56 @@ function createPulseService ({
     } catch {
       return ''
     }
+  }
+
+  function normalizeDeathChestText (text) {
+    return stripMcFormatting(text).replace(/\s+/g, ' ').trim()
+  }
+
+  function ensureDeathChestSeen () {
+    if (!state.aiPulse) state.aiPulse = {}
+    if (!(state.aiPulse.deathChestSeen instanceof Map)) state.aiPulse.deathChestSeen = new Map()
+    return state.aiPulse.deathChestSeen
+  }
+
+  function markDeathChestSeen (text) {
+    try {
+      const store = ensureDeathChestSeen()
+      const ts = now()
+      store.set(text, ts)
+      const cutoff = ts - DEATHCHEST_DEDUPE_MS
+      for (const [msg, seen] of store.entries()) {
+        if (!Number.isFinite(seen) || seen < cutoff) store.delete(msg)
+      }
+    } catch {}
+  }
+
+  function seenDeathChestRecently (text) {
+    try {
+      const store = ensureDeathChestSeen()
+      const seen = store.get(text)
+      return Number.isFinite(seen) && (now() - seen <= DEATHCHEST_DEDUPE_MS)
+    } catch {
+      return false
+    }
+  }
+
+  function handleDeathChestNotice (text, username = '') {
+    const normalized = normalizeDeathChestText(text)
+    if (!normalized) return false
+    const lower = normalized.toLowerCase()
+    const isPluginUser = String(username || '').trim().toLowerCase() === 'deathchest'
+    if (!isPluginUser && !lower.includes('deathchest')) return false
+    const canonical = normalized.replace(/^\[deathchest\]\s*/i, '')
+    const payloadText = /^\[deathchest\]/i.test(normalized) ? normalized : `[DeathChest] ${canonical}`
+    if (seenDeathChestRecently(canonical)) {
+      markDeathChestSeen(canonical)
+      return true
+    }
+    markDeathChestSeen(canonical)
+    recordEvent('death_info', payloadText)
+    if (contextBus) contextBus.pushEvent('death_info', payloadText)
+    return true
   }
 
   function parseAngleBracketPlayerChat (plain) {
@@ -716,6 +767,7 @@ function createPulseService ({
       if (!username || username === bot.username) return
       const text = String(message || '').trim()
       if (!text) return
+      if (handleDeathChestNotice(text, username)) return
       if (seenPlayerChatRecently(username, text, CHAT_EVENT_DEDUPE_MS)) return
       markPlayerChatSeen(username, text)
       pushRecentChatEntry(username, text, 'player')
@@ -802,7 +854,7 @@ function createPulseService ({
     try {
       const plain = extractPlainText(message).trim()
       if (!plain) return
-      let suppressServer = false
+      if (handleDeathChestNotice(plain)) return
       const maybePlayer = parseAngleBracketPlayerChat(plain)
       if (maybePlayer) {
         const selfName = String(bot.username || '').trim()
@@ -828,12 +880,7 @@ function createPulseService ({
           if (contextBus) contextBus.pushEvent('achievement', plain)
         }
       }
-      if (lower.startsWith('[deathchest]') && lower.includes('deathchest')) {
-        recordEvent('death_info', plain)
-        if (contextBus) contextBus.pushEvent('death_info', plain)
-        suppressServer = true // avoid duplicating as <s> when already emitted as event
-      }
-      if (contextBus && !isSelf && !suppressServer) {
+      if (contextBus && !isSelf) {
         contextBus.pushServer(plain)
       }
     } catch {}

@@ -32,3 +32,31 @@ test('context bus injects a single gap marker for inactivity >= threshold', () =
   const gapMatches = xml.match(/<g d="6m"\/>/g) || []
   assert.equal(gapMatches.length, 1)
 })
+
+test('hurt events merge and sum damage within short window', () => {
+  const state = { ai: { context: {} } }
+  let now = 0
+  const bus = createContextBus({ state, now: () => now })
+  bus.pushEvent('hurt.combat', 'Rilishuibin:-1.1')
+  now += 1000
+  bus.pushEvent('hurt.combat', 'Rilishuibin:-0.5')
+  now += 1000
+  bus.pushEvent('hurt.combat', 'Rilishuibin:-0.3x2')
+  const store = bus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].payload.data, 'Rilishuibin:-2.2')
+})
+
+test('heal events merge into a single total', () => {
+  const state = { ai: { context: {} } }
+  let now = 0
+  const bus = createContextBus({ state, now: () => now })
+  bus.pushEvent('heal', 'hp:+1')
+  now += 1500
+  bus.pushEvent('heal', 'hp:+0.6x2')
+  now += 1500
+  bus.pushEvent('heal', 'hp:+1')
+  const store = bus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].payload.data, 'hp:+3.2')
+})
