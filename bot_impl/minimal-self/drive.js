@@ -1,15 +1,15 @@
 // drive.js - M5: Internal Drive System (Intrinsic Drive)
 // "Boredom and curiosity are two expressions of the same force - dissatisfaction with information entropy"
 
-const MIN_COOLDOWN = 120000;    // 2 min
-const MAX_COOLDOWN = 3600000;   // 1 hour
-const MIN_GLOBAL_TRIGGER_GAP = 30000; // 30s between any triggers
+const MIN_COOLDOWN = 180000;    // 3 min (was 2)
+const MAX_COOLDOWN = 5400000;   // 90 min
+const MIN_GLOBAL_TRIGGER_GAP = 45000; // 45s between any triggers
 
-const BOREDOM_RATE = 0.002;     // /sec (doubled: ~5min to reach 0.6)
-const CURIOSITY_SPIKE = 0.25;   // per new entity (slightly higher)
-const EXISTENTIAL_RATE = 0.001; // /sec (doubled for faster identity questioning)
-const SOCIAL_RATE = 0.003;      // /sec (increased for more social initiative)
-const DECAY_RATE = 0.001;       // /sec (halved: slower decay to let drives accumulate)
+const BOREDOM_RATE = 0.0014;     // slower accumulation
+const CURIOSITY_SPIKE = 0.2;     // slightly lower spike
+const EXISTENTIAL_RATE = 0.0008; // slower
+const SOCIAL_RATE = 0.0024;      // slower social buildup
+const DECAY_RATE = 0.0012;       // slightly faster decay to bleed off levels
 
 function clamp01(x) {
   const n = Number(x);
@@ -25,10 +25,10 @@ function clampFinite(x, lo, hi, fallback) {
 
 function defaultDriveState() {
   return {
-    curiosity: { level: 0.0, threshold: 0.55, lastTrigger: null, cooldown: 300000 },   // 5min CD
-    boredom: { level: 0.0, threshold: 0.45, lastTrigger: null, cooldown: 600000 },     // 10min CD
-    existential: { level: 0.0, threshold: 0.65, lastTrigger: null, cooldown: 1200000 }, // 20min CD
-    social: { level: 0.0, threshold: 0.40, lastTrigger: null, cooldown: 180000 }        // 3min CD
+    curiosity: { level: 0.0, threshold: 0.6, lastTrigger: null, cooldown: 420000 },   // 7min CD
+    boredom: { level: 0.0, threshold: 0.5, lastTrigger: null, cooldown: 720000 },     // 12min CD
+    existential: { level: 0.0, threshold: 0.7, lastTrigger: null, cooldown: 1500000 }, // 25min CD
+    social: { level: 0.0, threshold: 0.45, lastTrigger: null, cooldown: 270000 }        // 4.5min CD
   };
 }
 
