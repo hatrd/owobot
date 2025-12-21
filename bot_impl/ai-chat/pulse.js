@@ -7,6 +7,7 @@ const PULSE_PENDING_EXPIRE_MS = 5 * 60 * 1000
 const ACTIVE_CHAT_WINDOW_MS = 60 * 1000
 const ACTIVE_FOLLOW_DELAY_MS = 5 * 1000
 const PLAYER_CHAT_DEDUPE_MS = 1200
+const CHAT_EVENT_DEDUPE_MS = 250
 
 function createPulseService ({
   state,
@@ -351,14 +352,15 @@ function createPulseService ({
     return pulseKey(entry)
   }
 
-  function seenPlayerChatRecently (username, text) {
+  function seenPlayerChatRecently (username, text, windowMs) {
     try {
       if (!state.aiPulse) return false
       const store = ensureSeenPlayerChats()
       const key = playerChatKey(username, text)
       if (!key) return false
       const ts = store.get(key)
-      return Number.isFinite(ts) && (now() - ts <= PLAYER_CHAT_DEDUPE_MS)
+      const win = Number.isFinite(Number(windowMs)) ? Math.max(0, Math.floor(Number(windowMs))) : PLAYER_CHAT_DEDUPE_MS
+      return Number.isFinite(ts) && (now() - ts <= win)
     } catch {
       return false
     }
@@ -714,6 +716,7 @@ function createPulseService ({
       if (!username || username === bot.username) return
       const text = String(message || '').trim()
       if (!text) return
+      if (seenPlayerChatRecently(username, text, CHAT_EVENT_DEDUPE_MS)) return
       markPlayerChatSeen(username, text)
       pushRecentChatEntry(username, text, 'player')
       enqueuePulse(username, text)
@@ -803,7 +806,7 @@ function createPulseService ({
       if (maybePlayer) {
         const selfName = String(bot.username || '').trim()
         if (selfName && selfName.toLowerCase() === String(maybePlayer.name).toLowerCase()) return
-        if (seenPlayerChatRecently(maybePlayer.name, maybePlayer.content)) return
+        if (seenPlayerChatRecently(maybePlayer.name, maybePlayer.content, PLAYER_CHAT_DEDUPE_MS)) return
         captureChat(maybePlayer.name, maybePlayer.content)
         return
       }

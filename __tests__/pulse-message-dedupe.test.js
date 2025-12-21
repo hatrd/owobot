@@ -8,7 +8,10 @@ const { createContextBus } = ctxMod
 
 function makeNow () {
   let t = Date.now()
-  return () => { t += 5; return t }
+  const fn = () => t
+  fn.advance = (ms) => { t += ms; return t }
+  fn.step = (ms) => { t += ms; return t }
+  return fn
 }
 
 function makePulse () {
@@ -51,6 +54,16 @@ test('dedupe: <player> msg from system message does not duplicate chat capture',
   assert.deepEqual(store[0].payload, { name: 'kuleizi', content: '不是我干的' })
 })
 
+test('dedupe: duplicate chat events do not create two <p> entries', () => {
+  const { contextBus, pulse } = makePulse()
+  pulse.captureChat('li_log2', '我觉得是mineflayer/mindcraft的不稳定性')
+  pulse.captureChat('li_log2', '我觉得是mineflayer/mindcraft的不稳定性')
+  const store = contextBus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].type, 'player')
+  assert.deepEqual(store[0].payload, { name: 'li_log2', content: '我觉得是mineflayer/mindcraft的不稳定性' })
+})
+
 test('system message <player> msg is treated as player chat when chat event is missing', () => {
   const { state, contextBus, pulse } = makePulse()
   pulse.captureSystemMessage({ toString: () => '<kuleizi> owkowk 在哪' })
@@ -72,4 +85,3 @@ test('non chat system messages still go to server context', () => {
   assert.deepEqual(store[0].payload, { content: '登录成功！' })
   assert.equal(state.aiRecent.length, 0)
 })
-
