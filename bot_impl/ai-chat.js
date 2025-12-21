@@ -16,6 +16,7 @@ const {
   DEFAULT_BASE,
   DEFAULT_PATH,
   DEFAULT_RECENT_COUNT,
+  DEFAULT_RECENT_WINDOW_SEC,
   DEFAULT_MEMORY_STORE_MAX,
   buildDefaultContext
 } = require('./ai-chat/config')
@@ -109,7 +110,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return '' }
   }
 
-  const defaults = { DEFAULT_MODEL, DEFAULT_BASE, DEFAULT_PATH, DEFAULT_RECENT_COUNT, DEFAULT_MEMORY_STORE_MAX, buildDefaultContext }
+  const defaults = { DEFAULT_MODEL, DEFAULT_BASE, DEFAULT_PATH, DEFAULT_RECENT_COUNT, DEFAULT_RECENT_WINDOW_SEC, DEFAULT_MEMORY_STORE_MAX, buildDefaultContext }
   const memory = createMemoryService({ state, log, memoryStore, defaults, bot, traceChat, now })
   const persistedMemory = memoryStore.load()
   const persistedEvolution = memoryStore.loadEvolution()
@@ -477,6 +478,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     selectDialoguesForContext: memory.dialogue.selectForContext,
     formatDialogueEntriesForDisplay: memory.dialogue.formatEntriesForDisplay,
     DEFAULT_RECENT_COUNT,
+    DEFAULT_RECENT_WINDOW_SEC,
     rollSpendWindows,
     dayStart,
     monthStart,

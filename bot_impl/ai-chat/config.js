@@ -3,7 +3,12 @@ const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
 const DEFAULT_RECENT_COUNT = (() => {
   const raw = Number(process.env.AI_RECENT_COUNT)
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 32
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 50
+})()
+const DEFAULT_RECENT_WINDOW_SEC = (() => {
+  const raw = Number(process.env.AI_RECENT_WINDOW_SEC)
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw)
+  return 24 * 60 * 60
 })()
 const DEFAULT_MEMORY_STORE_MAX = (() => {
   const raw = Number(process.env.AI_MEMORY_STORE_MAX)
@@ -14,7 +19,7 @@ function buildDefaultContext () {
   return {
     include: true,
     recentCount: DEFAULT_RECENT_COUNT,
-    recentWindowSec: 300,
+    recentWindowSec: DEFAULT_RECENT_WINDOW_SEC,
     recentStoreMax: 200,
     game: {
       include: true,
@@ -37,6 +42,7 @@ module.exports = {
   DEFAULT_BASE,
   DEFAULT_PATH,
   DEFAULT_RECENT_COUNT,
+  DEFAULT_RECENT_WINDOW_SEC,
   DEFAULT_MEMORY_STORE_MAX,
   buildDefaultContext
 }

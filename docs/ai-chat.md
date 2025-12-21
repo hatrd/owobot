@@ -35,7 +35,7 @@
 ```javascript
 const xmlCtx = contextBus.buildXml({
   maxEntries: 50,
-  windowSec: 600,
+  windowSec: 86400, // 24h，用 gap 标记跨时段空窗
   includeGaps: true
 })
 ```

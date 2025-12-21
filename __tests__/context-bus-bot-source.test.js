@@ -21,3 +21,14 @@ test('context bus serializes LLM bot chat with f="LLM"', () => {
   assert.match(xml, /<b f="LLM">好呀<\/b>/)
 })
 
+test('context bus injects a single gap marker for inactivity >= threshold', () => {
+  const state = { ai: { context: {} } }
+  let now = 0
+  const bus = createContextBus({ state, now: () => now })
+  bus.pushServer('first')
+  now += 6 * 60 * 1000 // 6 minutes later
+  bus.pushServer('second')
+  const xml = bus.buildXml({ maxEntries: 10, windowSec: 24 * 60 * 60, gapThresholdMs: 5 * 60 * 1000 })
+  const gapMatches = xml.match(/<g d="6m"\/>/g) || []
+  assert.equal(gapMatches.length, 1)
+})

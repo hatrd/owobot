@@ -8,6 +8,7 @@ function createAiCliHandler (options = {}) {
     selectDialoguesForContext,
     formatDialogueEntriesForDisplay,
     DEFAULT_RECENT_COUNT,
+    DEFAULT_RECENT_WINDOW_SEC,
     rollSpendWindows,
     dayStart,
     monthStart,
@@ -169,16 +170,25 @@ function createAiCliHandler (options = {}) {
         }
         case 'context': {
           const k = (rest[0] || '').toLowerCase(); const v = rest[1]
-          state.ai.context = state.ai.context || { include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: 300, recentStoreMax: 200 }
+          state.ai.context = state.ai.context || {
+            include: true,
+            recentCount: DEFAULT_RECENT_COUNT,
+            recentWindowSec: DEFAULT_RECENT_WINDOW_SEC,
+            recentStoreMax: 200
+          }
           switch (k) {
             case 'on': state.ai.context.include = true; print('context include=true'); break
             case 'off': state.ai.context.include = false; print('context include=false'); break
             case 'recent':
-              state.ai.context.recentCount = Math.max(0, parseInt(v || '3', 10))
+              state.ai.context.recentCount = Math.max(0, parseInt(v || String(DEFAULT_RECENT_COUNT), 10))
               state.ai.context.userRecentOverride = true
               print('context recentCount=', state.ai.context.recentCount)
               break
-            case 'window': state.ai.context.recentWindowSec = Math.max(10, parseInt(v || '120', 10)); print('context recentWindowSec=', state.ai.context.recentWindowSec); break
+            case 'window':
+              state.ai.context.recentWindowSec = Math.max(10, parseInt(v || String(DEFAULT_RECENT_WINDOW_SEC), 10))
+              state.ai.context.userWindowOverride = true
+              print('context recentWindowSec=', state.ai.context.recentWindowSec)
+              break
             case 'recentmax': state.ai.context.recentStoreMax = Math.max(20, parseInt(v || '200', 10)); print('context recentStoreMax=', state.ai.context.recentStoreMax); break
             case 'show':
             default:

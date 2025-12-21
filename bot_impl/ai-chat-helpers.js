@@ -14,15 +14,17 @@ function trimReply (text, maxLen) {
 }
 
 function buildContextPrompt (username, recent, options = {}) {
-  const ctx = Object.assign({ include: true, recentCount: 8, recentWindowSec: 300 }, options)
+  const DEFAULT_RECENT_COUNT = 50
+  const DEFAULT_RECENT_WINDOW_SEC = 24 * 60 * 60
+  const ctx = Object.assign({ include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: DEFAULT_RECENT_WINDOW_SEC }, options)
   if (!ctx.include) return ''
   const now = Date.now()
-  const cutoff = now - (Math.max(10, (ctx.recentWindowSec || 300)) * 1000)
+  const cutoff = now - (Math.max(10, (ctx.recentWindowSec || DEFAULT_RECENT_WINDOW_SEC)) * 1000)
   const lines = (Array.isArray(recent) ? recent : [])
   const recentKept = lines
     .filter(r => (r?.t ?? cutoff) >= cutoff)
     .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
-    .slice(-(ctx.recentCount || 0))
+    .slice(-(ctx.recentCount || DEFAULT_RECENT_COUNT))
   const fmtTime = (ts) => {
     if (!Number.isFinite(ts)) return ''
     try {

@@ -1,5 +1,6 @@
 const GAP_THRESHOLD_MS = 5 * 60 * 1000
 const DEFAULT_MAX_ENTRIES = 200
+const DEFAULT_WINDOW_SEC = 24 * 60 * 60
 const STACK_WINDOW_MS = 5000
 const EVENT_DATA_MAX = 100
 
@@ -164,7 +165,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
     const nowTs = now()
     const windowSec = Number.isFinite(Number(options.windowSec))
       ? Math.max(0, Math.floor(Number(options.windowSec)))
-      : 600
+      : DEFAULT_WINDOW_SEC
     const cutoff = nowTs - windowSec * 1000
 
     const filtered = []

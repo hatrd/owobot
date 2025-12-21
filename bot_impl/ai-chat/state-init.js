@@ -48,6 +48,7 @@ function prepareAiState (state, opts = {}) {
     DEFAULT_BASE,
     DEFAULT_PATH,
     DEFAULT_RECENT_COUNT,
+    DEFAULT_RECENT_WINDOW_SEC,
     DEFAULT_MEMORY_STORE_MAX,
     buildDefaultContext
   } = defaults
@@ -56,7 +57,7 @@ function prepareAiState (state, opts = {}) {
     : () => ({
         include: true,
         recentCount: DEFAULT_RECENT_COUNT,
-        recentWindowSec: 300,
+        recentWindowSec: DEFAULT_RECENT_WINDOW_SEC,
         recentStoreMax: 200,
         game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20 },
       memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200 }
@@ -89,6 +90,11 @@ function prepareAiState (state, opts = {}) {
   }
   if (!state.ai.context.userRecentOverride && (!Number.isFinite(state.ai.context.recentCount) || state.ai.context.recentCount < DEFAULT_RECENT_COUNT)) {
     state.ai.context.recentCount = DEFAULT_RECENT_COUNT
+  }
+  const legacyWindowSec = 300
+  if (!state.ai.context.userWindowOverride &&
+    (!Number.isFinite(state.ai.context.recentWindowSec) || state.ai.context.recentWindowSec === legacyWindowSec)) {
+    state.ai.context.recentWindowSec = DEFAULT_RECENT_WINDOW_SEC
   }
 
   state.aiPulse = state.aiPulse || { enabled: false, lastFlushAt: Date.now(), lastReason: null, lastMessage: null }

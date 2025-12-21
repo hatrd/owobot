@@ -124,11 +124,19 @@ function createChatExecutor ({
   }
 
   function buildContextPrompt (username) {
-    const ctx = state.ai.context || { include: true, recentCount: defaults.DEFAULT_RECENT_COUNT, recentWindowSec: 300 }
+    const ctx = state.ai.context || {
+      include: true,
+      recentCount: defaults.DEFAULT_RECENT_COUNT,
+      recentWindowSec: defaults.DEFAULT_RECENT_WINDOW_SEC
+    }
     if (contextBus) {
+      const maxEntries = Number.isFinite(ctx.recentCount) ? Math.max(1, ctx.recentCount) : defaults.DEFAULT_RECENT_COUNT
+      const windowSec = Number.isFinite(ctx.recentWindowSec)
+        ? Math.max(0, ctx.recentWindowSec)
+        : defaults.DEFAULT_RECENT_WINDOW_SEC
       const xmlCtx = contextBus.buildXml({
-        maxEntries: ctx.recentCount || 50,
-        windowSec: ctx.recentWindowSec || 600,
+        maxEntries,
+        windowSec,
         includeGaps: true
       })
       const conv = memory.dialogue.buildPrompt(username)
