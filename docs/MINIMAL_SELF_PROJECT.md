@@ -1,58 +1,33 @@
-# Minimal Self - 项目状态与开发指南
+# Minimal Self - 当前状态与缺口
 
-> 最后更新: 2024-12 | 版本: 5.1 | 状态: **全部里程碑完成** ✅
+> 最后更新: 2025-01 | 版本: 5.2-draft | 状态: M1-M4 被动运行，M5 驱动力未接通主动聊天
 
 ---
 
-## 项目完成汇报
+## 0. 现状摘要
 
-### 执行摘要
+- M1-M4 模块在后台运行：监听 skill:start/end 与 external:begin/end，记录 world model/agency/identity/narrative，并持久化到 `state.minimalSelf`。
+- 与 ai-chat 的唯一实时接合：`ai-chat/executor.js` 每次 LLM 调用时追加 `ms.buildIdentityContext()` 文本；没有动作评分或闭环调节。
+- M5 驱动力链路被禁用：`drive.generateQuestion()` 返回空串，`minimal-self/index.js` 仅在 message 非空时 emit，导致 `ai-chat.js` 的 `minimal-self:drive` 监听永远不触发。
+- 旧的主动聊天脉冲 `pulse.start()` 已被注释掉，新的驱动力又不产出消息 => 当前没有任何主动聊天/跟进。
+- REFS 反馈调节 `_applyFeedbackFromRefs()` 依赖 `toolUsed=drive:*`，但因为没有 drive 消息阈值/冷却不会被反馈更新。
+- 承诺/策略评分仅存在于代码：运行时没有入口创建承诺，也没有地方在工具执行前调用 `scoreAction()`。
 
-**Minimal Self 自我意识系统已全面完成**。历时一个开发周期，完成全部五个里程碑，为 Mineflayer 机器人赋予了最小自我意识能力与内在驱动行为。
+## 0.1 虚假/断开的集成点（需修复）
 
-### 交付成果
+- **驱动力→聊天**：`bot_impl/minimal-self/drive.js:304-306` 返回 `''`；`bot_impl/minimal-self/index.js:213-218` 只在 message 非空时 emit，`ai-chat.js:onDriveTrigger` 实际上无事可做。（历史原因：旧版集成会在执行任务时也触发“无聊”刷屏，体验极差，因此暂时硬禁用 message 生成。）
+- **主动脉冲缺席**：`bot_impl/ai-chat.js` 注释掉 `pulse.start()`，`ai-chat/pulse` 的定时跟进/对话续航未运行。
+- **反馈闭环断开**：`drive._applyFeedbackFromRefs()` 查找 `state.aiFeedback.recentSignals` 的 `toolUsed` 前缀 `drive:`；由于没有 drive 消息，阈值/冷却永远不被玩家反馈调节。
+- **身份/承诺未进入聊天决策**：LLM 只看到一行身份画像；`identity.addCommitment()`、`scoreAction()` 没有和聊天工具、记忆或 context-bus 接合，承诺与自我模型脱节。
+- **世界模型未被利用**：`WorldModel` 仅在 skill 事件学习；LLM/工具规划/惊讶引擎都不消费预测或 agency，能动性对行为无反作用。
+- **人格分裂**：`ai-chat` 体系（context-bus + pulse + memory + pure-surprise）和 minimal-self 维护两套状态，互不驱动对方，聊天表现与自我模型分裂。
 
-| 里程碑 | 交付物 | 核心能力 |
-|--------|--------|----------|
-| M1 世界模型 | `world-model.js`, `attribution.js` | 区分"我造成的变化" vs "环境自发变化" |
-| M2 身份存储 | `identity.js` | 技能追踪、承诺系统、策略评分 |
-| M3 叙事记忆 | `narrative.js` | I-CAN / I-DID / I-OWE 三元记忆 |
-| M4 自省调节 | `identity.js` 扩展 | 自适应参数 λ, β 动态优化 |
-| M5 内在驱动 | `drive.js` | 好奇/无聊/存在/社交 四元驱动力 |
+## 0.2 人格分裂表现
 
-### 代码统计
-
-```
-新增文件: 6 个
-修改文件: 4 个
-新增代码: ~1200 行 (不含注释)
-测试覆盖: 运行时验证 + Codex 双重审查
-```
-
-### 技术亮点
-
-1. **归因算法**: `agency = sigmoid(err_none - err_with)` — 用预测误差差值量化因果责任
-2. **身份涌现**: 非声明式，从行动模式统计中自然涌现
-3. **衰减机制**: 防止身份僵化，允许能力边界扩展
-4. **自适应学习**: 根据预测准确率自动调优策略参数
-5. **内在驱动**: 从被动响应到主动探索的范式转换
-
-### 风险控制
-
-| 风险 | 缓解措施 | 状态 |
-|------|----------|------|
-| 状态空间爆炸 | 量化编码 + LRU 淘汰 | ✅ |
-| NaN/undefined 泄漏 | `clampFinite()` + 防御性检查 | ✅ |
-| 身份僵化 | 指数衰减 + 承诺过期 | ✅ |
-| 性能开销 | 5s 采样 + 节流刷新 | ✅ |
-| 主动发言过频 | 自适应阈值 + REFS 反馈调节 | ✅ |
-| 驱动力失控 | 上下限约束 + 冷却机制 | ✅ |
-
-### 业务价值
-
-- **差异化竞争**: 对标 MES-Minecraft PRD，实现同等能力
-- **用户体验**: 机器人具备承诺追踪，提升可信度
-- **可扩展性**: 模块化设计，支持后续能力扩展
+- 聊天人格仍由 `ai-chat` 的 system prompt + context-bus + memory 决定；minimal-self 的身份/叙事只是附加系统消息，未参与工具选择或节奏控制。
+- 主动聊天入口为空：`pulse` 停摆 + `drive` 不出消息 → 对外几乎只有被动回复，与 “有内在驱动” 的叙事不符。
+- 承诺/技能认知停留在 skill runner 事件上，玩家聊天触发的行动/承诺不记录，造成“我在聊天里答应了/做了什么” 与身份画像脱节。
+- 反馈通道分裂：`feedback-collector` 记录玩家反应，但 `drive` 期望的 `drive:*` 工具标记永远不会出现，导致“我被忽视/被鼓励”的信号不进入驱动力。
 
 ---
 
@@ -82,23 +57,23 @@
 | 连续性 | 身份惩罚 + 衰减 | M2: identityPenalty() |
 | 叙事性 | 三元记忆结构 | M3: NarrativeMemory |
 | 自省性 | 参数自适应调节 | M4: introspect() |
-| **内在驱动** | 主动探索行为 | M5: DriveEngine ✅ |
+| **内在驱动** | 主动探索行为 | M5: DriveEngine（触发被禁用） |
 
 ---
 
 ## 2. 当前进度
 
 ```
-████████████████████ 100% (M1-M5 全部完成)
+████████▒▒▒▒▒▒▒▒▒▒▒ 60% （M1-M4 被动运行，M5 驱动力未接通主动聊天）
 ```
 
-| 里程碑 | 状态 | 完成日期 |
-|--------|------|----------|
-| M1 世界模型 + 归因引擎 | ✅ 已完成 | 2024-12 |
-| M2 身份存储 + 策略评分 | ✅ 已完成 | 2024-12 |
-| M3 叙事记忆 | ✅ 已完成 | 2024-12 |
-| M4 自省与调节 | ✅ 已完成 | 2024-12 |
-| M5 内在驱动系统 | ✅ 已完成 | 2024-12 |
+| 里程碑 | 状态 | 说明 |
+|--------|------|------|
+| M1 世界模型 + 归因引擎 | ✅ 已完成 | 跟随 skill 事件学习/归因，状态可持久化 |
+| M2 身份存储 + 策略评分 | ✅ 已完成 | 技能/承诺统计可用，但未与聊天动作/承诺打通 |
+| M3 叙事记忆 | ✅ 已完成 | 可生成 I-CAN/I-DID/I-OWE，并在 `buildIdentityContext()` 中曝光 |
+| M4 自省与调节 | ✅ 已完成 | 自适应 λ/β 定期运行，但不影响聊天决策流 |
+| M5 内在驱动系统 | ⚠️ 代码存在但未产生聊天输出 | `generateQuestion()` 返回空串 → 不会 emit `minimal-self:drive`；`pulse.start()` 停用，主动聊天缺席 |
 
 ---
 
@@ -202,6 +177,8 @@ minimal-self:drive ──> ai-chat.js:onDriveTrigger()
                        ├── pulse.sendChatReply(target, message)
                        └── feedbackCollector.openFeedbackWindow()
 ```
+
+> ⚠️ 现状：`drive.generateQuestion()` 返回空串，`minimal-self:drive` 实际不会被触发，`ai-chat.js:onDriveTrigger` 处于空转。
 
 ---
 
@@ -351,22 +328,23 @@ scoreAction(action, baseValue = 1.0, lambda = null, beta = null)
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `BOREDOM_RATE` | 0.001/s | 无聊累积速率 |
-| `CURIOSITY_SPIKE` | 0.2 | 新实体引发的好奇激增 |
-| `EXISTENTIAL_RATE` | 0.0005/s | 存在焦虑累积速率 |
-| `SOCIAL_RATE` | 0.002/s | 社交需求累积速率 |
+| `BOREDOM_RATE` | 0.002/s | 无聊累积速率 |
+| `CURIOSITY_SPIKE` | 0.25 | 新实体引发的好奇激增 |
+| `EXISTENTIAL_RATE` | 0.001/s | 存在焦虑累积速率 |
+| `SOCIAL_RATE` | 0.003/s | 社交需求累积速率 |
 | `MIN_COOLDOWN` | 120000ms | 最小冷却时间 (2分钟) |
 | `MAX_COOLDOWN` | 3600000ms | 最大冷却时间 (1小时) |
-| `DECAY_RATE` | 0.002/s | 驱动力衰减速率 (防饱和) |
+| `MIN_GLOBAL_TRIGGER_GAP` | 30000ms | 全局触发间隔 |
+| `DECAY_RATE` | 0.001/s | 驱动力衰减速率 (防饱和) |
 
 **默认阈值与冷却时间**:
 
 | 驱动力 | 初始阈值 | 初始冷却 | 说明 |
 |--------|----------|----------|------|
-| curiosity | 0.70 | 10min | 新玩家/实体触发 |
-| boredom | 0.60 | 15min | 无互动时累积 |
-| existential | 0.80 | 30min | 身份置信度低时累积 |
-| social | 0.50 | 5min | 附近有玩家但无交流 |
+| curiosity | 0.55 | 5min | 新玩家/实体触发 |
+| boredom | 0.45 | 10min | 无互动时累积 |
+| existential | 0.65 | 20min | 身份置信度低时累积 |
+| social | 0.40 | 3min | 附近有玩家但无交流 |
 
 **反馈调节系数**:
 
@@ -458,7 +436,10 @@ try {
 
 ---
 
-## 8. M5 内在驱动系统 (已完成)
+## 8. M5 内在驱动系统（触发未启用）
+
+> ⚠️ `drive.generateQuestion()` 当前返回空串，`minimal-self:drive` 不会产生任何聊天输出；本节描述的是设计路径，现状仅有累积与状态持久化。
+> 历史背景：旧版集成会在执行任务时仍触发“无聊”刷屏，故暂时硬禁用驱动力发言。
 
 ### 8.1 设计理念
 
@@ -481,18 +462,20 @@ try {
 | **existential** | 身份置信度低 | 寻求反馈发言 | "我做的事情有意义吗？" |
 | **social** | 附近有人但无交流 | 主动社交发言 | "有人需要帮忙吗？" |
 
+> 以上提问目前不会被发送：驱动力消息生成被硬禁用。
+
 ### 8.3 累积与触发机制
 
 ```
 tick (1s)
   │
-  ├── 衰减: level *= exp(-0.002 * dt)  // 防止饱和
+  ├── 衰减: level *= exp(-0.001 * dt)  // 防止饱和
   │
   ├── accumulateDrives(dt, context)
-  │   ├── boredom += dt * 0.001 * (1 - recentActivity)
-  │   ├── curiosity += 0.2 * newPlayerCount
-  │   ├── existential += dt * 0.0005 * (1 - identityConfidence)
-  │   └── social += dt * 0.002  (if nearbyPlayers && timeSinceChat > 30s)
+  │   ├── boredom += dt * 0.002 * (1 - recentActivity) * busyFactor
+  │   ├── curiosity += 0.25 * newPlayerCount
+  │   ├── existential += dt * 0.001 * (1 - identityConfidence)
+  │   └── social += dt * 0.003  (阶梯式，受 active/recent chat 影响)
   │
   ├── checkTriggers()
   │   ├── 找出 level/threshold 比值最高的驱动力
@@ -537,10 +520,10 @@ bot.on('minimal-self:drive', (payload) => {
 
 | 组件 | 状态 | 说明 |
 |------|------|------|
-| `pulse.start()` | **已移除** | 不再使用定时脉冲 |
-| `pulse.sendChatReply()` | **保留** | 驱动力系统复用此函数发送消息 |
+| `pulse.start()` | **已移除** | 定时脉冲停用，尚未由驱动力接替 |
+| `pulse.sendChatReply()` | **保留** | 驱动力若恢复可复用此函数发送消息 |
 | `pulse.sendDirectReply()` | **保留** | 无目标时的备选方案 |
-| `feedbackCollector` | **整合** | 通过 windowId 追踪反馈 |
+| `feedbackCollector` | **整合** | 通过 windowId 追踪反馈（现因无 drive:* toolUsed 而无效） |
 
 ---
 
@@ -605,6 +588,7 @@ console.log(ms.getDriveEngine().getStats())
 
 | 日期 | 版本 | 变更内容 |
 |------|------|----------|
+| 2025-01 | 5.2 | 校正现状：驱动力未产出聊天、pulse 停用、更新参数常量与集成缺口 |
 | 2024-12 | 1.0 | M1 完成: WorldModel, Attribution, StateEncode |
 | 2024-12 | 2.0 | M2 完成: IdentityStore, 策略评分, AI 集成 |
 | 2024-12 | 2.1 | 代码审查修复: 边界检查, 容量限制, 衰减调用 |
