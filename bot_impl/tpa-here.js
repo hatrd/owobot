@@ -9,8 +9,20 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const lastByUser = S.lastByUser = S.lastByUser || new Map()
   let lastAcceptAt = S.lastAcceptAt || 0
   let lastReqAt = S.lastReqAt || 0
+  let lastReqUser = S.lastReqUser || null
 
   function now () { return Date.now() }
+
+  function getMinimalSelf () {
+    try { return require('./minimal-self').getInstance() } catch { return null }
+  }
+
+  function recordTeleportAchievement (kind, player = null) {
+    const ms = getMinimalSelf()
+    if (!ms) return
+    try { ms.getIdentity?.().recordSkillOutcome?.(kind, true, 0.95) } catch {}
+    try { ms.getNarrative?.().recordDid?.(`传送:${kind}`, player || null, 'teleport') } catch {}
+  }
 
   function canTrigger (user) {
     const t = now()
@@ -30,6 +42,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const cmd = `/tpa ${username}`
       dlog && dlog('[tpa] ->', cmd)
       try { bot.chat(cmd) } catch {}
+      recordTeleportAchievement('tpa', username)
+      try {
+        if (Array.isArray(state.aiRecent)) {
+          state.aiRecent.push({ kind: 'bot', content: cmd, t: now() })
+          if (state.aiRecent.length > 200) state.aiRecent.splice(0, state.aiRecent.length - 200)
+        }
+      } catch {}
     } catch {}
   }
 
@@ -43,13 +62,25 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       // Detect common TPA prompts (Chinese & English variants)
       const hasTpacceptHint = /\b\/tpaccept\b/i.test(t) || /若想接受传送/.test(t)
       const isRequestToMe = /请求传送到你这里|has requested to teleport to you|请求传送到你|teleport to you/i.test(t)
-      if (isRequestToMe) { lastReqAt = now(); S.lastReqAt = lastReqAt }
+      if (isRequestToMe) {
+        lastReqAt = now(); S.lastReqAt = lastReqAt
+        // Best-effort player extraction
+        const m = t.match(/^([A-Za-z0-9_\\.]+)/)
+        if (m && m[1]) { lastReqUser = m[1]; S.lastReqUser = lastReqUser }
+      }
       const recentReq = (now() - lastReqAt) <= 5000
       if (hasTpacceptHint && recentReq) {
         if (now() - lastAcceptAt < Math.max(300, cfg.acceptCooldownMs || 0)) return
         lastAcceptAt = now(); S.lastAcceptAt = lastAcceptAt
         try { bot.chat('/tpaccept') } catch {}
         dlog && dlog('[tpa] auto /tpaccept')
+        try {
+          if (Array.isArray(state.aiRecent)) {
+            state.aiRecent.push({ kind: 'bot', content: '/tpaccept', t: now() })
+            if (state.aiRecent.length > 200) state.aiRecent.splice(0, state.aiRecent.length - 200)
+          }
+        } catch {}
+        recordTeleportAchievement('tpaccept', lastReqUser || null)
       }
     } catch {}
   }

@@ -12,6 +12,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const cfg = S.cfg = Object.assign({ enabled: true, tickMs: 10000, radius: 8, debug: false }, S.cfg || {})
   let timer = null
   let running = false
+  const getMS = () => { try { return require('./minimal-self').getInstance() } catch { return null } }
+  const recordDid = (piece) => {
+    const ms = getMS()
+    if (!ms) return
+    try { ms.getIdentity?.().recordSkillOutcome?.('auto_armor', true, 0.95) } catch {}
+    try { ms.getNarrative?.().recordDid?.(`自动合成:${piece}`, null, 'auto-armor') } catch {}
+  }
 
   // Material rank (lower = better)
   const ORDER = ['netherite','diamond','iron','chainmail','turtle','golden','leather']
@@ -129,6 +136,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         crafted++
         // Equip immediately if possible
         await ensureEquipped(p.name, p.slot)
+        recordDid(p.name)
       } else if (cfg.debug) { L.debug('craft failed:', p.name) }
     }
     if (crafted > 0) L.info('crafted iron armor pieces:', crafted)

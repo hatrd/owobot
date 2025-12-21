@@ -73,6 +73,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         // small cooldown after success to avoid immediate re-trigger while inventory updates settle
         S.nextAllowedAt = now + Math.max(4000, Math.min(15000, cfg.intervalMs))
         if (cfg.debug) L.info('stash ok, cooldown until', new Date(S.nextAllowedAt).toLocaleTimeString())
+        try {
+          const ms = require('./minimal-self').getInstance()
+          ms?.getIdentity?.().recordSkillOutcome?.('auto_stash', true, 0.9)
+          ms?.getNarrative?.().recordDid?.('自动存储', null, 'auto-stash')
+        } catch {}
       }
     } catch (e) { L.warn('stash error:', e?.message || e) }
     finally { running = false }

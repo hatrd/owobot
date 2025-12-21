@@ -189,7 +189,8 @@ class DriveEngine {
     const pending = Array.isArray(context.pendingCommitments) ? context.pendingCommitments : [];
     const hasPathfinderGoal = Boolean(context.hasPathfinderGoal);
     const hasPendingCommitments = pending.length > 0;
-    const busyFactor = (hasPathfinderGoal || hasPendingCommitments) ? 0.2 : 1.0;
+    const isBusy = Boolean(context.currentAction) || Boolean(context.externalBusy) || hasPathfinderGoal || hasPendingCommitments;
+    const busyFactor = isBusy ? 0 : 1.0;
 
     // Gentle decay to avoid saturation (using DECAY_RATE constant)
     const decay = Math.exp(-DECAY_RATE * dt);
@@ -302,7 +303,23 @@ class DriveEngine {
   }
 
   generateQuestion(driveType, identityContext = '', context = {}) {
-    // Disabled: drive questions are currently suppressed to avoid interfering with the architecture
+    const type = String(driveType || '').toLowerCase();
+    const idCtx = String(identityContext || '').trim();
+    const who = (() => {
+      try {
+        const lastSpeaker = getLastPlayerSpeaker(this.state);
+        if (lastSpeaker) return lastSpeaker;
+        const snapPlayers = Array.isArray(context?.snapshot?.nearby?.players) ? context.snapshot.nearby.players : [];
+        if (snapPlayers.length) return String(snapPlayers[0]?.name || '').trim();
+      } catch {}
+      return '';
+    })();
+
+    const suffix = idCtx ? `（${idCtx.slice(0, 50)}）` : '';
+    if (type === 'boredom') return `有人在吗？找点事做~${suffix}`;
+    if (type === 'curiosity') return `最近发生了什么新鲜事？想去看看${who ? `，${who}` : ''}在忙啥~${suffix}`;
+    if (type === 'social') return `嗨${who ? `，${who}` : ''}，要不要一起做点事？${suffix}`;
+    if (type === 'existential') return `我做得还好吗？有什么建议给我？${suffix}`;
     return '';
   }
 

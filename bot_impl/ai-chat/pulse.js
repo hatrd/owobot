@@ -491,11 +491,27 @@ function createPulseService ({
     } catch {}
   }
 
+  function recordCommandDid (text) {
+    try {
+      const trimmed = String(text || '').trim()
+      if (!trimmed.startsWith('/')) return
+      const cmd = trimmed.slice(1).split(/\s+/, 1)[0].toLowerCase()
+      const tracked = new Set(['tpa', 'tpaccept', 'sit', 'lay', 'sitdown', 'gsit', 'glay', 'gstand'])
+      if (!tracked.has(cmd)) return
+      try { contextBus?.pushEvent?.('command', cmd) } catch {}
+      const ms = (() => { try { return require('../minimal-self').getInstance() } catch { return null } })()
+      if (!ms) return
+      try { ms.getIdentity?.().recordSkillOutcome?.(cmd, true, 0.95) } catch {}
+      try { ms.getNarrative?.().recordDid?.(`指令:${cmd}`, null, 'command') } catch {}
+    } catch {}
+  }
+
   function sendDirectReply (username, text, opts = {}) {
     const trimmed = String(text || '').trim()
     if (!trimmed) return
     try {
       bot.chat(trimmed)
+      recordCommandDid(trimmed)
       recordBotChat(trimmed, opts)
       if (state.aiPulse && Number.isFinite(state.aiRecentSeq)) state.aiPulse.lastSeq = state.aiRecentSeq
     } catch {}

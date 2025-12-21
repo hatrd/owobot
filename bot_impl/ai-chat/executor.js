@@ -148,6 +148,25 @@ function createChatExecutor ({
     return [base, conv].filter(Boolean).join('\n\n')
   }
 
+  function getMinimalSelfInstance () {
+    try {
+      return require('../minimal-self').getInstance()
+    } catch { return null }
+  }
+
+  function gateActionWithIdentity (toolName) {
+    try {
+      const ms = getMinimalSelfInstance()
+      if (!ms || typeof ms.scoreAction !== 'function') return null
+      const res = ms.scoreAction(toolName)
+      if (!res || !Number.isFinite(res.score)) return null
+      if (contextBus) {
+        try { contextBus.pushEvent('minimalSelf.score', `${toolName}:${res.score.toFixed(2)}`) } catch {}
+      }
+      return res
+    } catch { return null }
+  }
+
   function classifyIntent (text) {
     const trimmed = String(text || '').trim()
     const lower = trimmed.toLowerCase()
@@ -163,9 +182,34 @@ function createChatExecutor ({
     return intent
   }
 
+  function tryCreateCommitment (username, text) {
+    try {
+      const ms = getMinimalSelfInstance()
+      const identity = ms?.getIdentity?.()
+      if (!identity || typeof identity.addCommitment !== 'function') return false
+      const m = String(text || '').match(/(?:记得|答应|承诺)(?:要|帮我|给我|去)?(.{3,60})/i)
+      if (!m || !m[1]) return false
+      const action = m[1].trim()
+      if (!action) return false
+      const commitment = identity.addCommitment(username, action)
+      if (contextBus) {
+        try { contextBus.pushEvent('commitment.add', `${username}:${action}`) } catch {}
+      }
+      pulse.sendChatReply(username, `好，我记下了承诺: ${action}`, { reason: 'commitment', toolUsed: 'commitment:add' })
+      if (state.ai.trace && log?.info) log.info('commitment ->', commitment)
+      return true
+    } catch { return false }
+  }
+
   function shouldAutoFollowup (username, text) {
     const trimmed = String(text || '').trim()
     if (!trimmed) { traceChat('[chat] followup skip empty', { username }); return false }
+    const lastReason = state?.aiPulse?.lastReason
+    const lastAt = state?.aiPulse?.lastMessageAt
+    if (lastReason === 'drive' && (!lastAt || (now() - lastAt) < 180000)) {
+      traceChat('[chat] followup drive-active', { username })
+      return true
+    }
     if (!state.ai.enabled) { traceChat('[chat] followup ai-disabled', { username }); return false }
     if (!username || username === bot.username) { traceChat('[chat] followup self/unknown', { username }); return false }
     if (!pulse.isUserActive(username)) { traceChat('[chat] followup inactive', { username }); return false }
@@ -187,7 +231,7 @@ function createChatExecutor ({
     // M2: Identity context from minimal-self
     const identityCtx = (() => {
       try {
-        const ms = require('../minimal-self').getInstance()
+        const ms = getMinimalSelfInstance()
         return ms?.buildIdentityContext?.() || ''
       } catch { return '' }
     })()
@@ -347,11 +391,26 @@ function createChatExecutor ({
         if (name) payload = { tool: 'mount_player', args: { name } }
       }
     }
+    const toolLower = toolName.toLowerCase()
+    if (contextBus) {
+      try { contextBus.pushEvent('tool.intent', toolLower) } catch {}
+      if (TELEPORT_COMMANDS.has(toolLower)) {
+        try { contextBus.pushEvent('tool.teleport', toolLower) } catch {}
+      }
+      if (['afk', 'idle', 'hang'].includes(toolLower)) {
+        try { contextBus.pushEvent('tool.afk', toolLower) } catch {}
+      }
+    }
     if (!isActionToolAllowed(toolName)) return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
     const busy = Boolean(state?.externalBusy)
     const canOverrideBusy = canToolBypassBusy(toolName, payload)
     if (busy && !canOverrideBusy) {
       return H.trimReply('我还在执行其他任务，先等我完成或者说“重置”哦~', maxReplyLen || 120)
+    }
+    const actionScore = gateActionWithIdentity(toolName)
+    if (actionScore && Number.isFinite(actionScore.score) && actionScore.score < 0.45) {
+      const scoreStr = actionScore.score.toFixed(2)
+      return H.trimReply(`这个动作我信心不高（评分${scoreStr}），要不要换个？`, maxReplyLen || 120)
     }
     const hadSpeech = Boolean(speech)
     if (hadSpeech) {
@@ -435,6 +494,7 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }
+    if (tryCreateCommitment(username, text)) return
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {

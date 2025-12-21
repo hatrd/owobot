@@ -187,6 +187,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const text = String(payload.message || '').trim()
       if (!text) return
       const driveType = String(payload.type || 'drive')
+      if (contextBus && typeof contextBus.pushEvent === 'function') {
+        try { contextBus.pushEvent(`drive.${driveType}`, text) } catch {}
+      }
       const target = (() => {
         const hinted = String(payload.targetUser || '').trim()
         if (hinted) return hinted

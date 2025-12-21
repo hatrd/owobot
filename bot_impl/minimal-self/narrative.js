@@ -6,6 +6,7 @@ const I_CAN_THRESHOLD = { agency: 0.65, successRate: 0.6, attempts: 5 };
 const I_DID_KEEP_DAYS = 30;
 const I_OWE_KEEP_DAYS = 7;
 const MAX_NARRATIVES = 50;
+const MAX_MANUAL_DID = 50;
 
 class NarrativeMemory {
   constructor(state, identityStore) {
@@ -16,6 +17,9 @@ class NarrativeMemory {
     const saved = state?.minimalSelf?.narrative || {};
     this.entries = Array.isArray(saved.entries)
       ? saved.entries.slice(0, MAX_NARRATIVES)
+      : [];
+    this.manualDid = Array.isArray(saved.manualDid)
+      ? saved.manualDid.slice(-MAX_MANUAL_DID)
       : [];
     this.lastUpdate = Number.isFinite(saved.lastUpdate) ? saved.lastUpdate : 0;
   }
@@ -106,8 +110,9 @@ class NarrativeMemory {
     const iCan = this._generateICanEntries();
     const iDid = this._generateIDidEntries();
     const iOwe = this._generateIOweEntries();
+    const manual = Array.isArray(this.manualDid) ? this.manualDid : [];
 
-    this.entries = [...iOwe, ...iCan, ...iDid].slice(0, MAX_NARRATIVES);
+    this.entries = [...iOwe, ...iCan, ...iDid, ...manual].slice(0, MAX_NARRATIVES);
     this.lastUpdate = Date.now();
     this._persist();
 
@@ -187,13 +192,35 @@ class NarrativeMemory {
     };
   }
 
+  recordDid(action, player = null, note = null) {
+    const cleanAction = this._cleanText(action);
+    if (!cleanAction) return false;
+    const entry = {
+      type: 'I-DID',
+      action: cleanAction,
+      player: this._cleanText(player || ''),
+      note: this._cleanText(note || ''),
+      fulfilledAt: Date.now(),
+      source: 'event'
+    };
+    if (!Array.isArray(this.manualDid)) this.manualDid = [];
+    this.manualDid.push(entry);
+    this.manualDid = this.manualDid.slice(-MAX_MANUAL_DID);
+    // Merge manual entries into current view
+    this.entries = [...this.entries, entry].slice(-MAX_NARRATIVES);
+    this.lastUpdate = Date.now();
+    this._persist();
+    return true;
+  }
+
   // === Persistence ===
 
   _persist() {
     if (!this.state.minimalSelf) this.state.minimalSelf = {};
     this.state.minimalSelf.narrative = {
       entries: this.entries,
-      lastUpdate: this.lastUpdate
+      lastUpdate: this.lastUpdate,
+      manualDid: this.manualDid
     };
   }
 }

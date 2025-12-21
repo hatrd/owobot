@@ -308,11 +308,36 @@ class MinimalSelf {
     // Combine identity profile with narrative memory and drive state
     const identityPart = this.identity.buildIdentityContext();
     const narrativePart = this.narrative.buildNarrativeContext();
+    const statusPart = (() => {
+      try {
+        const pos = this.bot?.entity?.position;
+        const coords = pos ? `${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)}` : null;
+        const dim = (() => {
+          try { return this.bot?.game?.dimension ? String(this.bot.game.dimension) : null; } catch { return null; }
+        })();
+        const hasGoal = !!(this.bot?.pathfinder && this.bot.pathfinder.goal);
+        const externalBusy = Boolean(this.state?.externalBusy);
+        const afk = Boolean(this.state?.afk?.isAfk);
+        const current = String(this.currentAction || '').trim();
+        let mode = '空闲';
+        if (afk) mode = '挂机';
+        else if (externalBusy) mode = '执行任务';
+        else if (hasGoal) mode = '移动/导航';
+        else if (current) mode = `进行${current}`;
+
+        const parts = [`状态:${mode}`];
+        if (dim) parts.push(`维度:${dim}`);
+        if (coords) parts.push(`坐标:${coords}`);
+        return parts.join(' ');
+      } catch {
+        return '';
+      }
+    })();
     const drivePart = (() => {
       try { return this.drive?.buildDriveContext?.() || ''; } catch { return ''; }
     })();
 
-    const parts = [identityPart, narrativePart, drivePart].filter(Boolean);
+    const parts = [statusPart, identityPart, narrativePart, drivePart].filter(Boolean);
     return parts.join(' | ');
   }
 
