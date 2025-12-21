@@ -10,6 +10,7 @@ const { createChatExecutor } = require('./ai-chat/executor')
 const { createFeedbackCollector } = require('./ai-chat/feedback-collector')
 const { createIntrospectionEngine } = require('./ai-chat/introspection')
 const { createPureSurprise } = require('./ai-chat/pure-surprise')
+const { createContextBus } = require('./ai-chat/context-bus')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
@@ -127,6 +128,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // REFS: 创建反馈收集器
   const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore })
 
+  // REFS: 创建上下文总线
+  const contextBus = createContextBus({ state, now })
+
   let executor
   const pulse = createPulseService({
     state,
@@ -141,7 +145,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     buildGameContext,
     traceChat,
     memory,
-    feedbackCollector
+    feedbackCollector,
+    contextBus
   })
   executor = createChatExecutor({
     state,
@@ -157,7 +162,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     canAfford,
     applyUsage,
     buildGameContext,
-    buildExtrasContext: pulse.buildExtrasContext
+    buildExtrasContext: pulse.buildExtrasContext,
+    contextBus
   })
 
   memory.setMessenger(pulse.sendDirectReply)
@@ -302,9 +308,36 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         failureReason: data.failureReason,
         triggeredBy: data.triggeredBy
       })
+      const eventType = data.status === 'succeeded' ? 'skill.end' : 'skill.fail'
+      const info = data.status === 'succeeded'
+        ? `${data.name}:success`
+        : `${data.name}:${data.failureReason || 'failed'}`
+      contextBus.pushEvent(eventType, info)
     } catch {}
   }
   bot.on('skill:end', onSkillEnd)
+
+  // REFS: 监听死亡和重生事件
+  const onDeath = () => {
+    try { contextBus.pushEvent('death', 'bot died') } catch {}
+  }
+  const onRespawn = () => {
+    try { contextBus.pushEvent('respawn', 'bot respawned') } catch {}
+  }
+  bot.on('death', onDeath)
+  bot.on('respawn', onRespawn)
+
+  // REFS: 监听生命值变化
+  let lastHealthWarning = 0
+  const onHealth = () => {
+    try {
+      if (bot.health <= 6 && now() - lastHealthWarning > 30000) {
+        lastHealthWarning = now()
+        contextBus.pushEvent('health.low', `hp:${Math.floor(bot.health)}`)
+      }
+    } catch {}
+  }
+  bot.on('health', onHealth)
 
   // REFS: 定时衰减和持久化
   const decayTimer = setInterval(() => {
@@ -344,6 +377,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { bot.off('minimal-self:drive', onDriveTrigger) } catch {}
     try { bot.off('cli', aiCliHandler) } catch {}
     try { bot.off('skill:end', onSkillEnd) } catch {}
+    try { bot.off('death', onDeath) } catch {}
+    try { bot.off('respawn', onRespawn) } catch {}
+    try { bot.off('health', onHealth) } catch {}
     try { clearInterval(decayTimer) } catch {}
     pulse.stop()
     introspection.stop()

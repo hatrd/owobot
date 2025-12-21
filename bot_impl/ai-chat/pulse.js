@@ -20,7 +20,8 @@ function createPulseService ({
   buildGameContext,
   traceChat = () => {},
   memory,
-  feedbackCollector = null
+  feedbackCollector = null,
+  contextBus = null
 }) {
   const pulseCtrl = { running: false, abort: null }
   let pulseTimer = null
@@ -147,7 +148,9 @@ function createPulseService ({
       memory.dialogue.queueSummary(username, summaryEntry, 'restart')
       entry.startSeq = null
     }
-    if (!Number.isFinite(entry.startSeq)) entry.startSeq = state.aiRecentSeq || nowTs
+    if (!Number.isFinite(entry.startSeq)) {
+      entry.startSeq = Number.isFinite(state.aiRecentSeq) ? state.aiRecentSeq : 0
+    }
     if (!Number.isFinite(entry.startedAt)) entry.startedAt = nowTs
     if (!(entry.participants instanceof Set)) entry.participants = new Set()
     if (username && username !== bot.username) entry.participants.add(username)
@@ -224,6 +227,10 @@ function createPulseService ({
     const entry = { t: now(), user: username || '??', text: trimmed.slice(0, 160), kind, seq: state.aiRecentSeq }
     state.aiRecent.push(entry)
     enforceRecentLimit()
+    if (contextBus) {
+      if (kind === 'player') contextBus.pushPlayer(username, trimmed)
+      else if (kind === 'bot') contextBus.pushBot(trimmed)
+    }
     return entry
   }
 
@@ -263,6 +270,12 @@ function createPulseService ({
   function recordBotChat (text) {
     try {
       pushRecentChatEntry(bot?.username || 'bot', text, 'bot')
+    } catch {}
+  }
+
+  function recordToolOutput (text) {
+    try {
+      if (contextBus) contextBus.pushTool(text)
     } catch {}
   }
 
@@ -721,11 +734,23 @@ function createPulseService ({
       const isSelf = lower.includes(selfLower)
       if (isSelf) {
         const deathPatterns = [' was slain ', ' was shot ', ' was blown up ', ' was killed ', ' was pricked ', ' hit the ground ', ' fell ', ' drowned', ' burned', ' blew up', ' suffocated', ' starved', ' tried to swim', ' died', ' went up in flames', ' experienced kinetic energy', ' was doomed to fall']
-        if (deathPatterns.some(p => lower.includes(p))) recordEvent('death', plain)
+        if (deathPatterns.some(p => lower.includes(p))) {
+          recordEvent('death', plain)
+          if (contextBus) contextBus.pushEvent('death', plain)
+        }
         const achievementPatterns = [' has made the advancement ', ' has completed the challenge ', ' has reached the goal ', ' completed the challenge ', ' advancement ']
-        if (achievementPatterns.some(p => lower.includes(p))) recordEvent('achievement', plain)
+        if (achievementPatterns.some(p => lower.includes(p))) {
+          recordEvent('achievement', plain)
+          if (contextBus) contextBus.pushEvent('achievement', plain)
+        }
       }
-      if (lower.startsWith('[deathchest]') && lower.includes('deathchest')) recordEvent('death_info', plain)
+      if (lower.startsWith('[deathchest]') && lower.includes('deathchest')) {
+        recordEvent('death_info', plain)
+        if (contextBus) contextBus.pushEvent('death_info', plain)
+      }
+      if (contextBus && !isSelf) {
+        contextBus.pushServer(plain)
+      }
     } catch {}
   }
 
@@ -801,6 +826,7 @@ function createPulseService ({
     handlePulseCli,
     pushRecentChatEntry,
     recordBotChat,
+    recordToolOutput,
     buildExtrasContext,
     isUserActive
   }

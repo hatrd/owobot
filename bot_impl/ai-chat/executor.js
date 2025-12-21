@@ -24,7 +24,8 @@ function createChatExecutor ({
   canAfford,
   applyUsage,
   buildGameContext,
-  buildExtrasContext
+  buildExtrasContext,
+  contextBus = null
 }) {
   const ctrl = { busy: false, abort: null, pending: null }
   const PENDING_EXPIRE_MS = 8000
@@ -125,6 +126,16 @@ function createChatExecutor ({
 
   function buildContextPrompt (username) {
     const ctx = state.ai.context || { include: true, recentCount: defaults.DEFAULT_RECENT_COUNT, recentWindowSec: 300 }
+    if (contextBus) {
+      const xmlCtx = contextBus.buildXml({
+        maxEntries: ctx.recentCount || 50,
+        windowSec: ctx.recentWindowSec || 600,
+        includeGaps: true
+      })
+      const conv = memory.dialogue.buildPrompt(username)
+      const parts = [`当前对话玩家: ${username}`, xmlCtx, conv].filter(Boolean)
+      return parts.join('\n\n')
+    }
     const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
     const conv = memory.dialogue.buildPrompt(username)
     return [base, conv].filter(Boolean).join('\n\n')
