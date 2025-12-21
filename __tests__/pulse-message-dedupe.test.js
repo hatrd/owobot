@@ -85,3 +85,12 @@ test('non chat system messages still go to server context', () => {
   assert.deepEqual(store[0].payload, { content: '登录成功！' })
   assert.equal(state.aiRecent.length, 0)
 })
+
+test('deathchest system message is emitted as event only (no duplicate server line)', () => {
+  const { contextBus, pulse } = makePulse()
+  pulse.captureSystemMessage({ getText: () => '[DeathChest] Your DeathChest will disappear in 180 seconds!' })
+  const store = contextBus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].type, 'event')
+  assert.deepEqual(store[0].payload, { eventType: 'death_info', data: '[DeathChest] Your DeathChest will disappear in 180 seconds!' })
+})

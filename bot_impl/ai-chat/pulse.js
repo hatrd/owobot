@@ -802,6 +802,7 @@ function createPulseService ({
     try {
       const plain = extractPlainText(message).trim()
       if (!plain) return
+      let suppressServer = false
       const maybePlayer = parseAngleBracketPlayerChat(plain)
       if (maybePlayer) {
         const selfName = String(bot.username || '').trim()
@@ -830,8 +831,9 @@ function createPulseService ({
       if (lower.startsWith('[deathchest]') && lower.includes('deathchest')) {
         recordEvent('death_info', plain)
         if (contextBus) contextBus.pushEvent('death_info', plain)
+        suppressServer = true // avoid duplicating as <s> when already emitted as event
       }
-      if (contextBus && !isSelf) {
+      if (contextBus && !isSelf && !suppressServer) {
         contextBus.pushServer(plain)
       }
     } catch {}
