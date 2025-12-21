@@ -618,9 +618,6 @@ console.log(ms.getDriveEngine().getStats())
 
 ## 12. 参考资料
 
-- 原始 PRD: MES-Minecraft (竞争对手)
-- 里程碑文档: `docs/MINIMAL_SELF_MILESTONES.md`
-- 现有记忆系统: `bot_impl/ai-chat/memory.js`
-- 反馈收集器: `bot_impl/ai-chat/feedback-collector.js`
-- 自省引擎: `bot_impl/ai-chat/introspection.js`
-- pulse 消息服务: `bot_impl/ai-chat/pulse.js` (保留 sendChatReply/sendDirectReply)
+- 里程碑跟踪: `docs/MINIMAL_SELF_MILESTONES.md`
+- 上下文总线: `docs/context-bus.md`
+- AI 聊天管道: `docs/ai-chat.md`

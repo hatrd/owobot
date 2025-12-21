@@ -1,5 +1,7 @@
 const GAP_THRESHOLD_MS = 5 * 60 * 1000
 const DEFAULT_MAX_ENTRIES = 200
+const STACK_WINDOW_MS = 5000
+const EVENT_DATA_MAX = 100
 
 function createContextBus ({ state, now = () => Date.now() }) {
   function ensureStore () {
@@ -54,8 +56,44 @@ function createContextBus ({ state, now = () => Date.now() }) {
     return push('tool', { content: String(content || '').slice(0, 200) })
   }
 
+  function parseStackKey (eventType, data) {
+    const str = String(data ?? '').slice(0, EVENT_DATA_MAX)
+    const m = str.match(/^(.+?)(?:x(\d+))?$/)
+    if (!m) return { base: str, count: 1 }
+    const base = m[1]
+    const n = m[2] ? Number(m[2]) : 1
+    return { base, count: Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1 }
+  }
+
+  function formatStackData (base, count) {
+    const n = Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1
+    const suffix = n > 1 ? `x${n}` : ''
+    const maxBaseLen = EVENT_DATA_MAX - suffix.length
+    const b = String(base ?? '').slice(0, Math.max(0, maxBaseLen))
+    return `${b}${suffix}`
+  }
+
+  function tryStackEvent (eventType, data) {
+    const store = ensureStore()
+    if (!store.length) return null
+    const last = store[store.length - 1]
+    if (!last || last.type !== 'event' || !last.payload) return null
+    const nowTs = now()
+    if (!Number.isFinite(last.t) || (nowTs - last.t) > STACK_WINDOW_MS) return null
+    if (String(last.payload.eventType || '') !== String(eventType || '')) return null
+    const prev = parseStackKey(eventType, last.payload.data)
+    const next = parseStackKey(eventType, data)
+    if (prev.base !== next.base) return null
+    const merged = prev.count + next.count
+    last.payload.data = formatStackData(prev.base, merged)
+    last.t = nowTs
+    return last
+  }
+
   function pushEvent (eventType, data) {
-    return push('event', { eventType, data: String(data || '').slice(0, 100) })
+    const stacked = tryStackEvent(eventType, data)
+    if (stacked) return stacked
+    return push('event', { eventType, data: String(data ?? '').slice(0, EVENT_DATA_MAX) })
   }
 
   function escapeXml (value) {
@@ -83,7 +121,8 @@ function createContextBus ({ state, now = () => Date.now() }) {
   }
 
   function serializeEntry (entry) {
-    const { type, payload } = entry
+    const type = entry?.type
+    const payload = entry?.payload || {}
     switch (type) {
       case 'player':
         return `<p n="${escapeXml(payload.name)}">${escapeXml(payload.content)}</p>`

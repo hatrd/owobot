@@ -24,7 +24,6 @@ function createChatExecutor ({
   canAfford,
   applyUsage,
   buildGameContext,
-  buildExtrasContext,
   contextBus = null
 }) {
   const ctrl = { busy: false, abort: null, pending: null }
@@ -174,7 +173,6 @@ function createChatExecutor ({
     const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
-    const extrasCtx = buildExtrasContext()
     const memoryCtx = await memory.longTerm.buildContext({ query: content })
     // M2: Identity context from minimal-self
     const identityCtx = (() => {
@@ -187,7 +185,6 @@ function createChatExecutor ({
     const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
     const messages = [
       { role: 'system', content: systemPrompt() },
-      extrasCtx ? { role: 'system', content: extrasCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       identityCtx ? { role: 'system', content: identityCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,

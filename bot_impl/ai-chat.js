@@ -162,7 +162,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     canAfford,
     applyUsage,
     buildGameContext,
-    buildExtrasContext: pulse.buildExtrasContext,
     contextBus
   })
 
@@ -327,12 +326,127 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   bot.on('death', onDeath)
   bot.on('respawn', onRespawn)
 
-  // REFS: 监听生命值变化
+  // REFS: 玩家上下线事件 — 服务器消息已通过 pushServer 捕获，无需冗余事件
+  // const onPlayerJoined = (player) => { ... }
+  // const onPlayerLeft = (player) => { ... }
+
+  // REFS: 伤害事件检测与类型推断
+  let lastHpForDamage = null
+  let lastDamageSource = { id: null, at: 0 }
+  let lastOnGround = null
+  let fallStartY = null
+  let lastLandAt = 0
+  let lastFallDist = 0
+  let lastExplosionAt = 0
+
+  function fmtHpDelta (n) {
+    if (!Number.isFinite(n)) return ''
+    const v = Math.round(n * 10) / 10
+    return v === Math.floor(v) ? String(v) : v.toFixed(1)
+  }
+
+  function headInWater () {
+    try {
+      const pos = bot.entity?.position
+      if (!pos) return false
+      const head = bot.blockAt(pos.offset(0, 1.6, 0))
+      const name = String(head?.name || '').toLowerCase()
+      return name.includes('water') || head?.getProperties?.()?.waterlogged === true
+    } catch { return false }
+  }
+
+  function getEntityName (ent) {
+    if (!ent) return null
+    if (ent.type === 'player') return ent.username || ent.displayName || null
+    const raw = ent.name || ent.displayName || ent.mobType || ''
+    return String(raw).replace(/\u00a7./g, '').toLowerCase() || null
+  }
+
+  const onMove = () => {
+    try {
+      const me = bot.entity
+      if (!me?.position) return
+      const onGround = !!me.onGround
+      if (lastOnGround == null) { lastOnGround = onGround; return }
+      if (onGround === lastOnGround) return
+      if (lastOnGround && !onGround) {
+        fallStartY = me.position.y
+      } else {
+        if (Number.isFinite(fallStartY)) {
+          lastFallDist = Math.max(0, fallStartY - me.position.y)
+          lastLandAt = now()
+        }
+        fallStartY = null
+      }
+      lastOnGround = onGround
+    } catch {}
+  }
+
+  const onEntityHurt = (entity, source) => {
+    try {
+      if (entity !== bot.entity) return
+      lastDamageSource = { id: source?.id ?? null, at: now() }
+    } catch {}
+  }
+
+  const onExplosion = () => {
+    try { lastExplosionAt = now() } catch {}
+  }
+  bot.on('move', onMove)
+  bot.on('entityHurt', onEntityHurt)
+  bot.on('explosion', onExplosion)
+
+  // REFS: 监听生命值变化 (伤害 + 治疗)
   let lastHealthWarning = 0
   const onHealth = () => {
     try {
-      if (bot.health <= 6 && now() - lastHealthWarning > 30000) {
-        lastHealthWarning = now()
+      const nowTs = now()
+      const hp = Number(bot.health)
+      if (lastHpForDamage == null) {
+        lastHpForDamage = hp
+      } else if (Number.isFinite(hp)) {
+        const delta = hp - lastHpForDamage
+        if (delta < -0.01) {
+          const srcId = lastDamageSource.id == null ? NaN : Number(lastDamageSource.id)
+          const srcEnt = Number.isFinite(srcId) ? bot.entities?.[srcId] : null
+          const recentCombat = !!(
+            srcEnt && srcEnt !== bot.entity &&
+            (srcEnt.type === 'player' || srcEnt.type === 'mob') &&
+            (nowTs - lastDamageSource.at) <= 1500
+          )
+          const recentExplosion = (nowTs - lastExplosionAt) <= 1500
+          const onFire = !!(bot.entity?.onFire || bot.entity?.isOnFire)
+          const inWater = headInWater()
+          const recentFall = lastFallDist >= 3 && (nowTs - lastLandAt) <= 1200
+          const isStarving = Number(bot.food) === 0
+          let kind, detail
+          if (recentCombat) {
+            kind = 'combat'
+            detail = getEntityName(srcEnt)
+          } else if (recentExplosion) {
+            kind = 'explosion'
+          } else if (onFire) {
+            kind = 'fire'
+          } else if (inWater) {
+            kind = 'drown'
+          } else if (recentFall) {
+            kind = 'fall'
+          } else if (isStarving) {
+            kind = 'hunger'
+          } else {
+            kind = 'other'
+          }
+          const d = fmtHpDelta(delta)
+          const data = detail ? `${detail}:${d}` : `hp:${d}`
+          if (d) contextBus.pushEvent(`hurt.${kind}`, data)
+        } else if (delta > 0.5) {
+          const d = fmtHpDelta(delta)
+          if (d) contextBus.pushEvent('heal', `hp:+${d}`)
+        }
+        lastHpForDamage = hp
+      }
+      if (bot.health <= 6 && nowTs - lastHealthWarning > 30000) {
+        lastHealthWarning = nowTs
         contextBus.pushEvent('health.low', `hp:${Math.floor(bot.health)}`)
       }
     } catch {}
@@ -380,6 +494,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { bot.off('death', onDeath) } catch {}
     try { bot.off('respawn', onRespawn) } catch {}
     try { bot.off('health', onHealth) } catch {}
+    try { bot.off('move', onMove) } catch {}
+    try { bot.off('entityHurt', onEntityHurt) } catch {}
+    try { bot.off('explosion', onExplosion) } catch {}
     try { clearInterval(decayTimer) } catch {}
     pulse.stop()
     introspection.stop()

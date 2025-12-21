@@ -1,5 +1,8 @@
 // Observer: provide lightweight game snapshot for prompts, and on-demand detailed fetchers
 
+const HOSTILE_TOKENS_EN = ['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute']
+const HOSTILE_TOKENS_CN = ['苦力怕','僵尸','骷髅','蜘蛛','洞穴蜘蛛','末影人','女巫','史莱姆','溺尸','尸壳','掠夺者','恼鬼','掠夺兽','幻翼','烈焰人','恶魂','岩浆怪','守卫者','远古守卫者','潜影贝','凋灵骷髅','疣猪兽','僵尸疣猪兽','流浪者','蠹虫','唤魔者','卫道士','监守者','猪灵','猪灵蛮兵']
+
 function ensureMcData (bot) { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
 
 function fmtNum (n) { return Number.isFinite(n) ? Number(n).toFixed(1) : String(n) }
@@ -13,8 +16,6 @@ function collectNearbyPlayers (bot, range = 16, max = 5) {
     const me = bot.entity?.position
     if (!me) return []
     const list = []
-    const tokensEN = ['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute']
-    const tokensCN = ['苦力怕','僵尸','骷髅','蜘蛛','洞穴蜘蛛','末影人','女巫','史莱姆','溺尸','尸壳','掠夺者','恼鬼','掠夺兽','幻翼','烈焰人','恶魂','岩浆怪','守卫者','远古守卫者','潜影贝','凋灵骷髅','疣猪兽','僵尸疣猪兽','流浪者','蠹虫','唤魔者','卫道士','监守者','猪灵','猪灵蛮兵']
     for (const [name, rec] of Object.entries(bot.players || {})) {
       const e = rec?.entity
       if (!e || e === bot.entity) continue
@@ -73,7 +74,7 @@ function collectHostiles (bot, range = 24) {
         if (!raw && e.displayName) raw = (typeof e.displayName.toString === 'function') ? e.displayName.toString() : String(e.displayName)
         const nm = String(raw || '').toLowerCase().replace(/\u00a7./g, '')
         // Accept exact id or fuzzy token match to handle servers with custom name suffixes
-        const isLike = hs.has(nm) || tokensEN.some(t => nm.includes(t)) || tokensCN.some(t => nm.includes(t))
+        const isLike = hs.has(nm) || HOSTILE_TOKENS_EN.some(t => nm.includes(t)) || HOSTILE_TOKENS_CN.some(t => nm.includes(t))
         if (!isLike) continue
         const d = e.position.distanceTo(me)
         if (Number.isFinite(d) && d <= range) list.push({ name: nm, d })
@@ -227,47 +228,50 @@ function toPrompt (snap) {
   try {
     if (!snap) return ''
     const parts = []
-    // Current task line (if any)
     if (snap.task && snap.task.name) {
-      const src = snap.task.source === 'player' ? '玩家命令' : '自动(背包)'
-      parts.push(`当前任务:${snap.task.name} | 触发:${src}`)
+      const src = snap.task.source === 'player' ? '玩家命令' : '自动'
+      parts.push(`任务:${snap.task.name}(${src})`)
     }
-    const pos = snap.pos ? `你的位置:${snap.pos.x},${snap.pos.y},${snap.pos.z}` : '你的位置:未知'
-    parts.push(pos)
+    const pos = snap.pos ? `位置:${snap.pos.x},${snap.pos.y},${snap.pos.z}` : null
+    if (pos) parts.push(pos)
     parts.push(`维度:${snap.dim}`)
     if (snap.time) parts.push(`时间:${snap.time}`)
-    // Weather only (biome removed from context)
-    if (snap.env?.weather) parts.push(`天气:${snap.env.weather}`)
+    if (snap.env?.weather && snap.env.weather !== '晴') parts.push(`天气:${snap.env.weather}`)
     const v = snap.vitals || {}
     const vParts = []
-    if (v.hp != null) vParts.push(`生命:${Math.round(v.hp)}/20`)
-    if (v.food != null) vParts.push(`饥饿:${v.food}/20`)
-    if (v.saturation != null) vParts.push(`饱和:${Number(v.saturation).toFixed ? Number(v.saturation).toFixed(1) : v.saturation}`)
-    if (vParts.length) parts.push(vParts.join(' | '))
-    // nearby players
+    if (v.hp != null) vParts.push(`HP:${Math.round(v.hp)}`)
+    if (v.food != null) vParts.push(`饥饿:${v.food}`)
+    if (vParts.length) parts.push(vParts.join('/'))
     const npl = snap.nearby?.players || []
-    parts.push(npl.length ? ('附近玩家: ' + npl.map(x => `${x.name}@${fmtNum(x.d)}m`).join(', ')) : '附近玩家: 无')
-    // hostiles
+    if (npl.length) parts.push('玩家:' + npl.map(x => `${x.name}@${fmtNum(x.d)}m`).join(','))
     const hs = snap.nearby?.hostiles || { count: 0, nearest: null }
-    parts.push(hs.count ? (`敌对: ${hs.count}个(最近${hs.nearest.name}@${fmtNum(hs.nearest.d)}m)`) : '敌对: 无')
-    // drops
+    if (hs.count && hs.nearest) parts.push(`敌对:${hs.count}(${hs.nearest.name}@${fmtNum(hs.nearest.d)}m)`)
+    else if (hs.count) parts.push(`敌对:${hs.count}`)
     const dr = snap.nearby?.drops || []
-    parts.push(dr.length ? (`附近掉落物: ${dr.length}个, 最近=${fmtNum(dr[0].d)}m`) : '附近掉落物: 0个')
-    // inventory: full aggregated items + hands + armor
+    if (dr.length) parts.push(`掉落:${dr.length}个`)
     const inv = snap.inv || {}
     const invAll = Array.isArray(inv.all) ? inv.all : (Array.isArray(inv.top) ? inv.top : [])
-    const invLine = invAll.length ? ('背包: ' + invAll.map(it => `${it.name}x${it.count}`).join(', ')) : '背包: 无'
-    const handsLine = `主手: ${inv.held || '无'} | 副手: ${inv.offhand || '无'}`
+    if (invAll.length) {
+      const maxShow = 24
+      const shown = invAll.slice(0, maxShow).map(it => `${it.name}x${it.count}`).join(',')
+      const suffix = invAll.length > maxShow ? `,…+${invAll.length - maxShow}种` : ''
+      parts.push(`背包:${shown}${suffix}`)
+    }
+    const hands = []
+    if (inv.held && inv.held !== '无') hands.push(`主手:${inv.held}`)
+    if (inv.offhand && inv.offhand !== '无') hands.push(`副手:${inv.offhand}`)
+    if (hands.length) parts.push(hands.join('|'))
     const ar = inv.armor || {}
-    const armorLine = `装备: 头=${ar.head || '无'}, 胸=${ar.chest || '无'}, 腿=${ar.legs || '无'}, 脚=${ar.feet || '无'}`
-    parts.push([invLine, handsLine, armorLine].filter(Boolean).join(' | '))
-    // blocks
+    const arParts = []
+    if (ar.head && ar.head !== '无') arParts.push(`头:${ar.head}`)
+    if (ar.chest && ar.chest !== '无') arParts.push(`胸:${ar.chest}`)
+    if (ar.legs && ar.legs !== '无') arParts.push(`腿:${ar.legs}`)
+    if (ar.feet && ar.feet !== '无') arParts.push(`脚:${ar.feet}`)
+    if (arParts.length) parts.push('装备:' + arParts.join(','))
     const bl = snap.blocks || {}
-    const a = bl.under ? `脚下:${bl.under}` : ''
-    const b = bl.look ? `准星:${bl.look}` : ''
-    const blLine = [a, b].filter(Boolean).join(' | ')
-    if (blLine) parts.push(blLine)
-    return '游戏上下文: ' + parts.filter(Boolean).join(' | ')
+    if (bl.under) parts.push(`脚下:${bl.under}`)
+    if (bl.look) parts.push(`准星:${bl.look}`)
+    return '游戏: ' + parts.filter(Boolean).join(' | ')
   } catch { return '' }
 }
 

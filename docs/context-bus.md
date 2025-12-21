@@ -2,22 +2,13 @@
 
 ## 概述
 
-Context Bus 是一个统一的上下文事件总线，将机器人运行时产生的所有上下文信息归一为单一时序流，并以紧凑 XML 格式输出给 LLM。
+Context Bus 是统一的上下文事件总线，将机器人运行时产生的所有上下文信息归一为单一时序流，并以紧凑 XML 格式输出给 LLM。
 
 ## 设计动机
 
 ### 问题
 
-传统设计中，上下文由多个独立模块分别构建：
-
-```
-buildContextPrompt()  → 聊天记录（纯文本）
-buildGameContext()    → 游戏状态
-buildExtrasContext()  → 事件摘要
-buildMemoryContext()  → 长期记忆
-```
-
-这导致：
+传统设计中，上下文由多个独立模块分别构建，导致：
 1. **时序断裂** — 玩家消息、机器人行为、游戏事件各自独立，因果关系丢失
 2. **语义模糊** — 纯文本拼接，AI 难以区分"谁说的"和"发生了什么"
 3. **时间盲区** — 无法感知"刚才"与"10分钟前"的区别
@@ -30,25 +21,46 @@ buildMemoryContext()  → 长期记忆
 
 ### 事件类型
 
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| `player` | 玩家发言 | `<p n="Steve">你好</p>` |
+| `server` | 服务器广播 | `<s>Server restarting</s>` |
+| `bot` | AI 回复 | `<b>收到</b>` |
+| `tool` | 工具输出 | `<t>挖到钻石x3</t>` |
+| `event` | 系统事件 | `<e t="hurt.combat" d="zombie:-2"/>` |
+
+### 系统事件类型
+
 ```
-player  → 玩家发言
-server  → 服务器广播
-bot     → AI 回复
-tool    → 内部工具输出
-event   → 系统事件（death/respawn/skill.end/health.low）
+death              → 死亡
+respawn            → 重生
+skill.end          → 技能完成 (name:success/failed)
+skill.fail         → 技能失败 (name:reason)
+health.low         → 低血量警告 (hp:N)
+hurt.combat        → 战斗伤害 (attacker:delta)
+hurt.explosion     → 爆炸伤害
+hurt.fire          → 火焰伤害
+hurt.drown         → 溺水伤害
+hurt.fall          → 摔落伤害
+hurt.hunger        → 饥饿伤害
+hurt.other         → 其他伤害
+heal               → 治疗 (hp:+delta)
 ```
+
+> 注: 玩家上下线由服务器消息 (`<s>`) 捕获，无需专用事件
 
 ### 序列化格式
 
 ```xml
 <ctx>
 <!-- p=player s=server e=event b=bot t=tool g=gap -->
-<p n="Steve">帮我挖钻石</p>
-<b>好的</b>
-<e t="skill.end" d="mine:success"/>
-<t>收获钻石x3</t>
+<p n="Steve">来打我</p>
+<e t="hurt.combat" d="Steve:-2"/>
+<e t="hurt.combat" d="Steve:-1.5x3"/>
+<b>疼！</b>
 <g d="12m"/>
-<p n="Steve">回来了</p>
+<s>Steve left the game</s>
+<e t="heal" d="hp:+4"/>
 </ctx>
 ```
 
@@ -60,6 +72,24 @@ event   → 系统事件（death/respawn/skill.end/health.low）
 | 属性而非子元素 | 减少嵌套层级，降低解析复杂度 |
 | 头部图例注释 | 自解释，无需外部 schema |
 | Gap 标记 `<g d="5m"/>` | 时间感知，区分连续对话与跨时段 |
+| 事件堆叠 `x3` | 防刷屏，同类事件合并 |
+
+### 事件堆叠 (Anti-Spam)
+
+连续相同类型事件在 5 秒窗口内自动合并：
+
+```
+hurt.hunger hp:-0.5  (t=0s)
+hurt.hunger hp:-0.5  (t=1s)   → 合并为 hp:-0.5x2
+hurt.hunger hp:-0.5  (t=2s)   → 合并为 hp:-0.5x3
+hurt.combat zombie:-2 (t=3s)  → 新事件（类型不同）
+```
+
+**堆叠规则：**
+- 仅 `event` 类型参与堆叠
+- 匹配条件：`eventType` 相同 + `data` 基础部分相同
+- 窗口：5 秒 (`STACK_WINDOW_MS`)
+- 格式：`{base}x{count}`，如 `hp:-0.5x4`
 
 ### 时间间隔检测
 
@@ -135,6 +165,22 @@ for (let i = store.length - 1; i >= 0; i--) {
 
 ## 扩展点
 
+### 伤害类型推断
+
+伤害事件通过优先级链推断类型：
+
+```
+combat (有攻击者实体) > explosion > fire > drown > fall > hunger > other
+```
+
+**检测逻辑：**
+- `combat`: `entityHurt` 事件源为 player/mob，1.5s 内
+- `explosion`: `explosion` 事件后 1.5s 内
+- `fire`: `bot.entity.onFire` 为真
+- `drown`: 头部在水中
+- `fall`: 落地距离 ≥3 格，1.2s 内
+- `hunger`: `bot.food === 0`
+
 ### 新增事件类型
 
 ```javascript
@@ -143,10 +189,6 @@ contextBus.pushEvent('trade.complete', 'emerald:5')
 ```
 
 无需修改序列化逻辑，`<e t="..." d="..."/>` 通用承载。
-
-### 自定义序列化
-
-可扩展 `serializeEntry()` 支持新标签类型，保持向后兼容。
 
 ## 接口速查
 
@@ -174,6 +216,6 @@ Context Bus 的本质是将离散的系统事件编织为连贯的叙事流，�
 
 ---
 
-*Author: Claude + Human*
-*Version: 1.0*
+*Version: 1.2*
 *Date: 2025-12*
+*Changelog: 移除冗余 player.join/leave 事件（服务器消息已覆盖）*
