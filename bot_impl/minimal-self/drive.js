@@ -302,39 +302,8 @@ class DriveEngine {
   }
 
   generateQuestion(driveType, identityContext = '', context = {}) {
-    const type = String(driveType || '').toLowerCase();
-    const idCtx = String(identityContext || '');
-
-    if (type === 'boredom') {
-      // Context-aware: if commitments exist, use task-relevant message
-      if (/待完成承诺:/.test(idCtx)) {
-        return '我正在执行任务中…还有什么需要我做的吗？';
-      }
-      if (!idCtx) return '有人在吗？我有点无聊…我该做点什么？';
-      if (/擅长:/.test(idCtx) && !/学习中:/.test(idCtx)) return '我有点无聊…要不要给我一个小目标？';
-      return '有人在吗？我有点无聊…';
-    }
-
-    if (type === 'existential') {
-      if (!idCtx) return '我现在有点不确定自己该扮演什么角色…你觉得我应该做什么？';
-      if (/待完成承诺:/.test(idCtx)) return '我现在做的这些承诺，有意义吗？我还需要改进什么？';
-      return '我刚才做得怎么样？你觉得我有帮到大家吗？';
-    }
-
-    if (type === 'curiosity') {
-      const nearPlayers = Array.isArray(context?.snapshot?.nearby?.players)
-        ? context.snapshot.nearby.players
-        : [];
-      const names = nearPlayers.map(p => String(p?.name || '')).filter(Boolean);
-      if (names.length) return `嗨 ${names[0]}！你在做什么？我想了解一下~`;
-      return '你们在做什么？我想知道！';
-    }
-
-    if (type === 'social') {
-      return '有人需要帮忙吗？我可以做点什么？';
-    }
-
-    return '有人在吗？';
+    // Disabled: drive questions are currently suppressed to avoid interfering with the architecture
+    return '';
   }
 
   handleFeedback({ driveType, signalType }) {
