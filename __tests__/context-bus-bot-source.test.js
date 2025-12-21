@@ -60,3 +60,17 @@ test('heal events merge into a single total', () => {
   assert.equal(store.length, 1)
   assert.equal(store[0].payload.data, 'hp:+3.2')
 })
+
+test('server messages stack identical lines within window', () => {
+  const state = { ai: { context: {} } }
+  let now = 0
+  const bus = createContextBus({ state, now: () => now })
+  bus.pushServer('1/2 players sleeping')
+  now += 1000
+  bus.pushServer('1/2 players sleeping')
+  now += 1000
+  bus.pushServer('1/2 players sleeping')
+  const store = bus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].payload.content, '1/2 players sleeping x3')
+})

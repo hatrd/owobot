@@ -47,7 +47,10 @@ function createContextBus ({ state, now = () => Date.now() }) {
   }
 
   function pushServer (content) {
-    return push('server', { content: String(content || '').slice(0, 200) })
+    const text = String(content || '').slice(0, 200)
+    const stacked = tryStackServer(text)
+    if (stacked) return stacked
+    return push('server', { content: text })
   }
 
   function pushBot (content) {
@@ -68,9 +71,9 @@ function createContextBus ({ state, now = () => Date.now() }) {
 
   function parseStackKey (eventType, data) {
     const str = String(data ?? '').slice(0, EVENT_DATA_MAX)
-    const m = str.match(/^(.+?)(?:x(\d+))?$/)
+    const m = str.match(/^(.+?)(?:\s*x(\d+))?$/)
     if (!m) return { base: str, count: 1 }
-    const base = m[1]
+    const base = String(m[1] ?? '').trim()
     const n = m[2] ? Number(m[2]) : 1
     return { base, count: Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1 }
   }
@@ -140,6 +143,23 @@ function createContextBus ({ state, now = () => Date.now() }) {
     if (prev.base !== next.base) return null
     const merged = prev.count + next.count
     last.payload.data = formatStackData(prev.base, merged)
+    last.t = nowTs
+    return last
+  }
+
+  function tryStackServer (content) {
+    const store = ensureStore()
+    if (!store.length) return null
+    const last = store[store.length - 1]
+    if (!last || last.type !== 'server' || !last.payload) return null
+    const nowTs = now()
+    if (!Number.isFinite(last.t) || (nowTs - last.t) > STACK_WINDOW_MS) return null
+    const prev = parseStackKey('server', last.payload.content)
+    const next = parseStackKey('server', content)
+    if (prev.base !== next.base) return null
+    const merged = prev.count + next.count
+    const mergedText = formatStackData(prev.base, merged)
+    last.payload.content = mergedText.replace(/x(\d+)$/, ' x$1')
     last.t = nowTs
     return last
   }
