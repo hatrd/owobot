@@ -304,7 +304,6 @@ class DriveEngine {
 
   generateQuestion(driveType, identityContext = '', context = {}) {
     const type = String(driveType || '').toLowerCase();
-    const idCtx = String(identityContext || '').trim();
     const who = (() => {
       try {
         const lastSpeaker = getLastPlayerSpeaker(this.state);
@@ -315,11 +314,11 @@ class DriveEngine {
       return '';
     })();
 
-    const suffix = idCtx ? `（${idCtx.slice(0, 50)}）` : '';
-    if (type === 'boredom') return `有人在吗？找点事做~${suffix}`;
-    if (type === 'curiosity') return `最近发生了什么新鲜事？想去看看${who ? `，${who}` : ''}在忙啥~${suffix}`;
-    if (type === 'social') return `嗨${who ? `，${who}` : ''}，要不要一起做点事？${suffix}`;
-    if (type === 'existential') return `我做得还好吗？有什么建议给我？${suffix}`;
+    // Do not leak identity/narrative context into public drive utterances
+    if (type === 'boredom') return '有人在吗？找点事做~';
+    if (type === 'curiosity') return `最近发生了什么新鲜事？想去看看${who ? `，${who}` : ''}在忙啥~`;
+    if (type === 'social') return `嗨${who ? `，${who}` : ''}，要不要一起做点事？`;
+    if (type === 'existential') return '我做得还好吗？有什么建议给我？';
     return '';
   }
 
