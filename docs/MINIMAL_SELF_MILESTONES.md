@@ -5,7 +5,7 @@
 ## 进度总览
 
 ```
-████████████████████ 100% (M1-M5 全部完成)
+████████▒▒▒▒▒▒▒▒▒▒▒ 60%（M1-M4 被动运行，M5 驱动力未接通主动聊天）
 ```
 
 | 里程碑 | 核心能力 | 交付文件 | 状态 |
@@ -14,7 +14,17 @@
 | M2 身份存储 | 技能统计 + 承诺 | `identity.js` | ✅ |
 | M3 叙事记忆 | I-CAN / I-DID / I-OWE | `narrative.js` | ✅ |
 | M4 自省调节 | 自适应 λ, β | `identity.js` 扩展 | ✅ |
-| M5 内在驱动 | 四元驱动力 | `drive.js` | ✅ |
+| M5 内在驱动 | 四元驱动力 | `drive.js` | ⚠️ 触发禁用（历史刷屏问题，待修复） |
+
+## 可验证计划（待完成）
+
+| 编号 | 目标 | 验收标准 |
+|------|------|----------|
+| P1: 驱动力发言复活（防刷屏） | 重启 `drive.generateQuestion()`，仅在空闲/无外部任务时产出消息；保持 `toolUsed=drive:<type>` | - 当前执行任务/`externalBusy`/pathfinder goal 时不触发<br>- 空闲且有玩家时，每种驱动力最多 1 条/冷却周期<br>- `minimal-self:drive` 实际触发，`ai-chat` 发送 1 条消息并带 `toolUsed=drive:*` |
+| P2: 反馈闭环恢复 | REFS `recentSignals` 的 `drive:*` 信号更新阈值/冷却 | - 发送 IGNORE 信号后，`drive.threshold` 上升且写回 state<br>- POSITIVE/FRUSTRATION 信号分别降低/提升阈值，下一次触发间隔随之变化 |
+| P3: 身份/承诺接入聊天 | 在聊天工具执行链路调用 `scoreAction()`/`addCommitment()`，并把承诺/身份注入 context-bus | - AI 工具执行前可获取 `scoreAction` 结果并在低分时拒绝/提示<br>- 玩家请求承诺时生成 commitment，出现在 `buildIdentityContext()` 及 context-bus XML |
+| P4: 驱动力事件入上下文 | 驱动力触发时写入 context-bus（事件流）供 LLM 参考 | - 触发时生成 `drive.<type>` 事件，能在 prompt XML 中看到<br>- 后续聊天中 LLM 可引用上一次驱动原因（可人工检查日志/prompt trace） |
+| P5: 任务期不累积无聊 | 在执行任务或外部 busy 时冻结/衰减 boredom/social，避免再触发刷屏 | - `state.currentTask` 存在时 boredom/social 不增长（或衰减）<br>- 完成任务后才恢复积累；验证连续任务期间 drive 不触发 |
 
 ## 关键技术决策
 
@@ -38,6 +48,7 @@ M1 ──┬──> M2 ──┬──> M4
 
 | 版本 | 变更 |
 |------|------|
+| 5.2 | 校正状态：M5 触发未启用；新增可验证计划 P1-P5 |
 | 5.1 | M5 完成: DriveEngine + REFS 反馈调节 |
 | 4.0 | M4 完成: 自省 + 自适应参数 |
 | 3.0 | M3 完成: 叙事记忆 |
@@ -46,4 +57,4 @@ M1 ──┬──> M2 ──┬──> M4
 
 ---
 
-*Date: 2024-12*
+*Date: 2025-01*
