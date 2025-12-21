@@ -643,6 +643,7 @@ function createMemoryService ({
     const limit = Math.max(1, opts.limit || cfg?.max || 6)
     const query = typeof opts.query === 'string' ? opts.query : ''
     const sections = []
+    const refs = []
     if (query) {
       const logHits = await searchLogSnippets(query, limit)
       if (logHits.length) {
@@ -655,10 +656,16 @@ function createMemoryService ({
     if (!selected.length) selected = topMemories(limit)
     if (selected.length) {
       const slice = selected.slice(0, limit)
+      for (const m of slice) {
+        const id = ensureMemoryId(m)
+        if (id) refs.push(id)
+      }
       const parts = slice.map((m, idx) => memoryLineWithMeta(m, idx))
       if (parts.length) sections.push(`长期记忆: ${parts.join(' | ')}`)
     }
-    return sections.join(' ')
+    const text = sections.join(' ')
+    if (opts.withRefs) return { text, refs }
+    return text
   }
 
   function memoryLineWithMeta (entry, idx) {

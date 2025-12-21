@@ -173,7 +173,9 @@ function createChatExecutor ({
     const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
-    const memoryCtx = await memory.longTerm.buildContext({ query: content })
+    const memoryCtxResult = await memory.longTerm.buildContext({ query: content, withRefs: true })
+    const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
+    const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     // M2: Identity context from minimal-self
     const identityCtx = (() => {
       try {
@@ -245,13 +247,13 @@ function createChatExecutor ({
         for (const call of toolCalls) {
           const payload = normalizeToolPayload(call)
           if (!payload || !payload.tool) continue
-          const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen })
+          const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen, memoryRefs })
           if (handled) finalText = handled
           speech = ''
         }
-        return finalText
+        return { reply: finalText, memoryRefs }
       }
-      return H.trimReply(reply, maxReplyLen || 120)
+      return { reply: H.trimReply(reply, maxReplyLen || 120), memoryRefs }
     } finally {
       clearTimeout(timeout)
       ctrl.abort = null
@@ -301,10 +303,10 @@ function createChatExecutor ({
     return LONG_TASK_TOOLS.has(String(toolName || '').toLowerCase())
   }
 
-  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen }) {
+  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs }) {
     const toolName = String(payload.tool)
     if (toolName === 'write_memory') {
-      if (speech) pulse.sendChatReply(username, speech)
+      if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const normalized = memory.longTerm.normalizeText(payload.args?.text || '')
       if (!normalized) return H.trimReply('没听懂要记什么呢~', maxReplyLen || 120)
       const importanceRaw = Number(payload.args?.importance)
@@ -345,9 +347,9 @@ function createChatExecutor ({
     }
     const hadSpeech = Boolean(speech)
     if (hadSpeech) {
-      pulse.sendChatReply(username, speech)
+      pulse.sendChatReply(username, speech, { memoryRefs })
     } else if (shouldAutoAckTool(toolName, hadSpeech)) {
-      pulse.sendChatReply(username, '收到，开始执行~', { reason: 'tool_ack' })
+      pulse.sendChatReply(username, '收到，开始执行~', { reason: 'tool_ack', memoryRefs })
     }
     const runTool = async () => {
       try { bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
@@ -364,7 +366,7 @@ function createChatExecutor ({
       const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
       const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
       const finalText = H.trimReply(baseMsg || fallback, maxReplyLen || 120)
-      if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}` })
+      if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     }
     runTool().catch((err) => { log?.warn && log.warn('tool async failure', err?.message || err) })
     return ''
@@ -445,7 +447,7 @@ function createChatExecutor ({
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', text)
       const allowSkip = source === 'followup'
-      const reply = await callAI(username, text, intent, { allowSkip })
+      const { reply, memoryRefs } = await callAI(username, text, intent, { allowSkip })
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
@@ -454,7 +456,7 @@ function createChatExecutor ({
           return
         }
         const replyReason = source === 'followup' ? 'llm_followup' : 'llm_reply'
-        pulse.sendChatReply(username, reply, { reason: replyReason, from: 'LLM' })
+        pulse.sendChatReply(username, reply, { reason: replyReason, from: 'LLM', memoryRefs })
       }
     } catch (e) {
       log?.warn && log.warn('ai error:', e?.message || e)

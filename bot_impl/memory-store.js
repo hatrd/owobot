@@ -54,7 +54,8 @@ function loadEvolution () {
       emotionalState: parsed?.emotionalState || null,
       feedbackStats: parsed?.feedbackStats || null,
       introspectionHistory: safeArray(parsed?.introspectionHistory),
-      lastIntrospection: parsed?.lastIntrospection || null
+      lastIntrospection: parsed?.lastIntrospection || null,
+      recentFeedback: safeArray(parsed?.recentFeedback)
     }
   } catch {
     return {}
@@ -72,6 +73,7 @@ function saveEvolution (data = {}) {
     feedbackStats: data.feedbackStats || null,
     introspectionHistory: safeArray(data.introspectionHistory),
     lastIntrospection: data.lastIntrospection || null,
+    recentFeedback: safeArray(data.recentFeedback),
     savedAt: Date.now()
   }
   try {

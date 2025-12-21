@@ -412,7 +412,8 @@ ${data.currentEmotion}
         emotionalState: state.aiEmotionalState,
         feedbackStats: state.aiFeedback?.stats,
         introspectionHistory: state.aiIntrospection?.history,
-        lastIntrospection: state.aiIntrospection?.lastRun
+        lastIntrospection: state.aiIntrospection?.lastRun,
+        recentFeedback: state.aiFeedback?.recentSignals
       })
     } catch {}
   }

@@ -126,7 +126,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
 
   // REFS: 创建反馈收集器
-  const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore })
+  const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore, memory })
 
   // 定时刷新反馈窗口，防止无新消息时反馈卡住
   const feedbackTimer = setInterval(() => {

@@ -167,6 +167,9 @@ function prepareAiState (state, opts = {}) {
 
   // --- REFS: 反馈系统状态初始化 ---
   const persistedEvolution = opts.persistedEvolution || {}
+  const persistedRecentSignals = Array.isArray(persistedEvolution.recentFeedback)
+    ? persistedEvolution.recentFeedback
+    : []
 
   // 反馈收集状态
   state.aiFeedback = state.aiFeedback || {
@@ -177,7 +180,7 @@ function prepareAiState (state, opts = {}) {
       actionSuccess: persistedEvolution.feedbackStats?.actionSuccess || 0,
       actionFail: persistedEvolution.feedbackStats?.actionFail || 0
     },
-    recentSignals: [],
+    recentSignals: persistedRecentSignals.slice(-100),
     lastWindowId: null
   }
   if (!(state.aiFeedback.windows instanceof Map)) state.aiFeedback.windows = new Map()

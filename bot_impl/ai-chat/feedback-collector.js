@@ -29,7 +29,7 @@ const REACTION_SIGNALS = {
   CONFUSION: { weight: -0.5, patterns: [/什么意思|没听懂|不懂|啥意思|\?\?\?|不明白/i] }
 }
 
-function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), memoryStore }) {
+function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), memoryStore, memory }) {
   function debug (...args) {
     if (log?.debug) log.debug('[REFS:feedback]', ...args)
   }
@@ -71,6 +71,13 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
     pruneWindows()
     debug('opened window', windowId, 'for', targetUser)
     return windowId
+  }
+
+  function applyMemoryFeedback (memoryRefs, score) {
+    if (!memory?.longTerm?.applyFeedback) return
+    const refs = Array.isArray(memoryRefs) ? memoryRefs.filter(Boolean) : []
+    if (!refs.length) return
+    try { memory.longTerm.applyFeedback(refs, score) } catch {}
   }
 
   // 修剪过期窗口
@@ -219,6 +226,9 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
       }
     }
 
+    // 将反馈应用到相关记忆
+    applyMemoryFeedback(win.memoryRefs, averageScore)
+
     info('window resolved:', windowId, 'score:', averageScore.toFixed(2), isPositive ? '(+)' : isNegative ? '(-)' : '(~)')
     persistState()
     return signalRecord
@@ -269,7 +279,8 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
         emotionalState: state.aiEmotionalState,
         feedbackStats: state.aiFeedback?.stats,
         introspectionHistory: state.aiIntrospection?.history,
-        lastIntrospection: state.aiIntrospection?.lastRun
+        lastIntrospection: state.aiIntrospection?.lastRun,
+        recentFeedback: state.aiFeedback?.recentSignals
       })
     } catch (e) {
       debug('persist error:', e?.message)
