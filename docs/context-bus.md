@@ -25,7 +25,7 @@ Context Bus 是统一的上下文事件总线，将机器人运行时产生的�
 |------|------|------|
 | `player` | 玩家发言 | `<p n="Steve">你好</p>` |
 | `server` | 服务器广播 | `<s>Server restarting</s>` |
-| `bot` | AI 回复 | `<b>收到</b>` |
+| `bot` | AI 回复 | `<b>收到</b>`（外部模型回复会带 `f="LLM"`：`<b f="LLM">好呀</b>`） |
 | `tool` | 工具输出 | `<t>挖到钻石x3</t>` |
 | `event` | 系统事件 | `<e t="hurt.combat" d="zombie:-2"/>` |
 

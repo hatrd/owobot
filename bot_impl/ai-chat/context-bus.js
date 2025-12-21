@@ -52,6 +52,14 @@ function createContextBus ({ state, now = () => Date.now() }) {
     return push('bot', { content: String(content || '').slice(0, 200) })
   }
 
+  function pushBotFrom (content, from) {
+    const f = String(from || '').trim()
+    return push('bot', {
+      content: String(content || '').slice(0, 200),
+      from: f ? f.slice(0, 32) : null
+    })
+  }
+
   function pushTool (content) {
     return push('tool', { content: String(content || '').slice(0, 200) })
   }
@@ -129,7 +137,9 @@ function createContextBus ({ state, now = () => Date.now() }) {
       case 'server':
         return `<s>${escapeXml(payload.content)}</s>`
       case 'bot':
-        return `<b>${escapeXml(payload.content)}</b>`
+        return payload.from
+          ? `<b f="${escapeXml(payload.from)}">${escapeXml(payload.content)}</b>`
+          : `<b>${escapeXml(payload.content)}</b>`
       case 'tool':
         return `<t>${escapeXml(payload.content)}</t>`
       case 'event':
@@ -204,6 +214,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
     pushPlayer,
     pushServer,
     pushBot,
+    pushBotFrom,
     pushTool,
     pushEvent,
     buildXml,

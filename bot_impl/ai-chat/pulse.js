@@ -6,6 +6,7 @@ const PULSE_REPEAT_SUPPRESS_MS = 6 * 60 * 1000
 const PULSE_PENDING_EXPIRE_MS = 5 * 60 * 1000
 const ACTIVE_CHAT_WINDOW_MS = 60 * 1000
 const ACTIVE_FOLLOW_DELAY_MS = 5 * 1000
+const PLAYER_CHAT_DEDUPE_MS = 1200
 
 function createPulseService ({
   state,
@@ -218,7 +219,7 @@ function createPulseService ({
     }
   }
 
-  function pushRecentChatEntry (username, text, kind = 'player') {
+  function pushRecentChatEntry (username, text, kind = 'player', meta = {}) {
     const trimmed = String(text || '').trim()
     if (!trimmed) return null
     if (!Array.isArray(state.aiRecent)) state.aiRecent = []
@@ -229,7 +230,11 @@ function createPulseService ({
     enforceRecentLimit()
     if (contextBus) {
       if (kind === 'player') contextBus.pushPlayer(username, trimmed)
-      else if (kind === 'bot') contextBus.pushBot(trimmed)
+      else if (kind === 'bot') {
+        const from = String(meta?.from || '').trim()
+        if (from && typeof contextBus.pushBotFrom === 'function') contextBus.pushBotFrom(trimmed, from)
+        else contextBus.pushBot(trimmed)
+      }
     }
     return entry
   }
@@ -267,9 +272,9 @@ function createPulseService ({
     })()
   }
 
-  function recordBotChat (text) {
+  function recordBotChat (text, meta = {}) {
     try {
-      pushRecentChatEntry(bot?.username || 'bot', text, 'bot')
+      pushRecentChatEntry(bot?.username || 'bot', text, 'bot', meta)
     } catch {}
   }
 
@@ -313,6 +318,72 @@ function createPulseService ({
   function normalizePulseText (text) {
     if (typeof text !== 'string') return ''
     return text.replace(/\s+/g, ' ').trim().toLowerCase()
+  }
+
+  function stripMcFormatting (text) {
+    try {
+      return String(text ?? '').replace(/\u00a7[0-9A-FK-OR]/gi, '')
+    } catch {
+      return ''
+    }
+  }
+
+  function parseAngleBracketPlayerChat (plain) {
+    const cleaned = stripMcFormatting(plain).trim()
+    const m = cleaned.match(/^<([^>]{1,40})>\s*(.+)$/)
+    if (!m) return null
+    const name = String(m[1] || '').trim()
+    const content = String(m[2] || '').trim()
+    if (!name || !content) return null
+    if (/\s/.test(name)) return null
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) return null
+    if (/^server$/i.test(name)) return null
+    return { name, content }
+  }
+
+  function ensureSeenPlayerChats () {
+    if (!(state.aiPulse.seenPlayerChats instanceof Map)) state.aiPulse.seenPlayerChats = new Map()
+    return state.aiPulse.seenPlayerChats
+  }
+
+  function playerChatKey (username, text) {
+    const entry = { user: username, text }
+    return pulseKey(entry)
+  }
+
+  function seenPlayerChatRecently (username, text) {
+    try {
+      if (!state.aiPulse) return false
+      const store = ensureSeenPlayerChats()
+      const key = playerChatKey(username, text)
+      if (!key) return false
+      const ts = store.get(key)
+      return Number.isFinite(ts) && (now() - ts <= PLAYER_CHAT_DEDUPE_MS)
+    } catch {
+      return false
+    }
+  }
+
+  function markPlayerChatSeen (username, text) {
+    try {
+      if (!state.aiPulse) state.aiPulse = {}
+      const store = ensureSeenPlayerChats()
+      const key = playerChatKey(username, text)
+      if (!key) return
+      const ts = now()
+      store.set(key, ts)
+      const cutoff = ts - PLAYER_CHAT_DEDUPE_MS
+      for (const [k, seen] of store.entries()) {
+        if (!Number.isFinite(seen) || seen < cutoff) store.delete(k)
+      }
+      if (store.size > 256) {
+        const ordered = [...store.entries()].sort((a, b) => (a[1] || 0) - (b[1] || 0))
+        while (ordered.length > 200) {
+          const [k] = ordered.shift()
+          store.delete(k)
+        }
+      }
+    } catch {}
   }
 
   function pulseKey (entry) {
@@ -367,12 +438,12 @@ function createPulseService ({
     } catch {}
   }
 
-  function sendDirectReply (username, text) {
+  function sendDirectReply (username, text, opts = {}) {
     const trimmed = String(text || '').trim()
     if (!trimmed) return
     try {
       bot.chat(trimmed)
-      recordBotChat(trimmed)
+      recordBotChat(trimmed, opts)
       if (state.aiPulse && Number.isFinite(state.aiRecentSeq)) state.aiPulse.lastSeq = state.aiRecentSeq
     } catch {}
     noteRecentReply(username)
@@ -388,7 +459,7 @@ function createPulseService ({
   }
 
   function sendChatReply (username, text, opts = {}) {
-    sendDirectReply(username, text)
+    sendDirectReply(username, text, opts)
     activateSession(username, opts.reason || 'chat')
     touchConversationSession(username)
     // REFS: 打开反馈窗口
@@ -574,7 +645,7 @@ function createPulseService ({
       if (log?.info) log.info('pulse reply ->', trimmed)
       try {
         bot.chat(trimmed)
-        recordBotChat(trimmed)
+        recordBotChat(trimmed, { from: 'LLM' })
       } catch (e) { if (log?.warn) log.warn('pulse chat error:', e?.message || e) }
       if (options.username && trigger === 'active') activateSession(options.username, 'pulse_followup')
       revert = false
@@ -643,6 +714,7 @@ function createPulseService ({
       if (!username || username === bot.username) return
       const text = String(message || '').trim()
       if (!text) return
+      markPlayerChatSeen(username, text)
       pushRecentChatEntry(username, text, 'player')
       enqueuePulse(username, text)
     } catch {}
@@ -727,6 +799,14 @@ function createPulseService ({
     try {
       const plain = extractPlainText(message).trim()
       if (!plain) return
+      const maybePlayer = parseAngleBracketPlayerChat(plain)
+      if (maybePlayer) {
+        const selfName = String(bot.username || '').trim()
+        if (selfName && selfName.toLowerCase() === String(maybePlayer.name).toLowerCase()) return
+        if (seenPlayerChatRecently(maybePlayer.name, maybePlayer.content)) return
+        captureChat(maybePlayer.name, maybePlayer.content)
+        return
+      }
       const lower = plain.toLowerCase()
       const selfName = String(bot.username || '')
       if (!selfName) return

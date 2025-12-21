@@ -454,7 +454,7 @@ function createChatExecutor ({
           return
         }
         const replyReason = source === 'followup' ? 'llm_followup' : 'llm_reply'
-        pulse.sendChatReply(username, reply, { reason: replyReason })
+        pulse.sendChatReply(username, reply, { reason: replyReason, from: 'LLM' })
       }
     } catch (e) {
       log?.warn && log.warn('ai error:', e?.message || e)
