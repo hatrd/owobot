@@ -51,6 +51,8 @@ module.exports = function registerInventory (ctx) {
     }]
   ])
 
+  function wait (ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
+
   function collectInventoryStacks (opts = {}) {
     const includeArmor = opts.includeArmor === true
     const includeOffhand = opts.includeOffhand !== false
@@ -148,6 +150,25 @@ module.exports = function registerInventory (ctx) {
     } catch { return 0 }
   }
 
+  function ensureMcData () {
+    try {
+      if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version)
+      return bot.mcData
+    } catch {
+      return null
+    }
+  }
+
+  function isEdible (item) {
+    try {
+      const mc = ensureMcData()
+      if (!mc || !item) return false
+      const def = mc.items[item.type] || mc.itemsByName?.[item.name]
+      const food = mc.foods?.[item.type] || mc.foodsByName?.[def?.name]
+      return Boolean(food)
+    } catch { return false }
+  }
+
   async function equip (args = {}) {
     const { name, dest = 'hand' } = args
     if (!name) return fail('缺少物品名')
@@ -170,6 +191,47 @@ module.exports = function registerInventory (ctx) {
       throw e
     }
     return ok(`已装备 ${item.name} -> ${destination}`)
+  }
+
+  async function use_item (args = {}) {
+    const rawName = args.name
+    if (!rawName) return fail('缺少物品名')
+    const handParam = String(args.hand || args.slot || '').toLowerCase()
+    const destination = (handParam === 'offhand' || handParam === 'off-hand' || handParam === 'off_hand') ? 'off-hand' : 'hand'
+    const offhand = destination === 'off-hand'
+    const item = resolveItemByName(rawName)
+    if (!item) return fail('背包没有该物品')
+
+    try {
+      if (offhand) {
+        await bot.equip(item, 'off-hand')
+      } else {
+        if (isMainHandLocked(bot, item.name)) return fail('主手被锁定，无法切换物品')
+        assertCanEquipHand(bot, item.name)
+        await bot.equip(item, 'hand')
+      }
+    } catch (e) {
+      if (e?.code === 'MAIN_HAND_LOCKED') return fail('主手被锁定，无法切换物品')
+      return fail(e?.message || '装备失败')
+    }
+
+    try { bot.clearControlStates() } catch {}
+    try { bot.pathfinder?.setGoal(null) } catch {}
+
+    const edible = isEdible(item)
+    try {
+      if (edible) {
+        await bot.consume()
+        return ok(`已使用（食用）${item.name}`)
+      }
+      await bot.activateItem(offhand)
+      const holdMs = Math.max(0, parseInt(args.holdMs || '120', 10) || 0)
+      if (holdMs > 0) await wait(holdMs)
+      try { bot.deactivateItem() } catch {}
+      return ok(`已使用 ${item.name}`)
+    } catch (e) {
+      return fail(e?.message || '使用失败')
+    }
   }
 
   async function toss (args = {}) {
@@ -258,5 +320,6 @@ module.exports = function registerInventory (ctx) {
   }
 
   register('equip', equip)
+  register('use_item', use_item)
   register('toss', toss)
 }

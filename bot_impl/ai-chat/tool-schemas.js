@@ -109,6 +109,20 @@ const ACTION_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'use_item',
+    description: 'Equip (main/offhand) and right-click use an item, including consumables like chorus_fruit or throwables like ender_pearl.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Item name to use.' },
+        hand: { type: 'string', description: 'hand|offhand; defaults to hand.' },
+        holdMs: { type: 'number', description: 'Optional hold duration before release, ms.' }
+      },
+      required: ['name'],
+      additionalProperties: true
+    }
+  },
+  {
     name: 'toss',
     description: 'Drop items from inventory, slots, or by name.',
     parameters: {
