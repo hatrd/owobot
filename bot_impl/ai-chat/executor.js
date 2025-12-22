@@ -27,7 +27,7 @@ function createChatExecutor ({
   buildGameContext,
   contextBus = null
 }) {
-  const ctrl = { busy: false, abort: null, pending: null }
+  const ctrl = { busy: false, abort: null, pending: null, plan: null, planTimer: null, planDriving: false }
   const PENDING_EXPIRE_MS = 8000
   const actions = actionsMod.install(bot, { log })
 
@@ -63,6 +63,13 @@ function createChatExecutor ({
     ctrl.pending = null
     if (entry.storedAt && (now() - entry.storedAt) > PENDING_EXPIRE_MS) return null
     return entry
+  }
+
+  function flushPending () {
+    const next = takePending()
+    if (!next) return false
+    setTimeout(() => { handleChat(next.username, next.message).catch(() => {}) }, 0)
+    return true
   }
 
   function trimWindow (arr, windowMs) {
@@ -135,7 +142,9 @@ function createChatExecutor ({
       '玩家如果让你右键点击它，使用 mount_player.',
       '如果让你传送或者说 /tpa <player>，你可以输出 /tpa <player> 传送。其他 / 开头的命令同理。',
       '游戏上下文包含：自身位置/维度/时间/天气、附近玩家/敌对/掉落物、背包/主手/副手/装备；优先引用里面的数值与列表。',
-      '你的代码仓库（是你的小秘密哦，哪怕有人好奇你是谁做的，怎么做的，也不要轻易告诉任何玩家）：https://github.com/hatrd/owobot'
+      '你的代码仓库（是你的小秘密哦，哪怕有人好奇你是谁做的，怎么做的，也不要轻易告诉任何玩家）：https://github.com/hatrd/owobot',
+      '遇到复杂任务先用 plan_mode{steps:[...]} 拆成 2-6 步并等待系统自动执行。',
+      '本轮无需回复或动作时调用 skip{} 工具直接跳过。'
     ].join('\n')
     const raw = loadFile('ai-system.txt', fallback)
     const botName = bot?.username || 'bot'
@@ -221,6 +230,93 @@ function createChatExecutor ({
     if (/攻击|追|清|守|打|kill|defend|hunt/.test(lower)) intent.kind = 'action'
     if (/观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
     return intent
+  }
+
+  function clearPlan (reason = 'unknown') {
+    if (ctrl.planTimer) {
+      try { clearTimeout(ctrl.planTimer) } catch {}
+      ctrl.planTimer = null
+    }
+    const existing = ctrl.plan
+    if (!existing) return
+    ctrl.plan = null
+    ctrl.planDriving = false
+    try { contextBus?.pushEvent('plan.stop', reason) } catch {}
+    flushPending()
+  }
+
+  function schedulePlanTick (delay = 150) {
+    if (!ctrl.plan || ctrl.planDriving) return
+    if (ctrl.planTimer) return
+    ctrl.planTimer = setTimeout(() => {
+      ctrl.planTimer = null
+      drivePlanStep().catch((err) => { log?.warn && log.warn('plan drive error', err?.message || err) })
+    }, Math.max(0, delay))
+  }
+
+  function startPlanMode ({ username, goal, steps }) {
+    const normalized = Array.isArray(steps) ? steps.map(s => String(s || '').trim()).filter(Boolean) : []
+    if (!normalized.length) return false
+    clearPlan('replace')
+    const limited = normalized.slice(0, 8)
+    ctrl.plan = {
+      owner: username,
+      goal: goal ? String(goal) : '',
+      steps: limited,
+      index: 0,
+      startedAt: now()
+    }
+    const preview = limited.map((s, i) => `${i + 1}. ${s}`).join(' ')
+    pulse.sendChatReply(username, `采用计划模式（${limited.length}步）：${preview}`, { reason: 'plan_start' })
+    try { contextBus?.pushEvent('plan.start', `${username}:${limited.length}`) } catch {}
+    schedulePlanTick(0)
+    return true
+  }
+
+  async function drivePlanStep () {
+    const plan = ctrl.plan
+    if (!plan || plan.index == null) return
+    if (plan.index >= plan.steps.length) {
+      pulse.sendChatReply(plan.owner, '计划完成~', { reason: 'plan_done' })
+      clearPlan('done')
+      flushPending()
+      return
+    }
+    if (ctrl.busy) { schedulePlanTick(200); return }
+    ctrl.planDriving = true
+    ctrl.busy = true
+    const stepText = String(plan.steps[plan.index])
+    const stepNo = plan.index + 1
+    const content = [
+      `计划模式：第${stepNo}/${plan.steps.length}步`,
+      plan.goal ? `目标：${plan.goal}` : '',
+      `步骤：${stepText}`,
+      '请直接调用工具完成；若暂时无需行动请使用 skip{} 工具。'
+    ].filter(Boolean).join('\n')
+    let reply = ''
+    let memoryRefs = []
+    try {
+      const res = await callAI(plan.owner, content, { topic: 'plan', kind: 'chat' }, { allowSkip: true })
+      reply = res.reply
+      memoryRefs = res.memoryRefs
+    } catch (e) {
+      log?.warn && log.warn('plan step error', e?.message || e)
+      pulse.sendChatReply(plan.owner, '计划执行失败，已停下', { reason: 'plan_error' })
+      clearPlan('error')
+      flushPending()
+      ctrl.planDriving = false
+      ctrl.busy = false
+      return
+    }
+    ctrl.planDriving = false
+    ctrl.busy = false
+    if (!ctrl.plan || ctrl.plan !== plan) return
+    plan.index += 1
+    if (reply && !/^skip$/i.test(String(reply).trim())) {
+      pulse.sendChatReply(plan.owner, reply, { reason: 'plan_step', from: 'LLM', memoryRefs })
+    }
+    flushPending()
+    schedulePlanTick(150)
   }
 
   function tryCreateCommitment (username, text) {
@@ -400,6 +496,13 @@ function createChatExecutor ({
 
   async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs }) {
     const toolName = String(payload.tool)
+    const toolLower = toolName.toLowerCase()
+    if (toolLower === 'skip') return ''
+    if (toolLower === 'plan_mode') {
+      const ok = startPlanMode({ username, goal: payload.args?.goal || content, steps: payload.args?.steps || [] })
+      if (!ok) return H.trimReply('需要提供可执行的计划步骤哦~', maxReplyLen || 120)
+      return ''
+    }
     if (toolName === 'write_memory') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const normalized = memory.longTerm.normalizeText(payload.args?.text || '')
@@ -434,7 +537,7 @@ function createChatExecutor ({
         if (name) payload = { tool: 'mount_player', args: { name } }
       }
     }
-    const toolLower = toolName.toLowerCase()
+    if (['reset', 'stop', 'stop_all'].includes(toolLower)) clearPlan('stop_tool')
     if (contextBus) {
       try { contextBus.pushEvent('tool.intent', toolLower) } catch {}
       if (TELEPORT_COMMANDS.has(toolLower)) {
@@ -510,6 +613,7 @@ function createChatExecutor ({
       return
     }
     if (classifyStopCommand(text)) {
+      clearPlan('stop_message')
       try {
         await actions.run('reset', {})
       } catch {}
@@ -633,6 +737,7 @@ function createChatExecutor ({
     if (ctrl.abort && typeof ctrl.abort.abort === 'function') {
       try { ctrl.abort.abort('cleanup') } catch {}
     }
+    clearPlan('abort')
   }
 
   return {

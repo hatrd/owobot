@@ -482,6 +482,31 @@ const SPECIAL_TOOLS = [
       required: ['text'],
       additionalProperties: false
     }
+  },
+  {
+    name: 'plan_mode',
+    description: 'For complex tasks, output an ordered plan list (short, executable steps). The system will execute the steps one by one automatically.',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: { type: 'string', description: 'Player goal or summary of the request.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'Ordered, concise steps for execution.' },
+        note: { type: 'string', description: 'Optional caveats or prerequisites.' }
+      },
+      required: ['steps'],
+      additionalProperties: true
+    }
+  },
+  {
+    name: 'skip',
+    description: 'Do nothing this turn (no reply, no action). Use when waiting or nothing is needed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'Why we are skipping this round.' }
+      },
+      additionalProperties: true
+    }
   }
 ]
 
