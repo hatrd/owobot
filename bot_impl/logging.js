@@ -2,6 +2,7 @@ const fs = require('fs')
 const path = require('path')
 
 const LEVELS = { off: -1, error: 0, warn: 1, info: 2, debug: 3 }
+const DEFAULT_SPEC = 'stats:warn' // quiet verbose stats logs unless explicitly enabled
 
 function parseSpec (spec) {
   const map = new Map()
@@ -18,7 +19,8 @@ function parseSpec (spec) {
 }
 
 function defaultLevelFromEnv () {
-  const debugEnv = String(process.env.MC_DEBUG ?? '1').toLowerCase()
+  // Default MC_DEBUG=0 -> quiet (warn) unless explicitly enabled
+  const debugEnv = String(process.env.MC_DEBUG ?? '0').toLowerCase()
   const debugOn = !(debugEnv === '0' || debugEnv === 'false' || debugEnv === 'no' || debugEnv === 'off')
   return debugOn ? LEVELS.info : LEVELS.warn
 }
@@ -34,7 +36,7 @@ function loadInitialSpec () {
       if (fs.existsSync(p)) spec = String(fs.readFileSync(p)).trim()
     } catch {}
   }
-  return spec || ''
+  return spec || DEFAULT_SPEC
 }
 
 function applySpec (spec) {

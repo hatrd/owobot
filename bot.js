@@ -70,7 +70,7 @@ if (argv.args['iterate-interval']) {
   if (ms) process.env.AUTO_ITERATE_INTERVAL_MS = String(ms)
 }
 
-const DEBUG = parseBool(process.env.MC_DEBUG, true)
+const DEBUG = parseBool(process.env.MC_DEBUG, false)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
 function ts () { return formatDateTimeTz() }
 

@@ -127,9 +127,9 @@ function activate (botInstance, options = {}) {
   }
 
   if (!state.chatTeleportPatched) {
-    if (!bot || typeof bot.chat !== 'function') {
-      try { coreLog.warn('chat intercept skipped: bot.chat unavailable') } catch {}
-    } else {
+    const tryInstallChatIntercept = () => {
+      if (state.chatTeleportPatched) return true
+      if (!bot || typeof bot.chat !== 'function') return false
       const originalChat = bot.chat.bind(bot)
       bot.chat = function patchedChat (...args) {
         try {
@@ -149,6 +149,18 @@ function activate (botInstance, options = {}) {
         return originalChat(...args)
       }
       state.chatTeleportPatched = true
+      return true
+    }
+    const installed = tryInstallChatIntercept()
+    if (!installed) {
+      // Mineflayer may attach chat later during startup; retry quietly before warning
+      setTimeout(() => {
+        if (state.chatTeleportPatched) return
+        if (!tryInstallChatIntercept()) {
+          try { coreLog.warn('chat intercept unavailable: bot.chat still missing') } catch {}
+        }
+      }, 1000)
+      try { on('spawn', tryInstallChatIntercept) } catch {}
     }
   }
 

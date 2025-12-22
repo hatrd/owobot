@@ -137,6 +137,34 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // REFS: 创建上下文总线
   const contextBus = createContextBus({ state, now })
 
+  function recordPickupEvent (entity) {
+    try {
+      if (!contextBus || !entity) return
+      const drop = (typeof entity.getDroppedItem === 'function') ? entity.getDroppedItem() : null
+      const rawName = (() => {
+        if (drop?.name) return drop.name
+        if (entity?.item?.name) return entity.item.name
+        if (entity?.displayName) return entity.displayName
+        if (entity?.name) return entity.name
+        return 'item'
+      })()
+      const name = String(rawName || 'item').replace(/\u00a7./g, '')
+      const rawCount = drop?.count ?? entity?.item?.count
+      const count = (Number.isFinite(rawCount) && rawCount > 0) ? Math.floor(rawCount) : 1
+      const data = count > 1 ? `${name} x${count}` : name
+      contextBus.pushEvent('pickup', data)
+    } catch {}
+  }
+
+  const onPlayerCollect = (collector, collected) => {
+    try {
+      if (!collector || collector !== bot.entity) return
+      recordPickupEvent(collected)
+    } catch {}
+  }
+  on('playerCollect', onPlayerCollect)
+  registerCleanup && registerCleanup(() => { try { bot.off('playerCollect', onPlayerCollect) } catch {} })
+
   let executor
   const pulse = createPulseService({
     state,
