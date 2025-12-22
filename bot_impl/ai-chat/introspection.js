@@ -146,7 +146,9 @@ ${data.currentEmotion}
           })
           result = parseIntrospectionResult(response)
         } catch (e) {
-          info('AI调用失败:', e?.message)
+          const errMsg = e?.message || e
+          info('AI调用失败:', errMsg, 'model=', state?.ai?.model, 'base=', state?.ai?.baseUrl, 'path=', state?.ai?.path)
+          if (log?.warn) log.warn('[REFS:introspect] aiCall error', { err: e, model: state?.ai?.model, base: state?.ai?.baseUrl, path: state?.ai?.path })
         }
       }
 
