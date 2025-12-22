@@ -1,4 +1,5 @@
 const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
+const timeUtils = require('../time-utils')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -31,6 +32,24 @@ function createChatExecutor ({
   const actions = actionsMod.install(bot, { log })
 
   const estTokensFromText = H.estTokensFromText
+  const metaTimeZone = (() => {
+    try { return timeUtils.getTimeZone() } catch { return 'Asia/Shanghai' }
+  })()
+  const metaTimeFormatter = (() => {
+    try {
+      return new Intl.DateTimeFormat('zh-CN', {
+        timeZone: metaTimeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      })
+    } catch {
+      return null
+    }
+  })()
 
   function queuePending (username, message) {
     const text = String(message || '')
@@ -121,6 +140,28 @@ function createChatExecutor ({
     const raw = loadFile('ai-system.txt', fallback)
     const botName = bot?.username || 'bot'
     return raw.replace(/{{BOT_NAME}}/g, botName)
+  }
+
+  function buildMetaContext () {
+    try {
+      if (!metaTimeFormatter) throw new Error('no formatter')
+      const parts = {}
+      for (const part of metaTimeFormatter.formatToParts(new Date(now()))) {
+        if (part.type === 'literal') continue
+        parts[part.type] = part.value
+      }
+      const segments = []
+      if (parts.year) segments.push(`${parts.year}年`)
+      if (parts.month) segments.push(`${parts.month}月`)
+      if (parts.day) segments.push(`${parts.day}日`)
+      if (parts.hour) segments.push(`${parts.hour}时`)
+      if (parts.minute) segments.push(`${parts.minute}分`)
+      const timeText = segments.join('')
+      if (!timeText) throw new Error('empty time')
+      return `现在是北京时间 ${timeText}，你在 ShikiMC 服务器中。服主为 Shiki。`
+    } catch {
+      return '你在 ShikiMC 服务器中。服主为 Shiki。'
+    }
   }
 
   function buildContextPrompt (username) {
@@ -235,10 +276,12 @@ function createChatExecutor ({
         return ms?.buildIdentityContext?.() || ''
       } catch { return '' }
     })()
+    const metaCtx = buildMetaContext()
     const allowSkip = options?.allowSkip === true
     const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
     const messages = [
       { role: 'system', content: systemPrompt() },
+      metaCtx ? { role: 'system', content: metaCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       identityCtx ? { role: 'system', content: identityCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,

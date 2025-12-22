@@ -5,7 +5,7 @@
 ## 安装
 - 安装依赖：`npm install`
 - 服务器环境变量（可选）：`MC_HOST`、`MC_PORT`、`MC_USERNAME`、`MC_AUTH`、`MC_PASSWORD`、`MC_DEBUG(默认1)`、`MC_GREET(默认1)`、`MC_LOG_DIR`(默认 `./logs`)、`MC_LOG_FILE`（自定义路径或 `off`）
-- AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`、`DEEPSEEK_MODEL`
+- AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`、`DEEPSEEK_MODEL`（或 `AI_MODEL`）
 
 ## 运行
 - `npm start`（单进程热重载）

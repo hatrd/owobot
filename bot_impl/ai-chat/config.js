@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat'
+const DEFAULT_MODEL = process.env.AI_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-chat'
 const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
 const DEFAULT_RECENT_COUNT = (() => {

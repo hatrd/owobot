@@ -5,7 +5,7 @@ Mineflayer bot with hot reload and optional AI chat.
 ## Setup
 - Install: `npm install`
 - Server env (optional): `MC_HOST`, `MC_PORT`, `MC_USERNAME`, `MC_AUTH`, `MC_PASSWORD`, `MC_DEBUG` (default 1), `MC_GREET` (default 1), `MC_LOG_DIR` (default `./logs`), `MC_LOG_FILE` (custom path or `off`)
-- AI env (optional): `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_PATH`, `DEEPSEEK_MODEL`
+- AI env (optional): `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_PATH`, `DEEPSEEK_MODEL` (or `AI_MODEL`)
 
 ## Run
 - `npm start` — hot‑reloadable single process

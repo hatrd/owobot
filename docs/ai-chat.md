@@ -42,11 +42,12 @@ const xmlCtx = contextBus.buildXml({
 
 LLM 收到的上下文顺序:
 1. `systemPrompt()` — 行为规范
-2. `buildGameContext()` — 游戏快照 (位置/血量/背包)
-3. `buildIdentityContext()` — minimal-self 身份画像
-4. `buildMemoryContext()` — 长期记忆检索
-5. `contextBus.buildXml()` — 聊天 + 事件时序流
-6. 用户消息
+2. 元信息 — “现在是北京时间 …，你在 ShikiMC 服务器中。服主为 Shiki。”
+3. `buildGameContext()` — 游戏快照 (位置/血量/背包)
+4. `buildIdentityContext()` — minimal-self 身份画像
+5. `buildMemoryContext()` — 长期记忆检索
+6. `contextBus.buildXml()` — 聊天 + 事件时序流
+7. 用户消息
 
 ## 5. 对话记忆
 
