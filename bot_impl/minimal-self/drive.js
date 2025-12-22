@@ -303,6 +303,7 @@ class DriveEngine {
   }
 
   generateQuestion(driveType, identityContext = '', context = {}) {
+    return '';
     const type = String(driveType || '').toLowerCase();
     const who = (() => {
       try {
