@@ -211,6 +211,49 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   memory.setMessenger(pulse.sendDirectReply)
 
+  const AUTO_LOOK_GREET_COOLDOWN_MS = 10 * 60 * 1000
+  function ensureAutoLookState () {
+    if (!state.autoLookGreet || typeof state.autoLookGreet !== 'object') state.autoLookGreet = {}
+    const slice = state.autoLookGreet
+    if (!(slice.cooldowns instanceof Map)) slice.cooldowns = new Map()
+    if (!(slice.inFlight instanceof Set)) slice.inFlight = new Set()
+    if (!(slice.lastEmit instanceof Map)) slice.lastEmit = new Map()
+    return slice
+  }
+
+  async function onAutoLookGreet (payload) {
+    try {
+      if (!state.ai?.enabled || !state.ai?.key) return
+      const username = String(payload?.username || payload?.name || payload?.player || '').trim()
+      if (!username) return
+      const self = String(bot.username || '').trim()
+      if (self && username.toLowerCase() === self.toLowerCase()) return
+      const slice = ensureAutoLookState()
+      const nowTs = now()
+      const last = slice.cooldowns.get(username)
+      if (Number.isFinite(last) && (nowTs - last) < AUTO_LOOK_GREET_COOLDOWN_MS) return
+      if (slice.inFlight.has(username)) return
+      slice.inFlight.add(username)
+      let greeted = false
+      try {
+        const prompt = `玩家 ${username} 正在你身边并被你注意到，请用一句温暖、自然的中文主动打招呼，鼓励对方继续聊天，控制在20字以内。`
+        const intent = { topic: 'greet', kind: 'chat', nearby: true }
+        const { reply } = await executor.callAI(username, prompt, intent, { allowSkip: false })
+        const text = String(reply || '').trim()
+        const finalMsg = text || `你好呀 ${username}，很高兴见到你！`
+        pulse.sendChatReply(username, finalMsg, { reason: 'look_greet', from: text ? 'LLM' : 'fallback' })
+        greeted = true
+      } catch (err) {
+        log?.warn && log.warn('auto-look greet error:', err?.message || err)
+      } finally {
+        slice.inFlight.delete(username)
+        if (greeted) slice.cooldowns.set(username, nowTs)
+      }
+    } catch {}
+  }
+  bot.on('auto-look:greet', onAutoLookGreet)
+  registerCleanup && registerCleanup(() => { try { bot.off('auto-look:greet', onAutoLookGreet) } catch {} })
+
   const onChat = (username, message) => { executor.handleChat(username, message).catch(() => {}) }
   const onChatCapture = (username, message) => pulse.captureChat(username, message)
   const onMessage = (message) => pulse.captureSystemMessage(message)

@@ -9,6 +9,7 @@ class WatcherManager {
     this.idleTimer = null
     this.explosionCleanup = null
     this.lastFireReconnectAt = 0
+    this.LOOK_GREET_COOLDOWN_MS = 10 * 60 * 1000
   }
 
   onSpawn() {
@@ -18,6 +19,7 @@ class WatcherManager {
     }, 1500)
     this.idleTimer = setInterval(() => this.trackNearbyEntity(), 120)
     this.registerExplosionGuard()
+    this.pruneLookGreetHistory()
   }
 
   stopTimers() {
@@ -126,9 +128,51 @@ class WatcherManager {
       const name = String(entity.name || entity.displayName || '').toLowerCase()
       if (entity.type === 'player') {
         this.bot.lookAt(entity.position.offset(0, 1.6, 0))
+        this.maybeGreetLookTarget(entity)
       } else if (entity.type === 'mob' && name !== 'enderman') {
         this.bot.lookAt(entity.position)
       }
+    } catch {}
+  }
+
+  ensureLookGreetState () {
+    if (!this.state.autoLookGreet || typeof this.state.autoLookGreet !== 'object') this.state.autoLookGreet = {}
+    const slice = this.state.autoLookGreet
+    if (!(slice.cooldowns instanceof Map)) slice.cooldowns = new Map()
+    if (!(slice.inFlight instanceof Set)) slice.inFlight = new Set()
+    if (!(slice.lastEmit instanceof Map)) slice.lastEmit = new Map()
+    return slice
+  }
+
+  pruneLookGreetHistory () {
+    const slice = this.ensureLookGreetState()
+    const now = Date.now()
+    for (const [name, ts] of [...slice.cooldowns.entries()]) {
+      if (!Number.isFinite(ts) || now - ts > this.LOOK_GREET_COOLDOWN_MS) slice.cooldowns.delete(name)
+    }
+  }
+
+  maybeGreetLookTarget (entity) {
+    try {
+      const slice = this.ensureLookGreetState()
+      const username = String(entity.username || entity.name || '').trim()
+      if (!username) return
+      const selfName = String(this.bot.username || '').trim()
+      if (selfName && username.toLowerCase() === selfName.toLowerCase()) return
+      const now = Date.now()
+      if (slice.inFlight.has(username)) return
+      const last = slice.cooldowns.get(username)
+      if (Number.isFinite(last) && (now - last) < this.LOOK_GREET_COOLDOWN_MS) return
+      const lastEmit = slice.lastEmit.get(username)
+      if (Number.isFinite(lastEmit) && (now - lastEmit) < 2000) return
+      slice.lastEmit.set(username, now)
+      const payload = {
+        username,
+        entityId: entity.id,
+        reason: 'auto-look',
+        position: entity.position ? { x: entity.position.x, y: entity.position.y, z: entity.position.z } : null
+      }
+      try { this.bot.emit('auto-look:greet', payload) } catch {}
     } catch {}
   }
 
