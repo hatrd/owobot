@@ -408,7 +408,10 @@ function createChatExecutor ({
     }
     const ac = new AbortController()
     ctrl.abort = ac
-    const timeout = setTimeout(() => ac.abort('timeout'), 12000)
+    const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
+      ? state.ai.timeoutMs
+      : defaults.DEFAULT_TIMEOUT_MS
+    const timeout = setTimeout(() => ac.abort('timeout'), timeoutMs)
     try {
       const res = await fetch(url, {
         method: 'POST',

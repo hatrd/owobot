@@ -595,7 +595,7 @@ function createPulseService ({
     return { entries: capped, processed, lastSeq: nextSeq }
   }
 
-  async function runPulseModel ({ transcript }) {
+  async function runPulseModel ({ transcript, signal }) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) return ''
     const botName = bot?.username || 'bot'
@@ -624,7 +624,8 @@ function createPulseService ({
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal
     })
     if (!res.ok) return ''
     const data = await res.json()
@@ -695,8 +696,11 @@ function createPulseService ({
     try {
       const ac = new AbortController()
       pulseCtrl.abort = ac
-      timeout = setTimeout(() => ac.abort('pulse_timeout'), 12000)
-      summary = await runPulseModel({ transcript })
+      const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
+        ? state.ai.timeoutMs
+        : defaults.DEFAULT_TIMEOUT_MS
+      timeout = setTimeout(() => ac.abort('pulse_timeout'), timeoutMs)
+      summary = await runPulseModel({ transcript, signal: ac.signal })
       if (!summary) {
         revert = false
         return

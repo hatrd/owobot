@@ -47,6 +47,7 @@ function prepareAiState (state, opts = {}) {
     DEFAULT_MODEL,
     DEFAULT_BASE,
     DEFAULT_PATH,
+    DEFAULT_TIMEOUT_MS,
     DEFAULT_RECENT_COUNT,
     DEFAULT_RECENT_WINDOW_SEC,
     DEFAULT_MEMORY_STORE_MAX,
@@ -78,9 +79,11 @@ function prepareAiState (state, opts = {}) {
     budgetMonth: null,
     budgetTotal: null,
     maxTokensPerCall: 512,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
     notifyOnBudget: true,
     trace: false
   }
+  if (!Number.isFinite(state.ai.timeoutMs) || state.ai.timeoutMs <= 0) state.ai.timeoutMs = DEFAULT_TIMEOUT_MS
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
     ...DEF_CTX,

@@ -15,6 +15,7 @@ const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
   DEFAULT_PATH,
+  DEFAULT_TIMEOUT_MS,
   DEFAULT_RECENT_COUNT,
   DEFAULT_RECENT_WINDOW_SEC,
   DEFAULT_MEMORY_STORE_MAX,
@@ -110,7 +111,16 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     } catch { return '' }
   }
 
-  const defaults = { DEFAULT_MODEL, DEFAULT_BASE, DEFAULT_PATH, DEFAULT_RECENT_COUNT, DEFAULT_RECENT_WINDOW_SEC, DEFAULT_MEMORY_STORE_MAX, buildDefaultContext }
+  const defaults = {
+    DEFAULT_MODEL,
+    DEFAULT_BASE,
+    DEFAULT_PATH,
+    DEFAULT_TIMEOUT_MS,
+    DEFAULT_RECENT_COUNT,
+    DEFAULT_RECENT_WINDOW_SEC,
+    DEFAULT_MEMORY_STORE_MAX,
+    buildDefaultContext
+  }
   const memory = createMemoryService({ state, log, memoryStore, defaults, bot, traceChat, now })
   const persistedMemory = memoryStore.load()
   const persistedEvolution = memoryStore.loadEvolution()
@@ -274,7 +284,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
 
     const ac = new AbortController()
-    const timeout = setTimeout(() => ac.abort('timeout'), 12000)
+    const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
+      ? state.ai.timeoutMs
+      : defaults.DEFAULT_TIMEOUT_MS
+    const timeout = setTimeout(() => ac.abort('timeout'), timeoutMs)
     try {
       const res = await fetch(url, {
         method: 'POST',
