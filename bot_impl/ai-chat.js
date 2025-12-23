@@ -133,6 +133,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     dayStart,
     monthStart
   })
+
+  function validateAiConfig () {
+    const errs = []
+    const key = String(state.ai?.key || '').trim()
+    const base = String(state.ai?.baseUrl || '').trim()
+    const model = String(state.ai?.model || '').trim()
+    if (!key) errs.push('DEEPSEEK_API_KEY / state.ai.key missing')
+    try { new URL(base || defaults.DEFAULT_BASE) } catch { errs.push(`Invalid AI baseUrl: "${base}"`) }
+    if (!model) errs.push('AI model missing (state.ai.model)')
+    if (errs.length) {
+      const msg = `[AI] Config error: ${errs.join('; ')}`
+      if (log?.error) log.error(msg)
+      else console.error(msg)
+    }
+  }
+  validateAiConfig()
+
   if (!state.aiExtras || typeof state.aiExtras !== 'object') state.aiExtras = { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
 
