@@ -76,7 +76,7 @@ heal               → 治疗 (hp:+delta)
 
 ### 事件堆叠 (Anti-Spam)
 
-连续相同类型事件在 5 秒窗口内自动合并：
+连续相同类型事件自动合并：
 
 ```
 hurt.hunger hp:-0.5  (t=0s)
@@ -88,7 +88,7 @@ hurt.combat zombie:-2 (t=3s)  → 新事件（类型不同）
 **堆叠规则：**
 - 仅 `event` 类型参与堆叠
 - 匹配条件：`eventType` 相同 + `data` 基础部分相同
-- 窗口：5 秒 (`STACK_WINDOW_MS`)
+- 窗口：默认 5 秒；`pickup`、`hurt.*` 使用与 gap 阈值相同的 5 分钟窗口，方便合并长时间的战斗或拾取刷屏
 - 格式：`{base}x{count}`，如 `hp:-0.5x4`
 
 ### 时间间隔检测

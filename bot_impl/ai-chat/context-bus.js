@@ -115,13 +115,21 @@ function createContextBus ({ state, now = () => Date.now() }) {
     return `${trimmedSubject}:${signed}`
   }
 
+  function resolveStackWindowMs (eventType) {
+    if (!eventType) return STACK_WINDOW_MS
+    if (eventType === 'pickup') return GAP_THRESHOLD_MS
+    if (/^hurt\./.test(eventType)) return GAP_THRESHOLD_MS
+    return STACK_WINDOW_MS
+  }
+
   function tryStackEvent (eventType, data) {
     const store = ensureStore()
     if (!store.length) return null
     const last = store[store.length - 1]
     if (!last || last.type !== 'event' || !last.payload) return null
     const nowTs = now()
-    if (!Number.isFinite(last.t) || (nowTs - last.t) > STACK_WINDOW_MS) return null
+    const stackWindow = resolveStackWindowMs(eventType)
+    if (!Number.isFinite(last.t) || (nowTs - last.t) > stackWindow) return null
     if (String(last.payload.eventType || '') !== String(eventType || '')) return null
 
     if (isNumericStackEvent(eventType)) {

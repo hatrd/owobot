@@ -47,6 +47,18 @@ test('hurt events merge and sum damage within short window', () => {
   assert.equal(store[0].payload.data, 'Rilishuibin:-2.2')
 })
 
+test('hurt events still merge when spaced beyond base window', () => {
+  const state = { ai: { context: {} } }
+  let now = 0
+  const bus = createContextBus({ state, now: () => now })
+  bus.pushEvent('hurt.combat', 'zombie:-0.4')
+  now += 10 * 1000
+  bus.pushEvent('hurt.combat', 'zombie:-0.6')
+  const store = bus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].payload.data, 'zombie:-1')
+})
+
 test('heal events merge into a single total', () => {
   const state = { ai: { context: {} } }
   let now = 0
@@ -59,6 +71,18 @@ test('heal events merge into a single total', () => {
   const store = bus.getStore()
   assert.equal(store.length, 1)
   assert.equal(store[0].payload.data, 'hp:+3.2')
+})
+
+test('pickup events stack adjacent entries even when not instantaneous', () => {
+  const state = { ai: { context: {} } }
+  let now = 0
+  const bus = createContextBus({ state, now: () => now })
+  bus.pushEvent('pickup', 'sea_lantern x3')
+  now += 12 * 1000
+  bus.pushEvent('pickup', 'sea_lantern x4')
+  const store = bus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].payload.data, 'sea_lanternx7')
 })
 
 test('server messages stack identical lines within window', () => {
