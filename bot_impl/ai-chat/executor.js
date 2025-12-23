@@ -140,7 +140,8 @@ function createChatExecutor ({
     try {
       if (!metaTimeFormatter) throw new Error('no formatter')
       const parts = {}
-      for (const part of metaTimeFormatter.formatToParts(new Date(now()))) {
+      const nowDate = new Date(now())
+      for (const part of metaTimeFormatter.formatToParts(nowDate)) {
         if (part.type === 'literal') continue
         parts[part.type] = part.value
       }
@@ -152,7 +153,11 @@ function createChatExecutor ({
       if (parts.minute) segments.push(`${parts.minute}分`)
       const timeText = segments.join('')
       if (!timeText) throw new Error('empty time')
-      return `现在是北京时间 ${timeText}，你在 ShikiMC 服务器中。服主为 Shiki。`
+      const weekday = timeUtils.getWeekdayLabel(nowDate)
+      const holidays = timeUtils.detectHolidays(nowDate)
+      const holidayText = holidays.length ? ` 今日节日：${holidays.join('、')}` : ''
+      const weekdayText = weekday ? ` ${weekday}` : ''
+      return `现在是北京时间 ${timeText}${weekdayText}${holidayText}，你在 ShikiMC 服务器中。服主为 Shiki。`
     } catch {
       return '你在 ShikiMC 服务器中。服主为 Shiki。'
     }
