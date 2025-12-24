@@ -55,6 +55,10 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     return last > 0 && (Date.now() - last) <= PROMPT_VALID_MS
   }
 
+  function hasRetryContext (now = Date.now()) {
+    return hasWantedContext(now) || hasActivePromptContext()
+  }
+
   function hasWantedContext (now = Date.now()) {
     const until = state.autoBackWantedUntil || 0
     const wantedId = state.autoBackWantedDeathId || 0
@@ -400,8 +404,9 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
 
   function beginBackAttempt (now, source, opts = {}) {
     const hasPrompt = opts && opts.hasPrompt === true
+    const ignoreCooldown = opts && opts.ignoreCooldown === true
     const currentDeathId = state.autoBackDeathId || 0
-    if (now < (state.autoBackCooldownUntil || 0) && (state.autoBackCooldownDeathId || 0) === currentDeathId) return false
+    if (!ignoreCooldown && now < (state.autoBackCooldownUntil || 0) && (state.autoBackCooldownDeathId || 0) === currentDeathId) return false
     state.autoBackCooldownUntil = now + 15000 // 15s debounce
     state.autoBackCooldownDeathId = currentDeathId
     state.autoBackAwaitingPrompt = false
@@ -424,7 +429,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
 
   function scheduleBackRetry (reason, delayMs = BACK_RETRY_INTERVAL_MS) {
     try {
-      if (!hasWantedContext()) return
+      if (!hasRetryContext()) return
       if (backRetryTimer) return
       const now = Date.now()
       const dueAt = Math.max(now + Math.max(50, delayMs), (state.autoBackRetryAt || 0) + BACK_RETRY_INTERVAL_MS)
@@ -433,11 +438,11 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
       backRetryTimer = setTimeout(() => {
         backRetryTimer = null
         const tsNow = Date.now()
-        if (!hasWantedContext(tsNow)) return
+        if (!hasRetryContext(tsNow)) return
         if (state.backInProgress) return
         if (tsNow - (state.backLastCmdAt || 0) < 800) return
         debug('retrying /back (wanted context)', { reason, retryCount: state.autoBackRetryCount, deathId: state.autoBackDeathId })
-        beginBackAttempt(tsNow, `retry:${reason || 'unknown'}`, { hasPrompt: false })
+        beginBackAttempt(tsNow, `retry:${reason || 'unknown'}`, { hasPrompt: false, ignoreCooldown: true })
       }, Math.max(0, dueAt - now))
     } catch {}
   }
