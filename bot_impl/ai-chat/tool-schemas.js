@@ -443,13 +443,17 @@ const ACTION_TOOL_DEFINITIONS = [
   },
   {
     name: 'query_leaderboard',
-    description: '查询排行榜，返回活跃度最高的玩家列表',
+    description: '查询排行榜，返回活跃度最高的玩家列表，可指定玩家/日期/日期范围',
     parameters: {
       type: 'object',
       properties: {
         type: { type: 'string', description: '排行类型: online(在线时长)/chat(聊天)/deaths(死亡)/score(活跃度)，默认score' },
-        period: { type: 'string', description: '时间范围: all(总计)/today(今日)，默认all' },
-        limit: { type: 'number', description: '返回数量，默认5' }
+        period: { type: 'string', description: '时间范围: all(总计)/today(今日)/yesterday(昨日)，默认all；当指定 date/startDate/endDate 时忽略' },
+        limit: { type: 'number', description: '返回数量，默认5，最多10' },
+        name: { type: 'string', description: '玩家名称，可选；提供后会额外返回该玩家排名' },
+        date: { type: 'string', description: '指定日期 YYYY-MM-DD，统计该日数据' },
+        startDate: { type: 'string', description: '范围起始 YYYY-MM-DD，和 endDate 一起使用，若只给一端则视为同一天' },
+        endDate: { type: 'string', description: '范围结束 YYYY-MM-DD，和 startDate 一起使用，若只给一端则视为同一天' }
       },
       additionalProperties: true
     }

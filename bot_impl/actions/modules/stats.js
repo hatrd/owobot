@@ -51,33 +51,98 @@ module.exports = function registerStats (ctx) {
   }
 
   async function query_leaderboard (args = {}) {
-    const { type = 'score', period = 'all', limit = 5 } = args
+    const {
+      type = 'score',
+      period = 'all',
+      limit = 5,
+      name,
+      date,
+      startDate,
+      endDate
+    } = args
     const players = dm.getAllPlayersData()
     if (!players.length) return ok('暂无玩家数据')
 
-    const isToday = period === 'today'
+    const normalizedLimit = Math.min(Math.max(Number(limit) || 5, 1), 10)
+    const targetName = name ? String(name).trim() : ''
+    const targetLower = targetName.toLowerCase()
+
+    function normalizeDateKey (input) {
+      const raw = String(input || '').trim()
+      if (!raw) return null
+      const parts = raw.split('-')
+      if (parts.length !== 3) return null
+      const key = `${parts[0].padStart(4, '0')}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`
+      const ts = Date.parse(`${key}T00:00:00Z`)
+      if (Number.isNaN(ts)) return null
+      return key
+    }
+
+    function buildDateRange (startKey, endKey) {
+      const start = Date.parse(`${startKey}T00:00:00Z`)
+      const end = Date.parse(`${endKey}T00:00:00Z`)
+      if (Number.isNaN(start) || Number.isNaN(end)) return null
+      if (start > end) return null
+      const keys = []
+      const cursor = new Date(`${startKey}T00:00:00Z`)
+      const final = new Date(`${endKey}T00:00:00Z`)
+      while (cursor.getTime() <= final.getTime()) {
+        const y = cursor.getUTCFullYear()
+        const m = String(cursor.getUTCMonth() + 1).padStart(2, '0')
+        const d = String(cursor.getUTCDate()).padStart(2, '0')
+        keys.push(`${y}-${m}-${d}`)
+        cursor.setUTCDate(cursor.getUTCDate() + 1)
+      }
+      return keys
+    }
+
+    const periodToday = period === 'today'
+    const periodYesterday = period === 'yesterday'
+    const explicitDateKey = normalizeDateKey(date) || (periodYesterday ? dm.getYesterdayKey() : null)
     const todayKey = dm.getTodayKey()
+
+    const startKey = normalizeDateKey(startDate)
+    const endKey = normalizeDateKey(endDate)
+    const rangeKeys = startKey || endKey
+      ? buildDateRange(startKey || endKey, endKey || startKey)
+      : null
+
+    if ((startDate || endDate) && !rangeKeys) {
+      return fail('日期范围格式错误，应为 YYYY-MM-DD，且开始日期不能晚于结束日期')
+    }
+    if (date && !explicitDateKey) {
+      return fail('日期格式错误，应为 YYYY-MM-DD')
+    }
+
     const entries = []
 
     for (const player of players) {
       let value = 0
-      if (isToday) {
-        const daily = player.daily && player.daily[todayKey]
-        if (!daily) continue
+      function valueFromDaily (daily) {
         switch (type) {
           case 'online':
-            value = Math.floor((daily.onlineMs || 0) / 60000)
-            break
+            return Math.floor((daily.onlineMs || 0) / 60000)
           case 'chat':
-            value = daily.messages || 0
-            break
+            return daily.messages || 0
           case 'deaths':
-            value = daily.deaths || 0
-            break
+            return daily.deaths || 0
           case 'score':
           default:
-            value = dailyStar.calculateScore(daily)
+            return dailyStar.calculateScore(daily)
         }
+      }
+
+      if (rangeKeys) {
+        for (const k of rangeKeys) {
+          const daily = player.daily && player.daily[k]
+          if (!daily) continue
+          value += valueFromDaily(daily)
+        }
+      } else if (explicitDateKey || periodToday) {
+        const dayKey = explicitDateKey || todayKey
+        const daily = player.daily && player.daily[dayKey]
+        if (!daily) continue
+        value = valueFromDaily(daily)
       } else {
         switch (type) {
           case 'online':
@@ -104,7 +169,7 @@ module.exports = function registerStats (ctx) {
     if (!entries.length) return ok('暂无数据')
 
     entries.sort((a, b) => b.value - a.value)
-    const top = entries.slice(0, Math.min(limit, 10))
+    const top = entries.slice(0, normalizedLimit)
 
     const typeLabel = {
       online: '在线',
@@ -112,10 +177,25 @@ module.exports = function registerStats (ctx) {
       deaths: '死亡',
       score: '活跃度'
     }[type] || '活跃度'
-    const periodLabel = isToday ? '今日' : '总'
+    const scopeLabel = (() => {
+      if (rangeKeys && rangeKeys.length) return `${rangeKeys[0]}~${rangeKeys[rangeKeys.length - 1]}`
+      if (explicitDateKey) return explicitDateKey
+      if (periodToday) return '今日'
+      if (periodYesterday) return '昨日'
+      return '总'
+    })()
 
     const lines = top.map((e, i) => `${i + 1}.${e.name}(${e.value})`).join(' ')
-    return ok(`${periodLabel}${typeLabel}榜: ${lines}`)
+    const rankInfo = (() => {
+      if (!targetLower) return ''
+      const idx = entries.findIndex(e => String(e.name || '').toLowerCase() === targetLower)
+      if (idx === -1) return `${targetName} 暂无数据`
+      const player = entries[idx]
+      return `${player.name} 排名${idx + 1}/${entries.length} (${player.value})`
+    })()
+
+    const suffix = rankInfo ? ` | ${rankInfo}` : ''
+    return ok(`${scopeLabel}${typeLabel}榜: ${lines}${suffix}`)
   }
 
   async function announce_daily_star (args = {}) {
