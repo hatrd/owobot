@@ -28,6 +28,224 @@ function createPulseService ({
 }) {
   const pulseCtrl = { running: false, abort: null }
   let pulseTimer = null
+  const sayCtrlByUser = new Map()
+
+  const SAY_LIMITS = {
+    maxSteps: 24,
+    maxTotalMs: 45000,
+    maxReplyLen: 120
+  }
+
+  const SAY_TYPING_DEFAULTS = {
+    enabled: true,
+    cps: 12,
+    baseMs: 220,
+    minMs: 120,
+    maxMs: 1500,
+    jitterMs: 120
+  }
+
+  function ensureSayState () {
+    if (!state.aiSay || typeof state.aiSay !== 'object') state.aiSay = {}
+    if (!Number.isFinite(state.aiSay.seq)) state.aiSay.seq = 0
+    if (!(state.aiSay.activeByUser instanceof Map)) state.aiSay.activeByUser = new Map()
+    return state.aiSay
+  }
+
+  function abortSayCtrl (ctrl, reason = 'cancel') {
+    if (!ctrl || typeof ctrl !== 'object') return
+    ctrl.aborted = true
+    ctrl.reason = reason
+    if (ctrl.timer) {
+      try { clearTimeout(ctrl.timer) } catch {}
+      ctrl.timer = null
+    }
+    if (typeof ctrl.resolve === 'function') {
+      try { ctrl.resolve(false) } catch {}
+    }
+    ctrl.resolve = null
+  }
+
+  function cancelSay (username, reason = 'cancel') {
+    if (!username) return false
+    const ctrl = sayCtrlByUser.get(username)
+    if (!ctrl) return false
+    sayCtrlByUser.delete(username)
+    try { ensureSayState().activeByUser.delete(username) } catch {}
+    abortSayCtrl(ctrl, reason)
+    return true
+  }
+
+  function delayMs (msRaw, ctrl) {
+    const ms = Math.max(0, Math.floor(Number(msRaw) || 0))
+    if (!ms) return Promise.resolve(true)
+    if (!ctrl || ctrl.aborted) return Promise.resolve(false)
+    return new Promise(resolve => {
+      ctrl.resolve = resolve
+      ctrl.timer = setTimeout(() => {
+        ctrl.timer = null
+        ctrl.resolve = null
+        resolve(!ctrl.aborted)
+      }, ms)
+    })
+  }
+
+  function normalizeTypingCfg (raw) {
+    const cfg = { ...SAY_TYPING_DEFAULTS }
+    if (!raw || typeof raw !== 'object') return cfg
+    if (typeof raw.enabled === 'boolean') cfg.enabled = raw.enabled
+    const cps = Number(raw.cps)
+    if (Number.isFinite(cps) && cps > 0) cfg.cps = cps
+    for (const k of ['baseMs', 'minMs', 'maxMs', 'jitterMs']) {
+      const v = Number(raw[k])
+      if (Number.isFinite(v) && v >= 0) cfg[k] = Math.floor(v)
+    }
+    if (cfg.maxMs < cfg.minMs) cfg.maxMs = cfg.minMs
+    return cfg
+  }
+
+  function computeTypingDelay (text, cfg) {
+    if (!cfg?.enabled) return 0
+    const t = String(text || '')
+    const len = t.length
+    const cps = Number(cfg.cps) || SAY_TYPING_DEFAULTS.cps
+    const base = Number(cfg.baseMs) || 0
+    const jitter = Number(cfg.jitterMs) || 0
+    const raw = base + (len / Math.max(1, cps)) * 1000
+    const jittered = raw + (jitter ? ((Math.random() * 2 - 1) * jitter) : 0)
+    const min = Number.isFinite(cfg.minMs) ? cfg.minMs : 0
+    const max = Number.isFinite(cfg.maxMs) ? cfg.maxMs : min
+    return Math.max(0, Math.min(max, Math.max(min, Math.floor(jittered))))
+  }
+
+  function normalizeSayScript (args = {}, fallbackText = '') {
+    const typingCfg = normalizeTypingCfg(args?.typing)
+    const gapMsRaw = Number(args?.gapMs)
+    const gapMs = Number.isFinite(gapMsRaw) ? Math.max(0, Math.floor(gapMsRaw)) : 300
+    const cancelPrevious = args?.cancelPrevious !== false
+    const maxLen = Math.max(40, Math.min(240, Number(state.ai?.maxReplyLen) || SAY_LIMITS.maxReplyLen))
+
+    const rawSteps = Array.isArray(args?.steps) ? args.steps
+      : Array.isArray(args?.messages) ? args.messages.map((t, idx) => ({ text: t, pauseMs: idx === args.messages.length - 1 ? 0 : gapMs }))
+        : (args?.text ? [{ text: args.text }] : (fallbackText ? [{ text: fallbackText }] : []))
+
+    const out = []
+    let totalMs = 0
+    const pushPause = (pauseMs) => {
+      const ms = Math.max(0, Math.floor(Number(pauseMs) || 0))
+      if (!ms) return
+      totalMs += ms
+      out.push({ kind: 'pause', pauseMs: ms })
+    }
+
+    const pushText = (text, step) => {
+      const trimmed = H.trimReply(text, maxLen)
+      if (!trimmed) return
+      const typing = typeof step?.typing === 'boolean' ? step.typing : null
+      const pauseMs = step?.pauseMs ?? step?.waitMs ?? step?.delayMs
+      out.push({ kind: 'text', text: trimmed, typing, pauseMs })
+      const ms = Math.max(0, Math.floor(Number(pauseMs) || 0))
+      if (ms) totalMs += ms
+    }
+
+    for (const step of rawSteps) {
+      if (out.length >= SAY_LIMITS.maxSteps) break
+      if (typeof step === 'string') {
+        const lines = String(step).split(/\n+/g).map(s => s.trim()).filter(Boolean)
+        for (const line of lines) {
+          if (out.length >= SAY_LIMITS.maxSteps) break
+          pushText(line, { pauseMs: gapMs })
+        }
+        continue
+      }
+      if (!step || typeof step !== 'object') continue
+      const pauseOnly = step.pauseMs ?? step.waitMs ?? step.delayMs
+      const text = step.text ?? step.message ?? step.content
+      if (text) {
+        const lines = String(text).split(/\n+/g).map(s => s.trim()).filter(Boolean)
+        if (lines.length <= 1) pushText(lines[0] || '', step)
+        else {
+          for (let i = 0; i < lines.length && out.length < SAY_LIMITS.maxSteps; i++) {
+            pushText(lines[i], { ...step, pauseMs: i === lines.length - 1 ? pauseOnly : gapMs })
+          }
+        }
+      } else if (pauseOnly != null) {
+        pushPause(pauseOnly)
+      }
+    }
+
+    if (totalMs > SAY_LIMITS.maxTotalMs) {
+      // Best-effort clamp: keep steps but cap total pause time.
+      let remaining = SAY_LIMITS.maxTotalMs
+      for (const entry of out) {
+        if (entry.kind !== 'pause' && entry.kind !== 'text') continue
+        const ms = Math.max(0, Math.floor(Number(entry.pauseMs) || 0))
+        if (!ms) continue
+        if (remaining <= 0) entry.pauseMs = 0
+        else if (ms > remaining) { entry.pauseMs = remaining; remaining = 0 } else remaining -= ms
+      }
+    }
+
+    return { steps: out, typingCfg, cancelPrevious }
+  }
+
+  function say (username, args = {}, opts = {}) {
+    const fallbackText = String(opts?.fallbackText || '')
+    const normalized = normalizeSayScript(args, fallbackText)
+    const steps = normalized.steps
+    if (!username || !steps.length) return false
+
+    if (normalized.cancelPrevious) cancelSay(username, 'superseded')
+
+    const sayState = ensureSayState()
+    sayState.seq += 1
+    const token = sayState.seq
+    sayState.activeByUser.set(username, { token, startedAt: now() })
+    const ctrl = { aborted: false, reason: null, timer: null, resolve: null, token }
+    sayCtrlByUser.set(username, ctrl)
+
+    ;(async () => {
+      const lastTextIdx = (() => {
+        for (let i = steps.length - 1; i >= 0; i--) if (steps[i]?.kind === 'text') return i
+        return -1
+      })()
+      for (let i = 0; i < steps.length; i++) {
+        if (ctrl.aborted) return
+        if (sayCtrlByUser.get(username) !== ctrl) return
+        const step = steps[i]
+        if (!step) continue
+        if (step.kind === 'pause') {
+          if (!(await delayMs(step.pauseMs, ctrl))) return
+          continue
+        }
+        if (step.kind !== 'text') continue
+        const typingEnabled = typeof step.typing === 'boolean' ? step.typing : normalized.typingCfg.enabled
+        if (typingEnabled) {
+          const ms = computeTypingDelay(step.text, normalized.typingCfg)
+          if (ms && !(await delayMs(ms, ctrl))) return
+        }
+        const isLastText = i === lastTextIdx
+        sendChatReply(username, step.text, {
+          ...opts,
+          reason: opts.reason || 'say',
+          toolUsed: opts.toolUsed || 'say',
+          suppressFeedback: !isLastText
+        })
+        if (step.pauseMs) {
+          if (!(await delayMs(step.pauseMs, ctrl))) return
+        }
+      }
+    })().catch(err => log?.warn && log.warn('say script error:', err?.message || err))
+      .finally(() => {
+        if (sayCtrlByUser.get(username) === ctrl) sayCtrlByUser.delete(username)
+        try {
+          const active = ensureSayState().activeByUser.get(username)
+          if (active?.token === token) ensureSayState().activeByUser.delete(username)
+        } catch {}
+      })
+
+    return true
+  }
 
   function pulseEnabled () {
     return Boolean(state.aiPulse?.enabled && state.ai.enabled && state.ai.key)
@@ -532,7 +750,7 @@ function createPulseService ({
     activateSession(username, opts.reason || 'chat')
     touchConversationSession(username)
     // REFS: 打开反馈窗口
-    if (feedbackCollector && typeof feedbackCollector.openFeedbackWindow === 'function') {
+    if (!opts.suppressFeedback && feedbackCollector && typeof feedbackCollector.openFeedbackWindow === 'function') {
       try {
         feedbackCollector.openFeedbackWindow({
           botMessage: text,
@@ -807,6 +1025,7 @@ function createPulseService ({
   }
 
   function stop () {
+    for (const username of [...sayCtrlByUser.keys()]) cancelSay(username, 'cleanup')
     try { resetActiveSessions() } catch {}
     if (state.aiPulse?._timer) {
       try { clearInterval(state.aiPulse._timer) } catch {}
@@ -970,6 +1189,8 @@ function createPulseService ({
     stop,
     sendChatReply,
     sendDirectReply,
+    say,
+    cancelSay,
     activateSession,
     touchConversationSession,
     enqueuePulse,

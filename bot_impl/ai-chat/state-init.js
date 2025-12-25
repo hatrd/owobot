@@ -122,6 +122,10 @@ function prepareAiState (state, opts = {}) {
   if (!Number.isFinite(state.aiPulse.lastSeq)) state.aiPulse.lastSeq = 0
   if (!(state.aiPulse.activeUsers instanceof Map)) state.aiPulse.activeUsers = new Map()
 
+  state.aiSay = state.aiSay || { seq: 0 }
+  if (!Number.isFinite(state.aiSay.seq)) state.aiSay.seq = 0
+  if (!(state.aiSay.activeByUser instanceof Map)) state.aiSay.activeByUser = new Map()
+
   state.aiExtras = state.aiExtras || { events: [] }
   if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
   if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []

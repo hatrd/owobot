@@ -509,6 +509,19 @@ function createChatExecutor ({
       if (!added.ok) return H.trimReply('记忆没有保存下来~', maxReplyLen || 120)
       return speech ? '' : H.trimReply('记住啦~', maxReplyLen || 120)
     }
+    if (toolLower === 'say') {
+      const ok = pulse.say(username, payload.args || {}, {
+        reason: 'tool_say',
+        from: 'LLM',
+        toolUsed: 'say',
+        memoryRefs,
+        fallbackText: speech
+      })
+      if (!ok && speech) {
+        pulse.sendChatReply(username, speech, { reason: 'tool_say_fallback', from: 'LLM', memoryRefs })
+      }
+      return ''
+    }
     try {
       if (toolName === 'mount_player') {
         const a = payload.args || {}
@@ -530,7 +543,10 @@ function createChatExecutor ({
         if (name) payload = { tool: 'mount_player', args: { name } }
       }
     }
-    if (['reset', 'stop', 'stop_all'].includes(toolLower)) clearPlan('stop_tool')
+    if (['reset', 'stop', 'stop_all'].includes(toolLower)) {
+      clearPlan('stop_tool')
+      try { pulse.cancelSay(username, 'stop_tool') } catch {}
+    }
     if (contextBus) {
       try { contextBus.pushEvent('tool.intent', toolLower) } catch {}
       if (TELEPORT_COMMANDS.has(toolLower)) {

@@ -488,6 +488,45 @@ const SPECIAL_TOOLS = [
     }
   },
   {
+    name: 'say',
+    description: 'Send multiple chat messages in order, optionally inserting pauses to simulate human typing delay. Use this when you want to deliver a reply in several short parts with timing.',
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          description: 'Ordered script. Each step can send a message (`text`) and/or wait (`pauseMs`). If `text` is empty and `pauseMs` is provided, it is a pure pause step.',
+          items: {
+            type: 'object',
+            properties: {
+              text: { type: 'string', description: 'Chat message to send.' },
+              pauseMs: { type: 'number', description: 'Milliseconds to wait after this step (or a pure pause when no text).' },
+              typing: { type: 'boolean', description: 'If true, wait a computed typing delay before sending this message.' }
+            },
+            additionalProperties: true
+          }
+        },
+        messages: { type: 'array', items: { type: 'string' }, description: 'Convenience: messages to send in order.' },
+        gapMs: { type: 'number', description: 'Default pause between messages when using `messages`.' },
+        typing: {
+          type: 'object',
+          description: 'Typing delay config used when `typing` is enabled.',
+          properties: {
+            enabled: { type: 'boolean', description: 'Enable computed typing delay before each message.' },
+            cps: { type: 'number', description: 'Characters per second when computing typing delay.' },
+            baseMs: { type: 'number', description: 'Base delay added before each message.' },
+            minMs: { type: 'number', description: 'Minimum computed typing delay.' },
+            maxMs: { type: 'number', description: 'Maximum computed typing delay.' },
+            jitterMs: { type: 'number', description: 'Random jitter (+/-) added to computed typing delay.' }
+          },
+          additionalProperties: true
+        },
+        cancelPrevious: { type: 'boolean', description: 'Cancel any unfinished `say` sequence for this player before starting a new one.' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
     name: 'plan_mode',
     description: 'For complex tasks, output an ordered plan list (short, executable steps). The system will execute the steps one by one automatically.',
     parameters: {
