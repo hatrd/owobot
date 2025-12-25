@@ -251,20 +251,23 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       if (Number.isFinite(last) && (nowTs - last) < AUTO_LOOK_GREET_COOLDOWN_MS) return
       if (slice.inFlight.has(username)) return
       slice.inFlight.add(username)
-      let greeted = false
+      let cooldowned = false
       try {
         const prompt = `玩家 ${username} 正在你身边并被你注意到，请用一句温暖、自然的中文主动打招呼，鼓励对方继续聊天，控制在20字以内。`
         const intent = { topic: 'greet', kind: 'chat', nearby: true }
         const { reply } = await executor.callAI(username, prompt, intent, { allowSkip: false })
         const text = String(reply || '').trim()
-        const finalMsg = text || `你好呀 ${username}，很高兴见到你！`
-        pulse.sendChatReply(username, finalMsg, { reason: 'look_greet', from: text ? 'LLM' : 'fallback' })
-        greeted = true
+        if (!text) {
+          cooldowned = true
+          return
+        }
+        pulse.sendChatReply(username, text, { reason: 'look_greet', from: 'LLM' })
+        cooldowned = true
       } catch (err) {
         log?.warn && log.warn('auto-look greet error:', err?.message || err)
       } finally {
         slice.inFlight.delete(username)
-        if (greeted) slice.cooldowns.set(username, nowTs)
+        if (cooldowned) slice.cooldowns.set(username, nowTs)
       }
     } catch {}
   }
