@@ -473,6 +473,18 @@ const ACTION_TOOL_DEFINITIONS = [
 
 const SPECIAL_TOOLS = [
   {
+    name: 'feedback',
+    description: 'When a requested feature cannot be executed with available tools/commands, record a one-sentence requirement and the full current chat context into a plaintext backlog for humans to review.',
+    parameters: {
+      type: 'object',
+      properties: {
+        need: { type: 'string', description: 'One-sentence requirement to record.' }
+      },
+      required: ['need'],
+      additionalProperties: false
+    }
+  },
+  {
     name: 'write_memory',
     description: 'Persist or reinforce a long-term memory entry for the bot. Should *only* be used if the player ask for memorizing, don\'t use it casually',
     parameters: {

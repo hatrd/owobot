@@ -1,5 +1,6 @@
 const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const timeUtils = require('../time-utils')
+const feedbackPool = require('./feedback-pool')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -491,6 +492,20 @@ function createChatExecutor ({
     const toolName = String(payload.tool)
     const toolLower = toolName.toLowerCase()
     if (toolLower === 'skip') return ''
+    if (toolLower === 'feedback') {
+      if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
+      const need = payload.args?.need
+      const saved = feedbackPool.appendFeedback({
+        need,
+        username,
+        userMessage: content,
+        contextBus,
+        state
+      })
+      if (!saved.ok) return H.trimReply('反馈没有记下来~', maxReplyLen || 120)
+      try { contextBus?.pushEvent('feedback.saved', String(saved.capturedAt || '')) } catch {}
+      return speech ? '' : H.trimReply('已记录需求反馈，稍后人工处理~', maxReplyLen || 120)
+    }
     if (toolLower === 'plan_mode') {
       const ok = startPlanMode({ username, goal: payload.args?.goal || content, steps: payload.args?.steps || [] })
       if (!ok) return H.trimReply('需要提供可执行的计划步骤哦~', maxReplyLen || 120)
