@@ -7,6 +7,7 @@ const PROMPT_VALID_MS = 180000
 const DEATH_ACK_GRACE_MS = 5000
 const DUP_PROMPT_SUPPRESS_MS = 250
 const BACK_RETRY_INTERVAL_MS = 5000
+const BACK_RETRY_MIN_GAP_MS = 1200
 const BACK_RETRY_SPAWN_DELAY_MS = 1400
 
 function wait (ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
@@ -35,6 +36,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   if (typeof state.autoBackActiveDeathId !== 'number') state.autoBackActiveDeathId = 0
   if (typeof state.autoBackAwaitingPrompt !== 'boolean') state.autoBackAwaitingPrompt = false
   if (typeof state.autoBackAwaitingRespawn !== 'boolean') state.autoBackAwaitingRespawn = false
+  if (typeof state.autoBackAwaitingHeal !== 'boolean') state.autoBackAwaitingHeal = false
   if (typeof state.autoBackPendingDeathAckId !== 'number') state.autoBackPendingDeathAckId = 0
   if (typeof state.autoBackPendingDeathAckAt !== 'number') state.autoBackPendingDeathAckAt = 0
   if (typeof state.backLastPromptAt !== 'number') state.backLastPromptAt = 0
@@ -48,6 +50,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   let fallbackCollectQueued = null
   let fallbackCollectPromise = null
   let backRetryTimer = null
+  let backReadyTimer = null
 
   function hasActivePromptContext () {
     if (!state.autoBackActiveDeathId || state.autoBackActiveDeathId !== state.autoBackDeathId) return false
@@ -81,6 +84,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     state.autoBackRetryCount = 0
     state.autoBackAwaitingPrompt = false
     state.autoBackAwaitingRespawn = false
+    state.autoBackAwaitingHeal = false
     if (reason) debug('cleared wanted back context', { reason })
   }
 
@@ -88,6 +92,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     state.backInProgress = false
     state.autoBackActiveDeathId = 0
     state.autoBackAwaitingRespawn = false
+    state.autoBackAwaitingHeal = false
     state.backLastPromptAt = 0
     state.autoBackPendingDeathAckId = 0
     state.autoBackPendingDeathAckAt = 0
@@ -377,7 +382,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
       // Clear back-in-progress after routine finishes (or is skipped)
       if (attemptId === id) clearActiveBackContext('pickup routine finished')
       // If we didn't even confirm teleport, keep trying while still in the wanted window (prompt-missed/disconnect/cancel cases).
-      if (attemptId === id && !teleportConfirmed && hasWantedContext()) scheduleBackRetry('teleport not confirmed', BACK_RETRY_INTERVAL_MS)
+      if (attemptId === id && !teleportConfirmed && hasRetryContext()) scheduleBackRetry('teleport not confirmed', BACK_RETRY_INTERVAL_MS)
       // If teleport was confirmed and we completed the routine without being superseded, consider this death handled.
       if (attemptId === id && teleportConfirmed && hasWantedContext()) clearWantedContext('pickup routine finished after confirmed teleport')
       const queued = fallbackCollectQueued
@@ -427,12 +432,41 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     return true
   }
 
+  function isFullHealth () {
+    try {
+      const h = Number(bot.health)
+      return Number.isFinite(h) && h >= 19.9
+    } catch { return false }
+  }
+
+  function isBackReady () {
+    if (state.autoBackAwaitingRespawn) return false
+    if (state.autoBackAwaitingHeal && !isFullHealth()) return false
+    return true
+  }
+
+  function scheduleReadyBack (reason, delayMs = BACK_RETRY_SPAWN_DELAY_MS) {
+    try {
+      if (!hasRetryContext()) return
+      if (backReadyTimer) return
+      backReadyTimer = setTimeout(() => {
+        backReadyTimer = null
+        const now = Date.now()
+        if (!hasRetryContext(now)) return
+        if (state.backInProgress) return
+        if (!isBackReady()) return
+        if (now - (state.backLastCmdAt || 0) < 800) return
+        beginBackAttempt(now, `ready:${reason || 'unknown'}`, { hasPrompt: hasActivePromptContext(), ignoreCooldown: true })
+      }, Math.max(0, delayMs))
+    } catch {}
+  }
+
   function scheduleBackRetry (reason, delayMs = BACK_RETRY_INTERVAL_MS) {
     try {
       if (!hasRetryContext()) return
       if (backRetryTimer) return
       const now = Date.now()
-      const dueAt = Math.max(now + Math.max(50, delayMs), (state.autoBackRetryAt || 0) + BACK_RETRY_INTERVAL_MS)
+      const dueAt = Math.max(now + Math.max(50, delayMs), (state.autoBackRetryAt || 0) + BACK_RETRY_MIN_GAP_MS)
       state.autoBackRetryAt = dueAt
       state.autoBackRetryCount = (state.autoBackRetryCount || 0) + 1
       backRetryTimer = setTimeout(() => {
@@ -441,8 +475,8 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
         if (!hasRetryContext(tsNow)) return
         if (state.backInProgress) return
         if (tsNow - (state.backLastCmdAt || 0) < 800) return
-        debug('retrying /back (wanted context)', { reason, retryCount: state.autoBackRetryCount, deathId: state.autoBackDeathId })
-        beginBackAttempt(tsNow, `retry:${reason || 'unknown'}`, { hasPrompt: false, ignoreCooldown: true })
+        debug('retrying /back (wanted/active context)', { reason, retryCount: state.autoBackRetryCount, deathId: state.autoBackDeathId })
+        scheduleReadyBack(`retry:${reason || 'unknown'}`, 0)
       }, Math.max(0, dueAt - now))
     } catch {}
   }
@@ -481,7 +515,16 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
           synthesizeDeathContextFromPrompt(now, s)
           source = state.backInProgress ? 'prompt-while-running' : 'prompt-first'
         }
-        beginBackAttempt(now, source, { hasPrompt: true })
+        // Prompt received: arm a pending /back. We issue /back after respawn + full heal (server/plugin often cancels early requests).
+        state.autoBackAwaitingPrompt = false
+        state.autoBackActiveDeathId = state.autoBackDeathId
+        state.backLastPromptAt = now
+        state.backInProgress = false
+        // Gate: wait for respawn if we're currently dead; wait for heal-to-full otherwise.
+        try { state.autoBackAwaitingRespawn = Number(bot.health) <= 0 } catch { state.autoBackAwaitingRespawn = true }
+        state.autoBackAwaitingHeal = !isFullHealth()
+        debug('back prompt armed; waiting for respawn/heal before /back', { source, awaitingRespawn: state.autoBackAwaitingRespawn, awaitingHeal: state.autoBackAwaitingHeal })
+        scheduleReadyBack(`prompt:${source}`, BACK_RETRY_SPAWN_DELAY_MS)
         return
       }
       const info = parseDeathChestLocation(s)
@@ -511,6 +554,9 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
           // Let the current routine exit; next attempt will supersede.
           try { state.backInProgress = false } catch {}
         }
+        // If we are still dead / not fully healed, keep waiting; otherwise retry soon.
+        try { state.autoBackAwaitingRespawn = Number(bot.health) <= 0 } catch { state.autoBackAwaitingRespawn = true }
+        state.autoBackAwaitingHeal = !isFullHealth()
         scheduleBackRetry('teleport canceled', 900)
         return
       }
@@ -521,30 +567,27 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
   on('respawn', () => {
     try {
       const now = Date.now()
-      if (!state.backInProgress) {
-        // Common failure mode: died during /back teleport; prompt may not repeat after respawn.
-        if (hasWantedContext(now)) scheduleBackRetry('respawn resume', BACK_RETRY_SPAWN_DELAY_MS)
-        if (state.autoBackAwaitingRespawn && !hasWantedContext(now)) state.autoBackAwaitingRespawn = false
-        return
-      }
-      if (!state.autoBackAwaitingRespawn) return
-      if (!hasActivePromptContext() && !hasWantedContext(now)) {
-        clearActiveBackContext('stale respawn context')
-        return
-      }
+      if (!hasRetryContext(now)) return
       state.autoBackAwaitingRespawn = false
-      if (now - (state.backLastCmdAt || 0) < 800) return
-      debug('respawn detected, scheduling /back retry')
-      setTimeout(() => {
-        try {
-          state.backLastCmdAt = Date.now()
-          attemptId++
-          state.backInProgress = true
-          debug('retrying /back after respawn', { attemptId })
-          bot.chat('/back')
-          runPickupRoutine(attemptId).catch(() => {})
-        } catch {}
-      }, 800)
+      state.autoBackAwaitingHeal = !isFullHealth()
+      if (state.backInProgress) {
+        // If we died mid-teleport, ensure the next attempt can run.
+        state.backInProgress = false
+      }
+      debug('respawn detected; scheduling /back when healed', { awaitingHeal: state.autoBackAwaitingHeal })
+      scheduleReadyBack('respawn', BACK_RETRY_SPAWN_DELAY_MS)
+    } catch {}
+  })
+
+  on('health', () => {
+    try {
+      const now = Date.now()
+      if (!hasRetryContext(now)) return
+      if (!state.autoBackAwaitingHeal) return
+      if (!isFullHealth()) return
+      state.autoBackAwaitingHeal = false
+      debug('full-heal detected; scheduling /back', { health: bot.health })
+      scheduleReadyBack('heal', 120)
     } catch {}
   })
 
@@ -568,6 +611,7 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
       markWantedContext(now, 'death event')
       state.autoBackAwaitingPrompt = true
       state.autoBackAwaitingRespawn = true
+      state.autoBackAwaitingHeal = true
       state.autoBackActiveDeathId = 0
       state.backLastPromptAt = 0
       state.backInProgress = false
@@ -593,9 +637,12 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     try {
       const now = Date.now()
       // After reconnect or respawn, /back prompts may not repeat. If we are within the wanted window, retry proactively.
-      if (!hasWantedContext(now)) return
+      if (!hasRetryContext(now)) return
       if (state.backInProgress) return
-      scheduleBackRetry('spawn resume', BACK_RETRY_SPAWN_DELAY_MS)
+      // If we reconnected while dead, wait for respawn; otherwise wait for heal-to-full then /back.
+      try { state.autoBackAwaitingRespawn = Number(bot.health) <= 0 } catch { state.autoBackAwaitingRespawn = true }
+      state.autoBackAwaitingHeal = !isFullHealth()
+      scheduleReadyBack('spawn', BACK_RETRY_SPAWN_DELAY_MS)
     } catch {}
   })
 
@@ -604,6 +651,8 @@ function install (bot, { on, state, log, dlog, registerCleanup }) {
     fallbackCollectQueued = null
     try { if (backRetryTimer) clearTimeout(backRetryTimer) } catch {}
     backRetryTimer = null
+    try { if (backReadyTimer) clearTimeout(backReadyTimer) } catch {}
+    backReadyTimer = null
     try { bot.off('message', onMessage) } catch {}
   })
 }
