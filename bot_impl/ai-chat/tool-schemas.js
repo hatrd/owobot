@@ -474,11 +474,13 @@ const ACTION_TOOL_DEFINITIONS = [
 const SPECIAL_TOOLS = [
   {
     name: 'feedback',
-    description: 'When a requested feature cannot be executed with available tools/commands, record a one-sentence requirement and the full current chat context into a plaintext backlog for humans to review.',
+    description: 'When a requested feature cannot be executed with available tools/commands, record a one-sentence requirement and the full current chat context into a plaintext backlog for later review. Optionally also tell the player what happened, and (in plan mode) terminate the current plan.',
     parameters: {
       type: 'object',
       properties: {
-        need: { type: 'string', description: 'One-sentence requirement to record.' }
+        need: { type: 'string', description: 'One-sentence requirement to record.' },
+        publicMessage: { type: 'string', description: 'Optional short explanation to send to the player.' },
+        terminatePlan: { type: 'boolean', description: 'If true, stop current plan mode. In plan mode, this defaults to true when omitted.' }
       },
       required: ['need'],
       additionalProperties: false

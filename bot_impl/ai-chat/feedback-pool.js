@@ -13,6 +13,15 @@ function normalizeNeed (need) {
   return out.slice(0, 200)
 }
 
+function normalizePublicMessage (text) {
+  if (typeof text !== 'string') return ''
+  let out = ''
+  try { out = text.normalize('NFKC') } catch { out = text }
+  out = out.replace(/\s+/g, ' ').trim()
+  out = out.replace(/[\r\n]+/g, ' ').trim()
+  return out.slice(0, 240)
+}
+
 function safeJson (value) {
   try { return JSON.stringify(value, null, 2) } catch { return 'null' }
 }
@@ -56,12 +65,18 @@ function collectContext ({ contextBus, state, username, userMessage, capturedAt 
   return [header, '', '--- 原始对话（context bus transcript）---', transcript, '', '--- 原始数据（context bus JSON）---', raw].join('\n')
 }
 
-function buildDocument ({ need, contextText }) {
-  return [`标题：${need}`, '上下文：', contextText].join('\n')
+function buildDocument ({ need, publicMessage, contextText }) {
+  return [
+    `标题：${need}`,
+    publicMessage ? `对外说明：${publicMessage}` : null,
+    '上下文：',
+    contextText
+  ].filter(Boolean).join('\n')
 }
 
 function appendFeedback ({
   need,
+  publicMessage,
   username,
   userMessage,
   contextBus,
@@ -71,10 +86,11 @@ function appendFeedback ({
 } = {}) {
   const normalized = normalizeNeed(String(need || ''))
   if (!normalized) return { ok: false, reason: 'empty_need' }
+  const normalizedPublicMessage = normalizePublicMessage(publicMessage)
 
   const capturedAt = now()
   const contextText = collectContext({ contextBus, state, username, userMessage, capturedAt })
-  const doc = buildDocument({ need: normalized, contextText })
+  const doc = buildDocument({ need: normalized, publicMessage: normalizedPublicMessage, contextText })
 
   const target = filePath || DEFAULT_POOL_FILE
   try { fs.mkdirSync(path.dirname(target), { recursive: true }) } catch {}
@@ -89,7 +105,7 @@ function appendFeedback ({
 module.exports = {
   appendFeedback,
   normalizeNeed,
+  normalizePublicMessage,
   collectContext,
   buildDocument
 }
-

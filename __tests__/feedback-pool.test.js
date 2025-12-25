@@ -23,6 +23,7 @@ test('feedback pool persists title + full context transcript', () => {
 
   const res = appendFeedback({
     need: '添加拍卖行功能',
+    publicMessage: '现在还做不了这个功能，我先记下来。',
     username: 'alice',
     userMessage: 'owk 你能给我做个拍卖行吗',
     contextBus,
@@ -34,9 +35,9 @@ test('feedback pool persists title + full context transcript', () => {
   assert.equal(res.ok, true)
   const saved = fs.readFileSync(filePath, 'utf8')
   assert.match(saved, /标题：添加拍卖行功能/)
+  assert.match(saved, /对外说明：现在还做不了这个功能[,，]我先记下来。/)
   assert.match(saved, /上下文：/)
   assert.match(saved, /<alice> owk 你能给我做个拍卖行吗/)
   assert.match(saved, /<bot:LLM> 这个功能我做不到/)
   assert.match(saved, /<tool> feedback\{need:"添加拍卖行功能"\}/)
 })
-

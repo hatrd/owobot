@@ -495,16 +495,28 @@ function createChatExecutor ({
     if (toolLower === 'feedback') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const need = payload.args?.need
+      const publicMessageRaw = payload.args?.publicMessage
+      const terminatePlanRaw = payload.args?.terminatePlan
       const saved = feedbackPool.appendFeedback({
         need,
+        publicMessage: publicMessageRaw,
         username,
         userMessage: content,
         contextBus,
         state
       })
-      if (!saved.ok) return H.trimReply('反馈没有记下来~', maxReplyLen || 120)
+      if (!saved.ok) return H.trimReply('我刚才没把这句话记住…你再说一遍？', maxReplyLen || 120)
       try { contextBus?.pushEvent('feedback.saved', String(saved.capturedAt || '')) } catch {}
-      return speech ? '' : H.trimReply('已记录需求反馈，稍后人工处理~', maxReplyLen || 120)
+      const inPlanContext = Boolean(ctrl.plan && ctrl.plan.owner === username && (intent?.topic === 'plan' || ctrl.planDriving))
+      const terminatePlan = terminatePlanRaw === true ? true : (terminatePlanRaw === false ? false : inPlanContext)
+
+      const publicMessage = typeof publicMessageRaw === 'string' ? H.trimReply(publicMessageRaw, maxReplyLen || 120) : ''
+      const defaultPlanMessage = H.trimReply('这一步我现在还不会…我先把它记下来，等我有空学学；计划先停一下。', maxReplyLen || 120)
+      const outward = publicMessage || (terminatePlan ? defaultPlanMessage : '')
+      if (outward) pulse.sendChatReply(username, outward, { reason: 'feedback_public', memoryRefs })
+      if (terminatePlan) clearPlan('feedback')
+
+      return (speech || outward) ? '' : H.trimReply('我记下来了，回头我研究研究。', maxReplyLen || 120)
     }
     if (toolLower === 'plan_mode') {
       const ok = startPlanMode({ username, goal: payload.args?.goal || content, steps: payload.args?.steps || [] })
