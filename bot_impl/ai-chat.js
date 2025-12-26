@@ -26,6 +26,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...args) => log.debug(...args)
 
   function now () { return Date.now() }
+  function normalizeUsername (name) {
+    return String(name || '').replace(/\u00a7./g, '').trim().toLowerCase()
+  }
 
   function traceChat (...args) {
     if (state.ai?.trace && log?.info) {
@@ -241,33 +244,34 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function onAutoLookGreet (payload) {
     try {
       if (!state.ai?.enabled || !state.ai?.key) return
-      const username = String(payload?.username || payload?.name || payload?.player || '').trim()
-      if (!username) return
-      const self = String(bot.username || '').trim()
-      if (self && username.toLowerCase() === self.toLowerCase()) return
+      const usernameRaw = String(payload?.username || payload?.name || payload?.player || '').trim()
+      const key = normalizeUsername(usernameRaw)
+      if (!key) return
+      const selfKey = normalizeUsername(bot.username || '')
+      if (selfKey && key === selfKey) return
       const slice = ensureAutoLookState()
       const nowTs = now()
-      const last = slice.cooldowns.get(username)
+      const last = slice.cooldowns.get(key)
       if (Number.isFinite(last) && (nowTs - last) < AUTO_LOOK_GREET_COOLDOWN_MS) return
-      if (slice.inFlight.has(username)) return
-      slice.inFlight.add(username)
+      if (slice.inFlight.has(key)) return
+      slice.inFlight.add(key)
       let cooldowned = false
       try {
-        const prompt = `玩家 ${username} 正在你身边并被你注意到，请用一句温暖、自然的中文主动打招呼，鼓励对方继续聊天，控制在20字以内。`
+        const prompt = `玩家 ${usernameRaw} 正在你身边并被你注意到，请用一句温暖、自然的中文主动打招呼，鼓励对方继续聊天，控制在20字以内。`
         const intent = { topic: 'greet', kind: 'chat', nearby: true }
-        const { reply } = await executor.callAI(username, prompt, intent, { allowSkip: false })
+        const { reply } = await executor.callAI(usernameRaw, prompt, intent, { allowSkip: false })
         const text = String(reply || '').trim()
         if (!text) {
           cooldowned = true
           return
         }
-        pulse.sendChatReply(username, text, { reason: 'look_greet', from: 'LLM' })
+        pulse.sendChatReply(usernameRaw, text, { reason: 'look_greet', from: 'LLM' })
         cooldowned = true
       } catch (err) {
         log?.warn && log.warn('auto-look greet error:', err?.message || err)
       } finally {
-        slice.inFlight.delete(username)
-        if (cooldowned) slice.cooldowns.set(username, nowTs)
+        slice.inFlight.delete(key)
+        if (cooldowned) slice.cooldowns.set(key, nowTs)
       }
     } catch {}
   }

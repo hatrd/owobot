@@ -12,6 +12,10 @@ class WatcherManager {
     this.LOOK_GREET_COOLDOWN_MS = 10 * 60 * 1000
   }
 
+  normalizeUsername (name) {
+    return String(name || '').replace(/\u00a7./g, '').trim().toLowerCase()
+  }
+
   onSpawn() {
     this.stopTimers()
     this.fireTimer = setInterval(() => {
@@ -155,19 +159,21 @@ class WatcherManager {
   maybeGreetLookTarget (entity) {
     try {
       const slice = this.ensureLookGreetState()
-      const username = String(entity.username || entity.name || '').trim()
-      if (!username) return
-      const selfName = String(this.bot.username || '').trim()
-      if (selfName && username.toLowerCase() === selfName.toLowerCase()) return
+      const rawName = String(entity.username || entity.name || '').trim()
+      const usernameKey = this.normalizeUsername(rawName)
+      if (!usernameKey) return
+      const selfKey = this.normalizeUsername(this.bot.username || '')
+      if (selfKey && usernameKey === selfKey) return
       const now = Date.now()
-      if (slice.inFlight.has(username)) return
-      const last = slice.cooldowns.get(username)
+      if (slice.inFlight.has(usernameKey)) return
+      const last = slice.cooldowns.get(usernameKey)
       if (Number.isFinite(last) && (now - last) < this.LOOK_GREET_COOLDOWN_MS) return
-      const lastEmit = slice.lastEmit.get(username)
+      const lastEmit = slice.lastEmit.get(usernameKey)
       if (Number.isFinite(lastEmit) && (now - lastEmit) < 2000) return
-      slice.lastEmit.set(username, now)
+      slice.lastEmit.set(usernameKey, now)
       const payload = {
-        username,
+        username: rawName || entity.username || entity.name || '',
+        key: usernameKey,
         entityId: entity.id,
         reason: 'auto-look',
         position: entity.position ? { x: entity.position.x, y: entity.position.y, z: entity.position.z } : null
