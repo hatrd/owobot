@@ -134,6 +134,10 @@ module.exports = function registerInventory (ctx) {
     } catch { return [] }
   }
 
+  function countItemByName (name) {
+    try { return findAllByName(name).reduce((sum, it) => sum + (it.count || 0), 0) } catch { return 0 }
+  }
+
   function isEquipSlot (slot) { return slot === 5 || slot === 6 || slot === 7 || slot === 8 || slot === 45 }
 
   async function dropItemObject (it, count) {
@@ -219,18 +223,32 @@ module.exports = function registerInventory (ctx) {
     try { bot.pathfinder?.setGoal(null) } catch {}
 
     const edible = isEdible(item)
+    const holdMsParsed = parseInt(args.holdMs, 10)
+    const holdMs = Number.isFinite(holdMsParsed) && holdMsParsed > 0
+      ? holdMsParsed
+      : (edible ? 1600 : 120)
+    const beforeCount = edible ? countItemByName(item.name) : null
+    const activateWithHold = async () => {
+      await bot.activateItem(offhand)
+      if (holdMs > 0) await wait(holdMs)
+      try { bot.deactivateItem() } catch {}
+    }
     try {
       if (edible) {
         await bot.consume()
         return ok(`已使用（食用）${item.name}`)
       }
-      await bot.activateItem(offhand)
-      const holdMs = Math.max(0, parseInt(args.holdMs || '120', 10) || 0)
-      if (holdMs > 0) await wait(holdMs)
-      try { bot.deactivateItem() } catch {}
+      await activateWithHold()
       return ok(`已使用 ${item.name}`)
     } catch (e) {
-      return fail(e?.message || '使用失败')
+      const msg = String(e?.message || e || '')
+      if (edible && /food\s+is\s+full/i.test(msg)) {
+        try { await activateWithHold() } catch {}
+        const afterCount = countItemByName(item.name)
+        if (afterCount < beforeCount) return ok(`已使用（食用）${item.name}`)
+        return ok(`已尝试食用 ${item.name}`)
+      }
+      return fail(msg || '使用失败')
     }
   }
 

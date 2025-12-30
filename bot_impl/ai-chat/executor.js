@@ -779,6 +779,7 @@ function createChatExecutor ({
   return {
     handleChat,
     buildContextPrompt,
+    buildMetaContext,
     triggerWord,
     callAI,
     processChatContent,

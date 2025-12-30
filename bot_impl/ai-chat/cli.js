@@ -4,6 +4,7 @@ function createAiCliHandler (options = {}) {
     state,
     buildGameContext,
     buildContextPrompt,
+    buildMetaContext,
     persistMemoryState,
     selectDialoguesForContext,
     formatDialogueEntriesForDisplay,
@@ -42,6 +43,9 @@ function createAiCliHandler (options = {}) {
         }
         case 'ctx': {
           try {
+            if (typeof buildMetaContext === 'function') {
+              print('metaCtx ->', buildMetaContext())
+            }
             print('gameCtx ->', buildGameContext())
             print('chatCtx ->', buildContextPrompt(''))
           } catch (e) {
