@@ -310,25 +310,6 @@ function createChatExecutor ({
     schedulePlanTick(150)
   }
 
-  function tryCreateCommitment (username, text) {
-    try {
-      const ms = getMinimalSelfInstance()
-      const identity = ms?.getIdentity?.()
-      if (!identity || typeof identity.addCommitment !== 'function') return false
-      const m = String(text || '').match(/(?:记得|答应|承诺)(?:要|帮我|给我|去)?(.{3,60})/i)
-      if (!m || !m[1]) return false
-      const action = m[1].trim()
-      if (!action) return false
-      const commitment = identity.addCommitment(username, action)
-      if (contextBus) {
-        try { contextBus.pushEvent('commitment.add', `${username}:${action}`) } catch {}
-      }
-      pulse.sendChatReply(username, `好，我记下了承诺: ${action}`, { reason: 'commitment', toolUsed: 'commitment:add' })
-      if (state.ai.trace && log?.info) log.info('commitment ->', commitment)
-      return true
-    } catch { return false }
-  }
-
   function shouldAutoFollowup (username, text) {
     const trimmed = String(text || '').trim()
     if (!trimmed) { traceChat('[chat] followup skip empty', { username }); return false }
@@ -536,6 +517,27 @@ function createChatExecutor ({
       if (!added.ok) return H.trimReply('记忆没有保存下来~', maxReplyLen || 120)
       return speech ? '' : H.trimReply('记住啦~', maxReplyLen || 120)
     }
+    if (toolName === 'add_commitment') {
+      const actionRaw = payload.args?.action
+      const action = typeof actionRaw === 'string' ? actionRaw.trim() : ''
+      if (!action) return H.trimReply('没听懂要承诺什么呢~', maxReplyLen || 120)
+      const ms = getMinimalSelfInstance()
+      const identity = ms?.getIdentity?.()
+      if (!identity || typeof identity.addCommitment !== 'function') {
+        return H.trimReply('现在记不住承诺呢~', maxReplyLen || 120)
+      }
+      const player = payload.args?.player ? String(payload.args.player) : username
+      const deadlineRaw = payload.args?.deadlineMs
+      const deadlineMs = Number.isFinite(deadlineRaw) ? deadlineRaw : null
+      const commitment = identity.addCommitment(player, action, deadlineMs)
+      if (contextBus) {
+        try { contextBus.pushEvent('commitment.add', `${player}:${action}`) } catch {}
+      }
+      if (state.ai.trace && log?.info) log.info('commitment ->', commitment)
+      const reply = speech || H.trimReply(`好，我记下了承诺: ${action}`, maxReplyLen || 120)
+      if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:add', memoryRefs })
+      return ''
+    }
     if (toolLower === 'say') {
       const ok = pulse.say(username, payload.args || {}, {
         reason: 'tool_say',
@@ -677,7 +679,6 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }
-    if (tryCreateCommitment(username, text)) return
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {

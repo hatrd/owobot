@@ -502,6 +502,20 @@ const SPECIAL_TOOLS = [
     }
   },
   {
+    name: 'add_commitment',
+    description: 'Record a promise/commitment the bot should keep. Use only when the player asks for a promise or you explicitly agree to do something later.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'Commitment content to record.' },
+        player: { type: 'string', description: 'Player name for the commitment (defaults to current user).' },
+        deadlineMs: { type: 'number', description: 'Optional deadline as a Unix timestamp in milliseconds.' }
+      },
+      required: ['action'],
+      additionalProperties: false
+    }
+  },
+  {
     name: 'say',
     description: 'Send multiple chat messages in order, optionally inserting pauses to simulate human typing delay. Use this when you want to deliver a reply in several short parts with timing.',
     parameters: {
