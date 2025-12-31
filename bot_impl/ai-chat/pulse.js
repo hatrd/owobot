@@ -1193,6 +1193,7 @@ function createPulseService ({
     cancelSay,
     activateSession,
     touchConversationSession,
+    resetActiveSessions,
     enqueuePulse,
     captureChat,
     captureSystemMessage,

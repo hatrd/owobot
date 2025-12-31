@@ -313,6 +313,7 @@ function createChatExecutor ({
   function shouldAutoFollowup (username, text) {
     const trimmed = String(text || '').trim()
     if (!trimmed) { traceChat('[chat] followup skip empty', { username }); return false }
+    if (state.ai?.listenEnabled === false) { traceChat('[chat] followup listen-disabled', { username }); return false }
     const lastReason = state?.aiPulse?.lastReason
     const lastAt = state?.aiPulse?.lastMessageAt
     if (lastReason === 'drive' && (!lastAt || (now() - lastAt) < 180000)) {
@@ -473,6 +474,20 @@ function createChatExecutor ({
     const toolName = String(payload.tool)
     const toolLower = toolName.toLowerCase()
     if (toolLower === 'skip') return ''
+    if (toolLower === 'stop_listen') {
+      const rawMessage = payload.args?.message ?? payload.args?.text ?? payload.args?.publicMessage
+      const fromArgs = typeof rawMessage === 'string' ? H.trimReply(rawMessage, maxReplyLen || 120) : ''
+      const fallback = !fromArgs && speech ? H.trimReply(speech, maxReplyLen || 120) : ''
+      if (!state.ai || typeof state.ai !== 'object') state.ai = {}
+      state.ai.listenEnabled = false
+      ctrl.pending = null
+      clearPlan('stop_listen')
+      try { pulse.cancelSay(username, 'stop_listen') } catch {}
+      try { pulse.resetActiveSessions?.() } catch {}
+      const outward = fromArgs || fallback
+      if (outward) pulse.sendDirectReply(username, outward, { reason: 'stop_listen', from: 'LLM', toolUsed: 'stop_listen', memoryRefs })
+      return ''
+    }
     if (toolLower === 'feedback') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const need = payload.args?.need
@@ -762,6 +777,10 @@ function createChatExecutor ({
         traceChat('[chat] ignore non-trigger', { username, text: trimmed })
       }
       return
+    }
+    if (state.ai?.listenEnabled === false) {
+      state.ai.listenEnabled = true
+      traceChat('[chat] followup listen-enabled', { username })
     }
     let content = trimmed.replace(new RegExp('^(' + trig + '[:：,，。.!！\\s]*)+', 'i'), '')
     content = content.replace(/^[:：,，。.!！\s]+/, '')

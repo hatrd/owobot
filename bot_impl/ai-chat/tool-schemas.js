@@ -569,6 +569,17 @@ const SPECIAL_TOOLS = [
     }
   },
   {
+    name: 'stop_listen',
+    description: 'Exit active listening mode for chat follow-ups. Optionally send one public message before going quiet.',
+    parameters: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Optional public message to send before stopping listening.' }
+      },
+      additionalProperties: false
+    }
+  },
+  {
     name: 'skip',
     description: 'Do nothing this turn (no reply, no action). Use when waiting or nothing is needed.',
     parameters: {

@@ -83,6 +83,7 @@ function prepareAiState (state, opts = {}) {
     notifyOnBudget: true,
     trace: false
   }
+  if (typeof state.ai.listenEnabled !== 'boolean') state.ai.listenEnabled = true
   if (!Number.isFinite(state.ai.timeoutMs) || state.ai.timeoutMs <= 0) state.ai.timeoutMs = DEFAULT_TIMEOUT_MS
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
