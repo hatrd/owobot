@@ -28,8 +28,7 @@ function createChatExecutor ({
   buildGameContext,
   contextBus = null
 }) {
-  const ctrl = { busy: false, abort: null, pending: null, plan: null, planTimer: null, planDriving: false }
-  const PENDING_EXPIRE_MS = 8000
+  const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false }
   const actions = actionsMod.install(bot, { log })
 
   const estTokensFromText = H.estTokensFromText
@@ -52,24 +51,57 @@ function createChatExecutor ({
     }
   })()
 
-  function queuePending (username, message) {
-    const text = String(message || '')
-    if (!text) return
-    ctrl.pending = { username, message: text, storedAt: now() }
+  function pendingExpireMs () {
+    const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
+      ? state.ai.timeoutMs
+      : defaults.DEFAULT_TIMEOUT_MS
+    return Math.max(8000, timeoutMs + 2000)
+  }
+
+  function queuePending (username, content, raw, source) {
+    const text = String(content || '').trim()
+    if (!text || !username) return
+    if (!Array.isArray(ctrl.pending)) ctrl.pending = []
+    const nowTs = now()
+    const rawText = typeof raw === 'string' ? raw : text
+    const existing = ctrl.pending.find(entry => entry && entry.username === username)
+    if (existing) {
+      existing.parts.push(text)
+      existing.rawParts.push(rawText)
+      existing.lastAt = nowTs
+      if (source === 'trigger') existing.source = 'trigger'
+      return
+    }
+    ctrl.pending.push({
+      username,
+      parts: [text],
+      rawParts: [rawText],
+      source: source === 'trigger' ? 'trigger' : 'followup',
+      firstAt: nowTs,
+      lastAt: nowTs
+    })
   }
 
   function takePending () {
-    const entry = ctrl.pending
-    if (!entry) return null
-    ctrl.pending = null
-    if (entry.storedAt && (now() - entry.storedAt) > PENDING_EXPIRE_MS) return null
-    return entry
+    if (!Array.isArray(ctrl.pending) || !ctrl.pending.length) return null
+    const maxAge = pendingExpireMs()
+    while (ctrl.pending.length) {
+      const entry = ctrl.pending.shift()
+      if (!entry || !entry.username || !Array.isArray(entry.parts) || !entry.parts.length) continue
+      const lastAt = entry.lastAt || entry.firstAt || 0
+      if (lastAt && (now() - lastAt) > maxAge) continue
+      return entry
+    }
+    return null
   }
 
   function flushPending () {
     const next = takePending()
     if (!next) return false
-    setTimeout(() => { handleChat(next.username, next.message).catch(() => {}) }, 0)
+    const content = next.parts.join('\n')
+    const raw = Array.isArray(next.rawParts) ? next.rawParts.join('\n') : content
+    const source = next.source === 'trigger' ? 'trigger' : 'followup'
+    setTimeout(() => { processChatContent(next.username, content, raw, source).catch(() => {}) }, 0)
     return true
   }
 
@@ -480,7 +512,7 @@ function createChatExecutor ({
       const fallback = !fromArgs && speech ? H.trimReply(speech, maxReplyLen || 120) : ''
       if (!state.ai || typeof state.ai !== 'object') state.ai = {}
       state.ai.listenEnabled = false
-      ctrl.pending = null
+      ctrl.pending = []
       clearPlan('stop_listen')
       try { pulse.cancelSay(username, 'stop_listen') } catch {}
       try { pulse.resetActiveSessions?.() } catch {}
@@ -694,6 +726,11 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }
+    if (ctrl.busy) {
+      try { state.aiPulse.lastFlushAt = now() } catch {}
+      queuePending(username, text, raw, source)
+      return
+    }
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
@@ -706,10 +743,6 @@ function createChatExecutor ({
     if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
     const acted = await Promise.resolve(false)
     if (acted) return
-    if (ctrl.busy) {
-      queuePending(username, raw)
-      return
-    }
     ctrl.busy = true
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', text)
@@ -734,10 +767,7 @@ function createChatExecutor ({
       }
     } finally {
       ctrl.busy = false
-      const next = takePending()
-      if (next) {
-        setTimeout(() => { handleChat(next.username, next.message).catch(() => {}) }, 0)
-      }
+      flushPending()
     }
   }
 
