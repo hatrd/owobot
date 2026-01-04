@@ -1,5 +1,6 @@
 module.exports = function registerMovement (ctx) {
   const { bot, register, ok, fail, ensurePathfinder, wait, shared, pvp, Vec3 } = ctx
+  const { isSelfEntity, resolvePlayerEntityExact } = require('../lib/self')
 
   function getPathfinder () {
     if (!ensurePathfinder()) return null
@@ -125,9 +126,10 @@ module.exports = function registerMovement (ctx) {
   async function follow_player (args = {}) {
     const { name, range = 3 } = args
     if (!name) return fail('缺少玩家名')
-    const rec = bot.players[name]
-    const ent = rec?.entity
+    const wanted = String(name).trim()
+    const ent = resolvePlayerEntityExact(bot, wanted)
     if (!ent) return fail('未找到玩家')
+    if (isSelfEntity(bot, ent)) return fail('不能和自己交互')
     const pkg = getPathfinder()
     if (!pkg) return fail('无寻路')
     const { Movements, goals } = pkg
@@ -142,7 +144,7 @@ module.exports = function registerMovement (ctx) {
     try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
     bot.pathfinder.setGoal(new goals.GoalFollow(ent, range), true)
-    return ok(`跟随 ${name}`)
+    return ok(`跟随 ${wanted}`)
   }
 
   async function stop () {

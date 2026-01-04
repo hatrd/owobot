@@ -1,5 +1,6 @@
 const { oreLabelFromOnly } = require('../lib/ore')
 const { countItemByName, ensureItemEquipped, itemsMatchingName } = require('../lib/inventory')
+const { isSelfEntity, resolvePlayerEntityExact } = require('../lib/self')
 const logging = require('../../logging')
 
 module.exports = function registerCombat (ctx) {
@@ -57,23 +58,34 @@ module.exports = function registerCombat (ctx) {
     const m = new Movements(bot, mcData)
     m.allowSprinting = true; m.canDig = (args.dig === true)
     bot.pathfinder.setMovements(m)
-    shared.huntTarget = String(name)
+    shared.huntTarget = String(name).trim()
     const targetName = shared.huntTarget
+    const initialEnt = resolvePlayerEntityExact(bot, targetName)
+    if (initialEnt && isSelfEntity(bot, initialEnt)) return fail('不能追杀自己')
     if (shared.huntInterval) { try { clearInterval(shared.huntInterval) } catch {}; shared.huntInterval = null }
     const ctx = {}
     const startedAt = Date.now()
-    const iv = setInterval(() => {
+    let iv = null
+    const stopHunt = () => {
+      const cur = iv
+      iv = null
+      try { if (cur) clearInterval(cur) } catch {}
+      if (shared.huntInterval === cur) shared.huntInterval = null
+      if (shared.huntTarget === targetName) shared.huntTarget = null
+      try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {}
+    }
+    iv = setInterval(() => {
       try {
-        if (durationMs != null && (Date.now() - startedAt) > Number(durationMs)) { try { clearInterval(iv) } catch {}; if (shared.huntInterval === iv) shared.huntInterval = null; if (shared.huntTarget === targetName) shared.huntTarget = null; return }
-        const ent = bot.players[targetName]?.entity
+        if (durationMs != null && (Date.now() - startedAt) > Number(durationMs)) { stopHunt(); return }
+        const ent = resolvePlayerEntityExact(bot, targetName)
         if (!ent) return
+        if (isSelfEntity(bot, ent)) { stopHunt(); return }
         bot.pathfinder.setGoal(new goals.GoalFollow(ent, range), true)
         try { pvp.pvpTick(bot, ent, ctx) } catch {}
       } catch {}
     }, Math.max(150, tickMs))
     shared.huntInterval = iv
     // Ensure hard reset truly stops hunting: clear this specific timer on stop/end
-    const stopHunt = () => { try { clearInterval(iv) } catch {}; if (shared.huntInterval === iv) shared.huntInterval = null; if (shared.huntTarget === targetName) shared.huntTarget = null; try { bot.pathfinder && bot.pathfinder.setGoal(null) } catch {} }
     try { bot.once('agent:stop_all', stopHunt) } catch {}
     try { bot.once('end', stopHunt) } catch {}
     try { if (typeof registerCleanup === 'function') registerCleanup(() => stopHunt()) } catch {}
@@ -851,14 +863,9 @@ module.exports = function registerCombat (ctx) {
     }
     function resolvePlayerByName (wanted) {
       try {
-        const w = String(wanted || '').trim().toLowerCase()
+        const w = String(wanted || '').trim()
         if (!w) return null
-        // bot.players map
-        if (bot.players && bot.players[w] && bot.players[w].entity) return bot.players[w].entity
-        // fallback scan
-        for (const e of Object.values(bot.entities || {})) {
-          try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === w) return e } catch {}
-        }
+        return resolvePlayerEntityExact(bot, w)
       } catch {}
       return null
     }
@@ -893,6 +900,7 @@ module.exports = function registerCombat (ctx) {
     } else {
       return fail('缺少目标（name|match）')
     }
+    if (isSelfEntity(bot, target)) return fail('不能攻击自己')
 
     // Start ranged tracking loop
     let rangedActive = false
@@ -1207,17 +1215,11 @@ module.exports = function registerCombat (ctx) {
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
-    const targetName = String(name).trim().toLowerCase()
+    const targetName = String(name).trim()
+    const initialTarget = resolvePlayerEntityExact(bot, targetName)
+    if (initialTarget && isSelfEntity(bot, initialTarget)) return fail('不能和自己交互')
     function resolveTargetEntity () {
-      try {
-        for (const [uname, rec] of Object.entries(bot.players || {})) {
-          if (String(uname || '').toLowerCase() === targetName) return rec?.entity || null
-        }
-        for (const e of Object.values(bot.entities || {})) {
-          try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === targetName) return e } catch {}
-        }
-      } catch {}
-      return null
+      return resolvePlayerEntityExact(bot, targetName)
     }
     async function ensureEmptyHand () {
       try {
@@ -1241,6 +1243,7 @@ module.exports = function registerCombat (ctx) {
           if (bot.vehicle && (!initialMounted || mountedAt >= start)) { success = true; break }
           const ent = resolveTargetEntity()
           if (!ent || !ent.position) { await wait(Math.min(300, tickMs)); continue }
+          if (isSelfEntity(bot, ent)) return fail('不能和自己交互')
           // Approach within follow range
           bot.pathfinder.setGoal(new goals.GoalFollow(ent, Math.max(0.9, Math.min(2, followRange))), true)
           const d = ent.position.distanceTo(bot.entity.position)
@@ -1508,18 +1511,7 @@ module.exports = function registerCombat (ctx) {
 
     function resolveGuardEntity () {
       if (!shared.guardTarget) return null
-      try {
-        const wanted = String(shared.guardTarget).trim().toLowerCase()
-        // primary: bot.players map
-        for (const [uname, rec] of Object.entries(bot.players || {})) {
-          if (String(uname || '').toLowerCase() === wanted) return rec?.entity || null
-        }
-        // fallback: scan entities of type player with username
-        for (const e of Object.values(bot.entities || {})) {
-          try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === wanted) return e } catch {}
-        }
-        return null
-      } catch { return null }
+      return resolvePlayerEntityExact(bot, shared.guardTarget)
     }
 
     function mobName (e) {
@@ -1682,7 +1674,9 @@ module.exports = function registerCombat (ctx) {
     m.allowSprinting = true
     m.canDig = (args.dig === true)
     bot.pathfinder.setMovements(m)
-    shared.guardTarget = String(name || '')
+    shared.guardTarget = String(name || '').trim()
+    const initialTarget = resolvePlayerEntityExact(bot, shared.guardTarget)
+    if (initialTarget && isSelfEntity(bot, initialTarget)) return fail('不能对自己护卫')
     if (shared.guardInterval) { try { clearInterval(shared.guardInterval) } catch {}; shared.guardInterval = null }
     try { if (bot.state) bot.state.currentTask = { name: '护卫玩家', source: 'player', startedAt: Date.now() } } catch {}
     let mode = 'follow'
@@ -1729,12 +1723,7 @@ module.exports = function registerCombat (ctx) {
 
     function mobName (e) { try { const raw = e?.name || (e?.displayName && e.displayName.toString && e.displayName.toString()) || ''; return String(raw).replace(/\u00a7./g, '').toLowerCase() } catch { return '' } }
     function resolveGuardEntity () {
-      try {
-        const wanted = String(shared.guardTarget).trim().toLowerCase()
-        for (const [uname, rec] of Object.entries(bot.players || {})) { if (String(uname || '').toLowerCase() === wanted) return rec?.entity || null }
-        for (const e of Object.values(bot.entities || {})) { try { if (e && e.type === 'player' && String(e.username || e.name || '').toLowerCase() === wanted) return e } catch {} }
-        return null
-      } catch { return null }
+      return resolvePlayerEntityExact(bot, shared.guardTarget)
     }
 
     // cycle different aim heights when hitting through windows
@@ -1746,6 +1735,7 @@ module.exports = function registerCombat (ctx) {
         try { if (bot.state && bot.state.externalBusy) return } catch {}
         const targetEnt = resolveGuardEntity()
         if (!targetEnt) return
+        if (isSelfEntity(bot, targetEnt)) return
         // Follow the player target
         bot.pathfinder.setGoal(new goals.GoalFollow(targetEnt, followRange), true)
 
