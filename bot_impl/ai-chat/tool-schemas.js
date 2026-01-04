@@ -270,6 +270,7 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: {
       type: 'object',
       properties: {
+        containerType: { type: 'string', description: 'Container type: chest|barrel|ender_chest|shulker_box|any (supports Chinese synonyms).' },
         items: {
           type: 'array',
           description: 'List of {name|slot,count} entries to deposit.',
@@ -300,6 +301,7 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: {
       type: 'object',
       properties: {
+        containerType: { type: 'string', description: 'Container type: chest|barrel|ender_chest|shulker_box|any (supports Chinese synonyms).' },
         items: {
           type: 'array',
           description: 'List of {name,count} entries to withdraw.',

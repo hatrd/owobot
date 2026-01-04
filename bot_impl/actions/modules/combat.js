@@ -2741,10 +2741,40 @@ module.exports = function registerCombat (ctx) {
     return ok('开始自动钓鱼')
   }
 
+  function normalizeContainerType (raw) {
+    const s = String(raw ?? '').trim().toLowerCase()
+    if (!s) return null
+    if (['any', 'auto', 'default', 'all', '任意', '随便'].includes(s)) return 'any'
+    if (['chest', 'box', '箱子', '箱'].includes(s)) return 'chest'
+    if (['barrel', '木桶', '桶'].includes(s)) return 'barrel'
+    if (['ender_chest', 'enderchest', 'ender-chest', 'ender chest', 'ender', '末影箱', '末影'].includes(s)) return 'ender_chest'
+    if (['shulker_box', 'shulkerbox', 'shulker-box', 'shulker box', 'shulker', '潜影箱', '潜影盒', '潜影'].includes(s)) return 'shulker_box'
+    return null
+  }
+
+  async function openContainerBlock (blk) {
+    if (!blk) return null
+    try {
+      if (typeof bot.activateBlock === 'function') {
+        try { await bot.activateBlock(blk) } catch {}
+        await wait(120)
+      }
+      const name = String(blk.name || '').toLowerCase()
+      if (name === 'ender_chest' && typeof bot.openEnderChest === 'function') {
+        return await bot.openEnderChest(blk)
+      }
+      return await bot.openContainer(blk)
+    } catch (e) {
+      try { log?.warn && log.warn('openContainerBlock error', e?.message || e) } catch {}
+      return null
+    }
+  }
+
   // --- Deposit items into nearest chest/barrel ---
   async function deposit (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '18', 10))
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
+    const containerType = normalizeContainerType(args.containerType ?? args.container)
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -2754,6 +2784,11 @@ module.exports = function registerCombat (ctx) {
 
     function isContainerName (n) {
       const s = String(n || '').toLowerCase()
+      if (containerType === 'chest') return (s === 'chest' || s === 'trapped_chest')
+      if (containerType === 'barrel') return s === 'barrel'
+      if (containerType === 'ender_chest') return s === 'ender_chest'
+      if (containerType === 'shulker_box') return (s === 'shulker_box' || s.endsWith('_shulker_box'))
+      if (containerType === 'any') return (s === 'chest' || s === 'trapped_chest' || s === 'barrel' || s === 'ender_chest' || s === 'shulker_box' || s.endsWith('_shulker_box'))
       if (s === 'chest' || s === 'trapped_chest') return true
       if (includeBarrel && s === 'barrel') return true
       return false
@@ -2762,7 +2797,10 @@ module.exports = function registerCombat (ctx) {
     const me = bot.entity?.position
     if (!me) return fail('未就绪')
     const blocks = bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 32 }) || []
-    if (!blocks.length) return fail('附近没有箱子')
+    if (!blocks.length) {
+      const label = containerType === 'barrel' ? '木桶' : (containerType === 'ender_chest' ? '末影箱' : (containerType === 'shulker_box' ? '潜影箱' : (containerType === 'any' ? '可用容器' : '箱子')))
+      return fail(`附近没有${label}`)
+    }
     blocks.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
     const target = blocks[0]
 
@@ -2783,13 +2821,8 @@ module.exports = function registerCombat (ctx) {
     const blk = bot.blockAt(new Vec3(target.x, target.y, target.z))
     if (!blk) return fail('箱子不可见')
     try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
-    let container = null
-    try {
-      container = await bot.openContainer(blk)
-    } catch (e) {
-      try { log?.warn && log.warn('deposit openContainer error', e?.message || e) } catch {}
-      return fail('无法打开箱子，请稍后再试~')
-    }
+    const container = await openContainerBlock(blk)
+    if (!container) return fail('无法打开箱子，请稍后再试~')
 
     function itemFromSlot (slot) {
       const key = String(slot).toLowerCase()
@@ -2891,6 +2924,7 @@ module.exports = function registerCombat (ctx) {
   async function withdraw (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '18', 10))
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
+    const containerType = normalizeContainerType(args.containerType ?? args.container)
     const multi = (String(args.multi || args.searchAll || 'true').toLowerCase() !== 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
@@ -2901,6 +2935,11 @@ module.exports = function registerCombat (ctx) {
 
     function isContainerName (n) {
       const s = String(n || '').toLowerCase()
+      if (containerType === 'chest') return (s === 'chest' || s === 'trapped_chest')
+      if (containerType === 'barrel') return s === 'barrel'
+      if (containerType === 'ender_chest') return s === 'ender_chest'
+      if (containerType === 'shulker_box') return (s === 'shulker_box' || s.endsWith('_shulker_box'))
+      if (containerType === 'any') return (s === 'chest' || s === 'trapped_chest' || s === 'barrel' || s === 'ender_chest' || s === 'shulker_box' || s.endsWith('_shulker_box'))
       if (s === 'chest' || s === 'trapped_chest') return true
       if (includeBarrel && s === 'barrel') return true
       return false
@@ -2909,7 +2948,10 @@ module.exports = function registerCombat (ctx) {
     const me = bot.entity?.position
     if (!me) return fail('未就绪')
     const blocks = bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 48 }) || []
-    if (!blocks.length) return fail('附近没有箱子')
+    if (!blocks.length) {
+      const label = containerType === 'barrel' ? '木桶' : (containerType === 'ender_chest' ? '末影箱' : (containerType === 'shulker_box' ? '潜影箱' : (containerType === 'any' ? '可用容器' : '箱子')))
+      return fail(`附近没有${label}`)
+    }
     blocks.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
 
     // Build spec list similar to toss/deposit interface
@@ -2953,7 +2995,7 @@ module.exports = function registerCombat (ctx) {
       const blk = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
       if (!blk) return null
       try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
-      try { return await bot.openContainer(blk) } catch { return null }
+      return await openContainerBlock(blk)
     }
 
     // If taking all: just use nearest container
