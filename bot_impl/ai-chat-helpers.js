@@ -62,10 +62,37 @@ function canAfford (estInTok, maxOutTok, budgets, prices) {
   return { ok, proj, rem: { day: remDay, month: remMonth, total: remTotal } }
 }
 
+function extractAssistantText (message) {
+  if (!message || typeof message !== 'object') return ''
+  const content = message.content
+  if (typeof content === 'string' && content.trim()) return content
+  const alt = message.reasoning_content ?? message.reasoning ?? message.thinking ?? message.text
+  if (typeof alt === 'string' && alt.trim()) return alt
+  return ''
+}
+
+function buildAiUrl ({ baseUrl, path, defaultBase, defaultPath }) {
+  const baseRaw = String(baseUrl || defaultBase || '').trim()
+  const pathRaw = String(path || defaultPath || '').trim()
+  const base = baseRaw.replace(/\/+$/, '')
+  let finalPath = pathRaw ? (pathRaw.startsWith('/') ? pathRaw : `/${pathRaw}`) : ''
+
+  const baseVersion = base.match(/\/(v\d+)$/i)?.[1]?.toLowerCase()
+  const pathVersion = finalPath.match(/^\/(v\d+)(\/|$)/i)?.[1]?.toLowerCase()
+  if (baseVersion && pathVersion && baseVersion === pathVersion) {
+    finalPath = finalPath.replace(new RegExp(`^/${pathVersion}(?=/|$)`, 'i'), '')
+    if (!finalPath) finalPath = '/'
+  }
+
+  return base + finalPath
+}
+
 module.exports = {
   estTokensFromText,
   trimReply,
   buildContextPrompt,
   projectedCostForCall,
-  canAfford
+  canAfford,
+  extractAssistantText,
+  buildAiUrl
 }

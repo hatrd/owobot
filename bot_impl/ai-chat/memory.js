@@ -1,6 +1,7 @@
 const fs = require('fs/promises')
 const path = require('path')
 const { randomUUID } = require('crypto')
+const H = require('../ai-chat-helpers')
 
 const MEMORY_REWRITE_SYSTEM_PROMPT = [
   '你是Minecraft服务器里的记忆整理助手。玩家会告诉你一条记忆，你需要判断是否值得记录。',
@@ -500,7 +501,7 @@ function createMemoryService ({
   async function invokeMemoryRewrite (job) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) return { status: 'error', reason: 'no_key' }
-    const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
+    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const payload = {
       job_id: job.id,
       player: job.player,
@@ -535,7 +536,7 @@ function createMemoryService ({
         return { status: 'error', reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` }
       }
       const data = await res.json()
-      const reply = data?.choices?.[0]?.message?.content || ''
+      const reply = H.extractAssistantText(data?.choices?.[0]?.message)
       const jsonRaw = extractJsonLoose(reply)
       if (!jsonRaw) return { status: 'error', reason: 'no_json' }
       let parsed = null
@@ -1221,7 +1222,7 @@ function createMemoryService ({
   async function runSummaryModel (messages, maxTokens = 60, temperature = 0.2) {
     const { key, model } = state.ai || {}
     if (!key) return null
-    const url = (state.ai.baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (state.ai.path || defaults.DEFAULT_PATH)
+    const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const body = { model: model || defaults.DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
     try {
       const res = await fetch(url, {
@@ -1231,7 +1232,7 @@ function createMemoryService ({
       })
       if (!res.ok) return null
       const data = await res.json()
-      return data?.choices?.[0]?.message?.content?.trim() || null
+      return H.extractAssistantText(data?.choices?.[0]?.message).trim() || null
     } catch { return null }
   }
 

@@ -197,6 +197,25 @@ function createPulseService ({
 
     if (normalized.cancelPrevious) cancelSay(username, 'superseded')
 
+    // Record intended full reply into context immediately (before typing delays).
+    try {
+      const planned = steps
+        .filter(s => s && s.kind === 'text' && s.text)
+        .map(s => String(s.text))
+        .filter(Boolean)
+        .join('\n')
+        .trim()
+      if (planned) {
+        recordBotChat(planned, {
+          ...opts,
+          reason: opts.reason || 'say',
+          toolUsed: opts.toolUsed || 'say',
+          from: opts.from || 'LLM',
+          preRecord: true
+        })
+      }
+    } catch {}
+
     const sayState = ensureSayState()
     sayState.seq += 1
     const token = sayState.seq
@@ -227,6 +246,7 @@ function createPulseService ({
         const isLastText = i === lastTextIdx
         sendChatReply(username, step.text, {
           ...opts,
+          suppressRecord: true,
           reason: opts.reason || 'say',
           toolUsed: opts.toolUsed || 'say',
           suppressFeedback: !isLastText
@@ -475,13 +495,13 @@ function createPulseService ({
         const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
         const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
         const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
-        const url = (state.ai.baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (state.ai.path || defaults.DEFAULT_PATH)
+        const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
         const body = { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 60, stream: false }
         try {
           const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
           if (!res.ok) return
           const data = await res.json()
-          const sum = data?.choices?.[0]?.message?.content?.trim()
+          const sum = H.extractAssistantText(data?.choices?.[0]?.message).trim()
           if (!sum) return
           state.aiLong.push({ t: Date.now(), summary: sum })
           if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
@@ -730,7 +750,7 @@ function createPulseService ({
     try {
       bot.chat(trimmed)
       recordCommandDid(trimmed)
-      recordBotChat(trimmed, opts)
+      if (!opts || opts.suppressRecord !== true) recordBotChat(trimmed, opts)
       if (state.aiPulse && Number.isFinite(state.aiRecentSeq)) state.aiPulse.lastSeq = state.aiRecentSeq
     } catch {}
     noteRecentReply(username)
@@ -831,7 +851,7 @@ function createPulseService ({
     const estIn = H.estTokensFromText(messages.map(m => m.content).join(' '))
     const afford = canAfford(estIn)
     if (!afford.ok) return ''
-    const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
+    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const body = {
       model: model || defaults.DEFAULT_MODEL,
       messages,
@@ -847,7 +867,7 @@ function createPulseService ({
     })
     if (!res.ok) return ''
     const data = await res.json()
-    const reply = data?.choices?.[0]?.message?.content || ''
+    const reply = H.extractAssistantText(data?.choices?.[0]?.message)
     const usage = data?.usage || {}
     const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
     const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : H.estTokensFromText(reply)

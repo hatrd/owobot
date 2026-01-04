@@ -28,7 +28,7 @@ function createChatExecutor ({
   buildGameContext,
   contextBus = null
 }) {
-  const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false }
+  const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false, lastUser: null }
   const actions = actionsMod.install(bot, { log })
 
   const estTokensFromText = H.estTokensFromText
@@ -70,6 +70,14 @@ function createChatExecutor ({
       existing.rawParts.push(rawText)
       existing.lastAt = nowTs
       if (source === 'trigger') existing.source = 'trigger'
+      // Keep approximate recency order when merging.
+      try {
+        const idx = ctrl.pending.indexOf(existing)
+        if (idx >= 0 && idx !== ctrl.pending.length - 1) {
+          ctrl.pending.splice(idx, 1)
+          ctrl.pending.push(existing)
+        }
+      } catch {}
       return
     }
     ctrl.pending.push({
@@ -82,26 +90,94 @@ function createChatExecutor ({
     })
   }
 
-  function takePending () {
+  function takePendingBatch () {
     if (!Array.isArray(ctrl.pending) || !ctrl.pending.length) return null
     const maxAge = pendingExpireMs()
-    while (ctrl.pending.length) {
-      const entry = ctrl.pending.shift()
+    const kept = []
+    for (const entry of ctrl.pending) {
       if (!entry || !entry.username || !Array.isArray(entry.parts) || !entry.parts.length) continue
       const lastAt = entry.lastAt || entry.firstAt || 0
       if (lastAt && (now() - lastAt) > maxAge) continue
-      return entry
+      kept.push(entry)
     }
-    return null
+    ctrl.pending = []
+    return kept.length ? kept : null
+  }
+
+  function buildPendingBatchText (batch) {
+    const lines = []
+    const names = [...new Set(batch.map(e => String(e?.username || '').trim()).filter(Boolean))]
+    lines.push('【上一轮回复期间收到的新消息（批量，多玩家）】')
+    if (names.length) lines.push(`参与玩家：${names.join('、')}`)
+    for (const entry of batch) {
+      const joined = Array.isArray(entry.parts) ? entry.parts.join('\n') : ''
+      if (!joined) continue
+      lines.push(`${entry.username}: ${joined}`)
+    }
+    lines.push([
+      '这是对多个玩家的批量对话输入。',
+      '如果需要分别回应，请用 say 工具分次发送；每条消息开头用“玩家名：”来点名（不要用 @）。',
+      '对不需要回应的玩家，不要发送该玩家的消息。',
+      '如果某个玩家在消息里明确要求“记住/记一下/记下来…”，请调用 write_memory 工具保存，不要只口头答应。'
+    ].join(''))
+    return lines.join('\n')
+  }
+
+  async function processPendingBatch (batch) {
+    if (!Array.isArray(batch) || !batch.length) return
+    if (ctrl.busy) return
+    const owner = (() => {
+      for (let i = batch.length - 1; i >= 0; i--) {
+        const entry = batch[i]
+        if (!entry) continue
+        if (entry.source !== 'trigger') continue
+        const name = String(entry.username || '').trim()
+        if (name) return name
+      }
+      const last = batch[batch.length - 1]
+      return String(last?.username || '').trim()
+    })()
+    if (!owner) return
+    const content = buildPendingBatchText(batch)
+    if (!content.trim()) return
+    const raw = batch.map(e => {
+      const joined = Array.isArray(e.rawParts) ? e.rawParts.join('\n') : (Array.isArray(e.parts) ? e.parts.join('\n') : '')
+      return joined ? `${e.username}: ${joined}` : ''
+    }).filter(Boolean).join('\n')
+    const source = batch.some(e => e && e.source === 'trigger') ? 'trigger' : 'followup'
+    const lastText = (() => {
+      const lastEntry = batch[batch.length - 1]
+      const parts = Array.isArray(lastEntry?.parts) ? lastEntry.parts : []
+      return parts.length ? String(parts[parts.length - 1] || '') : ''
+    })()
+    const intent = classifyIntent(lastText || content)
+    ctrl.busy = true
+    ctrl.lastUser = owner
+    try {
+      if (state.ai.trace && log?.info) log.info('ask(pending) <-', content)
+      const allowSkip = source === 'followup'
+      const { reply, memoryRefs } = await callAI(owner, content, intent, { allowSkip })
+      if (reply) {
+        noteUsage(owner)
+        if (allowSkip && /^skip$/i.test(reply.trim())) {
+          traceChat('[chat] pending batch skipped', { owner })
+          return
+        }
+        pulse.sendChatReply(owner, reply, { reason: 'llm_pending', from: 'LLM', memoryRefs, suppressFeedback: true })
+      }
+    } catch (e) {
+      log?.warn && log.warn('ai pending error:', e?.message || e)
+    } finally {
+      ctrl.busy = false
+      flushPending()
+    }
   }
 
   function flushPending () {
-    const next = takePending()
-    if (!next) return false
-    const content = next.parts.join('\n')
-    const raw = Array.isArray(next.rawParts) ? next.rawParts.join('\n') : content
-    const source = next.source === 'trigger' ? 'trigger' : 'followup'
-    setTimeout(() => { processChatContent(next.username, content, raw, source).catch(() => {}) }, 0)
+    if (ctrl.busy) return false
+    const batch = takePendingBatch()
+    if (!batch) return false
+    setTimeout(() => { processPendingBatch(batch).catch(() => {}) }, 0)
     return true
   }
 
@@ -364,7 +440,7 @@ function createChatExecutor ({
   async function callAI (username, content, intent, options = {}) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
-    const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
+    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const memoryCtxResult = await memory.longTerm.buildContext({ query: content, withRefs: true })
@@ -430,7 +506,7 @@ function createChatExecutor ({
       }
       const data = await res.json()
       const choice = data?.choices?.[0]?.message || {}
-      const reply = choice?.content || ''
+      const reply = H.extractAssistantText(choice)
       const usage = data?.usage || {}
       const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
       const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : estTokensFromText(reply)
@@ -705,6 +781,7 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '好的', { reason: `${reasonTag}_stop` })
       return
     }
+    // Memory commands are high-priority and should not be delayed/dropped by pending batching.
     const memoryText = memory.longTerm.extractCommand(text)
     if (memoryText) {
       if (!state.ai?.key) {
@@ -726,6 +803,8 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }
+    // Pending rule: while an AI request is in-flight, accumulate all new chat and handle them in one batch
+    // only after the previous request completes.
     if (ctrl.busy) {
       try { state.aiPulse.lastFlushAt = now() } catch {}
       queuePending(username, text, raw, source)
@@ -744,6 +823,7 @@ function createChatExecutor ({
     const acted = await Promise.resolve(false)
     if (acted) return
     ctrl.busy = true
+    ctrl.lastUser = username
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', text)
       const allowSkip = source === 'followup'

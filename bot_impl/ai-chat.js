@@ -324,7 +324,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function aiCall ({ systemPrompt, userPrompt, maxTokens, temperature }) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) throw new Error('AI key not configured')
-    const url = (baseUrl || defaults.DEFAULT_BASE).replace(/\/$/, '') + (path || defaults.DEFAULT_PATH)
+    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
 
     const messages = [
       systemPrompt ? { role: 'system', content: String(systemPrompt) } : null,
@@ -367,7 +367,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
       const data = await res.json()
-      const reply = data?.choices?.[0]?.message?.content || ''
+      const reply = H.extractAssistantText(data?.choices?.[0]?.message)
       const usage = data?.usage || {}
       const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
       const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : H.estTokensFromText(reply)
