@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "${ROOT}" ]]; then
+  echo "error: not inside a git repo" >&2
+  exit 2
+fi
+
+WT_ROOT="${WT_ROOT:-$ROOT/.worktrees}"
+
+die () { echo "error: $*" >&2; exit 2; }
+note () { echo "[wt] $*" >&2; }
+
+usage () {
+  cat >&2 <<'EOF'
+Usage:
+  bash scripts/wt list
+  bash scripts/wt new <slug> [--base <ref>] [--branch <name>] [--link-deps]
+  bash scripts/wt assign <slug> "<task>" [--base <ref>] [--link-deps]
+  bash scripts/wt report <slug> [--base <ref>]
+  bash scripts/wt merge <slug> [--squash] [--delete]
+  bash scripts/wt close <slug> [--delete-branch]
+  bash scripts/wt prune
+
+Conventions (defaults):
+  worktree dir:  .worktrees/<slug>
+  branch name:   wt/<slug>
+EOF
+}
+
+sanitize_slug () {
+  local raw="${1:-}"
+  [[ -n "$raw" ]] || return 1
+  raw="${raw// /-}"
+  if [[ ! "$raw" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    return 1
+  fi
+  echo "$raw"
+}
+
+default_base () {
+  if git -C "$ROOT" show-ref --verify --quiet refs/heads/main; then
+    echo "main"
+  elif git -C "$ROOT" show-ref --verify --quiet refs/heads/master; then
+    echo "master"
+  else
+    git -C "$ROOT" rev-parse --abbrev-ref HEAD
+  fi
+}
+
+git_clean_required () {
+  local where="${1:-$ROOT}"
+  local allow_re="${2:-}"
+  local st
+  st="$(git -C "$where" status --porcelain)"
+  if [[ -n "$allow_re" ]]; then
+    st="$(printf '%s\n' "$st" | grep -vE "$allow_re" || true)"
+  fi
+  if [[ -n "$st" ]]; then
+    die "working tree not clean in $where"
+  fi
+}
+
+worktree_path () {
+  local slug="$1"
+  echo "$WT_ROOT/$slug"
+}
+
+branch_name () {
+  local slug="$1"
+  echo "wt/$slug"
+}
+
+ensure_wt_root () {
+  mkdir -p "$WT_ROOT"
+}
+
+cmd_list () {
+  git -C "$ROOT" worktree list
+}
+
+cmd_new () {
+  local slug="" base="" branch="" link_deps="0"
+  slug="$(sanitize_slug "${1:-}")" || die "invalid slug (use letters/digits/._-)"
+  shift || true
+
+  base="$(default_base)"
+  branch="$(branch_name "$slug")"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --base) base="${2:-}"; shift 2 ;;
+      --branch) branch="${2:-}"; shift 2 ;;
+      --link-deps) link_deps="1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+  done
+
+  [[ -n "$base" ]] || die "--base requires a value"
+  [[ -n "$branch" ]] || die "--branch requires a value"
+
+  ensure_wt_root
+
+  local dir
+  dir="$(worktree_path "$slug")"
+  if [[ -e "$dir" ]]; then
+    die "worktree dir already exists: $dir"
+  fi
+
+  if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+    note "branch exists: $branch"
+    git -C "$ROOT" worktree add "$dir" "$branch"
+  else
+    git -C "$ROOT" worktree add -b "$branch" "$dir" "$base"
+  fi
+
+  # Optional: share deps from the main worktree to avoid repeated npm install.
+  if [[ "$link_deps" == "1" ]]; then
+    if [[ -d "$ROOT/node_modules" && ! -e "$dir/node_modules" ]]; then
+      ln -s "../../node_modules" "$dir/node_modules"
+      note "linked deps: $dir/node_modules -> ../../node_modules"
+    else
+      note "skip --link-deps (no root node_modules or target exists)"
+    fi
+  fi
+
+  if [[ ! -f "$dir/TASK.md" ]]; then
+    cat >"$dir/TASK.md" <<EOF
+# Task: $slug
+
+## Goal
+- TODO
+
+## Constraints
+- Keep changes scoped; prefer \`bot_impl/\` for hot reload.
+- Use \`touch open_fire\` only when ready to apply.
+
+## Acceptance
+- TODO
+
+## Notes
+- Worktree: $dir
+- Branch: $branch
+- Base: $base
+EOF
+  fi
+
+  note "created: $dir ($branch from $base)"
+  echo "$dir"
+}
+
+cmd_assign () {
+  local slug="" task="" base="" link_deps="0"
+  slug="$(sanitize_slug "${1:-}")" || die "invalid slug (use letters/digits/._-)"
+  task="${2:-}"
+  [[ -n "$task" ]] || die "missing task string"
+  shift 2 || true
+
+  base="$(default_base)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --base) base="${2:-}"; shift 2 ;;
+      --link-deps) link_deps="1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+  done
+
+  local dir
+  dir="$(cmd_new "$slug" --base "$base" $( [[ "$link_deps" == "1" ]] && echo "--link-deps" ))"
+
+  cat >"$dir/TASK.md" <<EOF
+# Task: $slug
+
+## Goal
+- $task
+
+## Constraints
+- Keep changes scoped; prefer \`bot_impl/\` for hot reload.
+- Use \`touch open_fire\` only when ready to apply.
+- Avoid unrelated refactors.
+
+## Acceptance
+- A reviewer can verify by running \`npm test\` and/or \`npm start\` as applicable.
+
+## Handoff (for main Codex)
+- Provide: changed files + how to test + any follow-ups.
+
+## Notes
+- Worktree: $dir
+- Base: $base
+EOF
+
+  note "assigned: $slug"
+  echo "$dir"
+}
+
+cmd_report () {
+  local slug="" base=""
+  slug="$(sanitize_slug "${1:-}")" || die "invalid slug"
+  shift || true
+
+  base="$(default_base)"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --base) base="${2:-}"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+  done
+
+  local dir branch
+  dir="$(worktree_path "$slug")"
+  [[ -d "$dir" ]] || die "missing worktree dir: $dir"
+  branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+
+  echo "worktree: $dir"
+  echo "branch:   $branch"
+  echo
+  echo "status:"
+  git -C "$dir" status -sb
+  echo
+  echo "commits ($base..HEAD):"
+  git -C "$dir" log --oneline --decorate "$base..HEAD" || true
+  echo
+  echo "diffstat ($base..HEAD):"
+  git -C "$dir" diff --stat "$base..HEAD" || true
+}
+
+cmd_merge () {
+  local slug="" squash="0" delete="0"
+  slug="$(sanitize_slug "${1:-}")" || die "invalid slug"
+  shift || true
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --squash) squash="1"; shift ;;
+      --delete) delete="1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+  done
+
+  local dir branch
+  dir="$(worktree_path "$slug")"
+  [[ -d "$dir" ]] || die "missing worktree dir: $dir"
+  branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+
+  git_clean_required "$ROOT"
+  git_clean_required "$dir" '^\?\? (TASK\.md|HANDOFF\.md)$'
+
+  git -C "$ROOT" fetch --all --prune >/dev/null 2>&1 || true
+
+  if [[ "$squash" == "1" ]]; then
+    note "squash-merge $branch into $(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+    git -C "$ROOT" merge --squash "$branch"
+    note "now commit the squashed merge (edit message as needed):"
+    echo "git commit"
+  else
+    note "merge $branch into $(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+    git -C "$ROOT" merge --no-ff "$branch"
+  fi
+
+  if [[ "$delete" == "1" ]]; then
+    cmd_close "$slug" --delete-branch
+  fi
+}
+
+cmd_close () {
+  local slug="" delete_branch="0"
+  slug="$(sanitize_slug "${1:-}")" || die "invalid slug"
+  shift || true
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --delete-branch) delete_branch="1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+  done
+
+  local dir branch
+  dir="$(worktree_path "$slug")"
+  [[ -d "$dir" ]] || die "missing worktree dir: $dir"
+  branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+
+  git_clean_required "$dir" '^\?\? (TASK\.md|HANDOFF\.md)$'
+
+  note "removing worktree: $dir"
+  git -C "$ROOT" worktree remove --force "$dir"
+
+  if [[ "$delete_branch" == "1" ]]; then
+    note "deleting branch: $branch"
+    git -C "$ROOT" branch -D "$branch" || true
+  fi
+}
+
+cmd_prune () {
+  git -C "$ROOT" worktree prune
+}
+
+main () {
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    list) cmd_list "$@" ;;
+    new) cmd_new "$@" ;;
+    assign) cmd_assign "$@" ;;
+    report) cmd_report "$@" ;;
+    merge) cmd_merge "$@" ;;
+    close) cmd_close "$@" ;;
+    prune) cmd_prune "$@" ;;
+    ""|-h|--help) usage; exit 0 ;;
+    *) die "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"

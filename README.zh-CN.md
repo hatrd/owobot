@@ -126,6 +126,7 @@
 ### 开发参考
 - `docs/runtime-map.md` 总结了共享状态结构与关键事件。
 - `bot_impl/module-registry.js` 统一登记所有热重载模块，新增/移除功能时只需修改这里。
+- `docs/git-worktree-parallel.md` 总结了基于 git worktree 的并行 Codex 流程（分配/验收/合入子任务）。
 - 运行 `node scripts/list-tools.js` 可输出当前 AI 工具白名单 JSON，帮助提示词与文档保持一致。
 
 ## CLI 覆盖
