@@ -111,9 +111,11 @@ cmd_new () {
 
   if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
     note "branch exists: $branch"
-    git -C "$ROOT" worktree add "$dir" "$branch"
+    # git prints status lines to stdout in some locales; keep stdout clean so
+    # callers can safely capture the resulting path via command substitution.
+    git -C "$ROOT" worktree add "$dir" "$branch" >&2
   else
-    git -C "$ROOT" worktree add -b "$branch" "$dir" "$base"
+    git -C "$ROOT" worktree add -b "$branch" "$dir" "$base" >&2
   fi
 
   # Optional: share deps from the main worktree to avoid repeated npm install.
