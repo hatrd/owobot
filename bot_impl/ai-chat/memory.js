@@ -1,5 +1,3 @@
-const fs = require('fs/promises')
-const path = require('path')
 const { randomUUID } = require('crypto')
 const H = require('../ai-chat-helpers')
 
@@ -9,10 +7,6 @@ const MEMORY_REWRITE_SYSTEM_PROMPT = [
   '若无需记录，输出 {"status":"reject","reason":"原因"}；若需要玩家补充信息，输出 {"status":"clarify","question":"需要什么信息"}。',
   '所有 JSON 属性都必须双引号，内容用中文，禁止添加额外说明。'
 ].join('\n')
-
-const LOG_SEARCH_FILE_LIMIT = 4
-const LOG_SEARCH_TAIL_BYTES = 256 * 1024
-const LOG_SEARCH_FETCH_FACTOR = 4
 
 function createMemoryService ({
   state,
@@ -359,146 +353,6 @@ function createMemoryService ({
     return scored.slice(0, limit).map(it => it.entry)
   }
 
-  function resolveLogSearchRoot () {
-    const cwd = process.cwd()
-    const rawFile = process.env.MC_LOG_FILE
-    if (rawFile) {
-      const trimmed = String(rawFile).trim()
-      if (trimmed && trimmed.toLowerCase() !== 'off') {
-        return { files: [path.isAbsolute(trimmed) ? trimmed : path.join(cwd, trimmed)] }
-      }
-      if (trimmed.toLowerCase() === 'off') return null
-    }
-    const rawDir = process.env.MC_LOG_DIR
-    const dir = rawDir && String(rawDir).trim()
-      ? (path.isAbsolute(rawDir) ? rawDir : path.join(cwd, rawDir))
-      : path.join(cwd, 'logs')
-    return { dir }
-  }
-
-  async function listLogFilesForSearch () {
-    const root = resolveLogSearchRoot()
-    if (!root) return []
-    const stats = []
-    if (Array.isArray(root.files)) {
-      for (const filePath of root.files) {
-        if (!filePath) continue
-        try {
-          const st = await fs.stat(filePath)
-          if (!st || (typeof st.isFile === 'function' && !st.isFile())) continue
-          stats.push({ path: filePath, mtime: st.mtimeMs || 0 })
-        } catch {}
-      }
-      stats.sort((a, b) => b.mtime - a.mtime)
-      return stats.map(it => it.path)
-    }
-    const dir = root.dir
-    if (!dir) return []
-    let entries = []
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch {
-      return []
-    }
-    for (const entry of entries) {
-      try {
-        if (!entry || typeof entry.isFile !== 'function' || !entry.isFile()) continue
-        const filePath = path.join(dir, entry.name)
-        const st = await fs.stat(filePath)
-        if (!st || (typeof st.isFile === 'function' && !st.isFile())) continue
-        stats.push({ path: filePath, mtime: st.mtimeMs || 0 })
-      } catch {}
-    }
-    if (!stats.length) return []
-    stats.sort((a, b) => b.mtime - a.mtime)
-    return stats.slice(0, LOG_SEARCH_FILE_LIMIT).map(it => it.path)
-  }
-
-  async function readLogTailForSearch (filePath) {
-    let handle
-    try {
-      handle = await fs.open(filePath, 'r')
-      const st = await handle.stat()
-      if (!st || !Number.isFinite(st.size) || st.size <= 0) return ''
-      const slice = Math.min(LOG_SEARCH_TAIL_BYTES, st.size)
-      const buffer = Buffer.alloc(slice)
-      await handle.read(buffer, 0, slice, st.size - slice)
-      return buffer.toString('utf8')
-    } catch {
-      return ''
-    } finally {
-      try { await handle?.close() } catch {}
-    }
-  }
-
-  function tokenizeLogQuery (query) {
-    const ask = normalizeMemoryText(query)
-    if (!ask) return []
-    const parts = ask.split(/[\s,，。!?！？]/g)
-      .map(t => t.trim().toLowerCase())
-      .filter(t => t.length >= 2)
-    if (!parts.length) parts.push(ask.toLowerCase())
-    const seen = new Set()
-    const out = []
-    for (const part of parts) {
-      if (!part || seen.has(part)) continue
-      seen.add(part)
-      out.push(part)
-      if (out.length >= 6) break
-    }
-    return out
-  }
-
-  async function searchLogSnippets (query, limit) {
-    const tokens = tokenizeLogQuery(query)
-    if (!tokens.length) return []
-    const files = await listLogFilesForSearch()
-    if (!files.length) return []
-    const finalLimit = Math.max(1, limit || 6)
-    const fetchCap = Math.max(finalLimit * LOG_SEARCH_FETCH_FACTOR, finalLimit + 2)
-    const results = []
-    const fileCount = Math.min(files.length, LOG_SEARCH_FILE_LIMIT)
-    for (let idx = 0; idx < fileCount; idx++) {
-      const filePath = files[idx]
-      const tail = await readLogTailForSearch(filePath)
-      if (!tail) continue
-      const lines = tail.split(/\r?\n/)
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const rawLine = lines[i]
-        if (!rawLine) continue
-        const norm = normalizeMemoryText(rawLine).toLowerCase()
-        if (!norm) continue
-        let hits = 0
-        for (const token of tokens) {
-          if (norm.includes(token)) hits += 1
-        }
-        if (!hits) continue
-        const trimmed = rawLine.trim()
-        if (!trimmed) continue
-        const snippet = trimmed.length > 220 ? `${trimmed.slice(0, 217)}...` : trimmed
-        results.push({
-          source: path.basename(filePath),
-          text: snippet,
-          score: hits + (fileCount - idx) * 0.001 - (i / Math.max(1, lines.length)) * 0.0001
-        })
-        if (results.length >= fetchCap) break
-      }
-      if (results.length >= fetchCap) break
-    }
-    if (!results.length) return []
-    results.sort((a, b) => b.score - a.score)
-    const seen = new Set()
-    const out = []
-    for (const item of results) {
-      const key = `${item.source}|${item.text}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push(`${item.source}: ${item.text}`)
-      if (out.length >= finalLimit) break
-    }
-    return out
-  }
-
   // --- Rewrite queue & background jobs ---
 
   function recentChatSnippet (count = 5) {
@@ -653,13 +507,6 @@ function createMemoryService ({
     const query = typeof opts.query === 'string' ? opts.query : ''
     const sections = []
     const refs = []
-    if (query) {
-      const logHits = await searchLogSnippets(query, limit)
-      if (logHits.length) {
-        const formatted = logHits.map((line, idx) => `${idx + 1}. ${line}`)
-        sections.push(`日志检索: ${formatted.join(' | ')}`)
-      }
-    }
     let selected = []
     if (query) selected = keywordMatchMemories(query, limit * 2)
     if (!selected.length) selected = recentMemories(limit)
