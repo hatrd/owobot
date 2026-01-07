@@ -155,14 +155,9 @@ function createChatExecutor ({
     ctrl.lastUser = owner
     try {
       if (state.ai.trace && log?.info) log.info('ask(pending) <-', content)
-      const allowSkip = source === 'followup'
-      const { reply, memoryRefs } = await callAI(owner, content, intent, { allowSkip })
+      const { reply, memoryRefs } = await callAI(owner, content, intent)
       if (reply) {
         noteUsage(owner)
-        if (allowSkip && /^skip$/i.test(reply.trim())) {
-          traceChat('[chat] pending batch skipped', { owner })
-          return
-        }
         pulse.sendChatReply(owner, reply, { reason: 'llm_pending', from: 'LLM', memoryRefs, suppressFeedback: true })
       }
     } catch (e) {
@@ -395,7 +390,7 @@ function createChatExecutor ({
     let reply = ''
     let memoryRefs = []
     try {
-      const res = await callAI(plan.owner, content, { topic: 'plan', kind: 'chat' }, { allowSkip: true })
+      const res = await callAI(plan.owner, content, { topic: 'plan', kind: 'chat' }, { inlineUserContent: true })
       reply = res.reply
       memoryRefs = res.memoryRefs
     } catch (e) {
@@ -411,7 +406,7 @@ function createChatExecutor ({
     ctrl.busy = false
     if (!ctrl.plan || ctrl.plan !== plan) return
     plan.index += 1
-    if (reply && !/^skip$/i.test(String(reply).trim())) {
+    if (reply) {
       pulse.sendChatReply(plan.owner, reply, { reason: 'plan_step', from: 'LLM', memoryRefs })
     }
     flushPending()
@@ -454,8 +449,8 @@ function createChatExecutor ({
       } catch { return '' }
     })()
     const metaCtx = buildMetaContext()
-    const allowSkip = options?.allowSkip === true
-    const userContent = allowSkip ? `${content}\n\n（如果暂时不需要回复，请只输出单词 SKIP。）` : content
+    const inlineUserContent = options?.inlineUserContent === true
+    const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
     const messages = [
       { role: 'system', content: systemPrompt() },
       metaCtx ? { role: 'system', content: metaCtx } : null,
@@ -463,7 +458,7 @@ function createChatExecutor ({
       identityCtx ? { role: 'system', content: identityCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,
       { role: 'system', content: contextPrompt },
-      { role: 'user', content: userContent }
+      inlinePrompt ? { role: 'system', content: inlinePrompt } : null
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
@@ -826,15 +821,10 @@ function createChatExecutor ({
     ctrl.lastUser = username
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', text)
-      const allowSkip = source === 'followup'
-      const { reply, memoryRefs } = await callAI(username, text, intent, { allowSkip })
+      const { reply, memoryRefs } = await callAI(username, text, intent)
       if (reply) {
         noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
-        if (allowSkip && /^skip$/i.test(reply.trim())) {
-          traceChat('[chat] followup skipped', { username })
-          return
-        }
         const replyReason = source === 'followup' ? 'llm_followup' : 'llm_reply'
         pulse.sendChatReply(username, reply, { reason: replyReason, from: 'LLM', memoryRefs })
       }

@@ -2,7 +2,7 @@
 
 `bot_impl/ai-chat.js` 负责装配 AI 聊天模块；真正的「上下文注入/Prompt 拼装」主要发生在：
 
-- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（system/meta/game/identity/memory/context + user）
+- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（以 system 注入为主；玩家原始消息来自 `xmlCtx`，不再额外注入 `user`）
 - `bot_impl/ai-chat/context-bus.js`：把时序事件序列化成紧凑 XML（`<ctx>...</ctx>`）
 - `bot_impl/ai-chat/memory.js`：长期记忆检索（`长期记忆: ...`）+ 对话摘要（`对话记忆：...`）
 - `bot_impl/agent/observer.js`：游戏快照（`游戏: ...`）
@@ -32,7 +32,7 @@
 ## 3. 会话激活与跟进
 
 - `activateSession(username)`: 触发后保持 60s 活跃窗口
-- 活跃窗口内：若玩家继续说话，5s 沉默后会触发“跟进调用”；LLM 可输出 `SKIP` 跳过
+- 活跃窗口内：若玩家继续说话，5s 沉默后会触发“跟进调用”
 - 触发词重新出现延长会话
 
 ## 4. 上下文构建
@@ -41,7 +41,7 @@
 
 > 注意：这里说的是“LLM 看到的 messages[]”。工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接。
 
-顺序（system → user）：
+顺序（全部为 system message）：
 
 1. `systemPrompt()`（必有）：来自 `bot_impl/prompts/ai-system.txt`，并替换 `{{BOT_NAME}}`
 2. `metaCtx`（几乎必有）：`现在是北京时间 ...，你在 ShikiMC 服务器中。服主为 Shiki。`
@@ -57,7 +57,7 @@
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
-7. `user`：玩家当次消息（跟进调用时会附加“如不需回复输出 SKIP”的尾注）
+7. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
 
 ### 4.2 如何对齐“真实注入内容”
 
