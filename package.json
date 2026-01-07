@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node bot.js",
     "dev": "nodemon",
-    "test": "node --test"
+    "test": "node --test",
+    "inspect:context": "node scripts/inspect-injected-context.js"
   },
   "dependencies": {
     "minecraft-data": "^3.99.1",

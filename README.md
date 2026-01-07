@@ -126,9 +126,10 @@ Default digging policy (simplified)
 - Save atomically under `bot_impl/` to avoid partial reloads.
 
 ### Developer References
-- `docs/runtime-map.md` explains the long-lived shared state layout and key event hooks.
-- `bot_impl/module-registry.js` lists every hot-reloadable module; edit it to add/remove behaviour safely.
-- Run `node scripts/list-tools.js` to dump the AI tool allowlist as JSON (keeps prompts/docs in sync).
+  - `docs/runtime-map.md` explains the long-lived shared state layout and key event hooks.
+  - `bot_impl/module-registry.js` lists every hot-reloadable module; edit it to add/remove behaviour safely.
+  - Run `node scripts/list-tools.js` to dump the AI tool allowlist as JSON (keeps prompts/docs in sync).
+  - Run `npm run inspect:context -- --player <name> [--query <text>]` to preview what gets injected into LLM context (memory + dialogue).
 
 ## CLI Overrides
 All env vars are overridable via CLI:

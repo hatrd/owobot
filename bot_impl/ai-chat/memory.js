@@ -325,6 +325,14 @@ function createMemoryService ({
     return top.slice(0, limit)
   }
 
+  function recentMemories (limit) {
+    const entries = ensureMemoryEntries()
+    if (!entries.length) return []
+    const sorted = entries.slice().sort((a, b) => (b?.updatedAt || b?.createdAt || 0) - (a?.updatedAt || a?.createdAt || 0))
+    if (!Number.isFinite(limit) || limit <= 0) return sorted
+    return sorted.slice(0, limit)
+  }
+
   function keywordMatchMemories (query, limit) {
     const ask = normalizeMemoryText(query)
     if (!ask) return []
@@ -509,7 +517,7 @@ function createMemoryService ({
       original_message: job.original,
       recent_chat: job.recent,
       memory_context: job.context || null,
-      existing_triggers: ensureMemoryEntries().map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] })).slice(-10)
+      existing_triggers: recentMemories(10).map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] }))
     }
     const messages = [
       { role: 'system', content: MEMORY_REWRITE_SYSTEM_PROMPT },
@@ -654,7 +662,7 @@ function createMemoryService ({
     }
     let selected = []
     if (query) selected = keywordMatchMemories(query, limit * 2)
-    if (!selected.length) selected = topMemories(limit)
+    if (!selected.length) selected = recentMemories(limit)
     if (selected.length) {
       const slice = selected.slice(0, limit)
       for (const m of slice) {
