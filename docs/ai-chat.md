@@ -25,7 +25,7 @@
 ```
 玩家消息 → 触发词检测 (bot名前3字符) → 预处理
     ├── 立即命令: 下坐/停止 → actions 直接执行
-    ├── 记忆写入: "记住..." → 入队重写任务
+    ├── 记忆写入/撤销: "记住..." / "忘记..." / "别叫我..." → 写入或禁用长期记忆
     └── LLM 调用: classifyIntent → callAI → 工具执行或文本回复
 ```
 
@@ -53,6 +53,7 @@
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
    - 格式：`长期记忆: 1. ... | 2. ...`
+   - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
 6. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）

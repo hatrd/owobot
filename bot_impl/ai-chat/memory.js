@@ -44,6 +44,15 @@ function createMemoryService ({
     return out
   }
 
+  function isMemoryDisabled (entry) {
+    return Boolean(entry && entry.disabledAt)
+  }
+
+  function normalizeDisableReason (value) {
+    const text = normalizeMemoryText(value)
+    return text ? text.slice(0, 80) : ''
+  }
+
   function normalizeLocationValue (value) {
     if (!value || typeof value !== 'object') return null
     const src = (typeof value.position === 'object' && value.position) ? value.position : value
@@ -109,6 +118,14 @@ function createMemoryService ({
       if (item.instruction) item.instruction = normalizeMemoryText(item.instruction)
       if (!item.instruction) item.instruction = item.text
       item.fromAI = item.fromAI !== false
+      if (item.disabledAt != null) {
+        const ts = Number(item.disabledAt)
+        if (Number.isFinite(ts) && ts > 0) item.disabledAt = ts
+        else if (item.disabledAt === true) item.disabledAt = nowTs
+        else item.disabledAt = null
+      }
+      if (item.disabledReason) item.disabledReason = normalizeDisableReason(item.disabledReason)
+      if (item.disabledBy) item.disabledBy = normalizeMemoryText(item.disabledBy).slice(0, 40)
       if (item.location) {
         const loc = normalizeLocationValue(item.location)
         if (loc) item.location = loc
@@ -130,6 +147,7 @@ function createMemoryService ({
     const entries = ensureMemoryEntries()
     const zones = []
     for (const entry of entries) {
+      if (isMemoryDisabled(entry)) continue
       const loc = entry && entry.location
       if (!loc || !Number.isFinite(loc.x) || !Number.isFinite(loc.z)) continue
       const radius = Number.isFinite(loc.radius) && loc.radius > 0 ? loc.radius : 50
@@ -308,7 +326,7 @@ function createMemoryService ({
   }
 
   function topMemories (limit) {
-    const entries = ensureMemoryEntries()
+    const entries = ensureMemoryEntries().filter(e => !isMemoryDisabled(e))
     if (!entries.length) return []
     const top = entries.slice().sort((a, b) => {
       const bc = (b?.count || 1) - (a?.count || 1)
@@ -320,11 +338,128 @@ function createMemoryService ({
   }
 
   function recentMemories (limit) {
-    const entries = ensureMemoryEntries()
+    const entries = ensureMemoryEntries().filter(e => !isMemoryDisabled(e))
     if (!entries.length) return []
     const sorted = entries.slice().sort((a, b) => (b?.updatedAt || b?.createdAt || 0) - (a?.updatedAt || a?.createdAt || 0))
     if (!Number.isFinite(limit) || limit <= 0) return sorted
     return sorted.slice(0, limit)
+  }
+
+  function aliasesForToken (token) {
+    const t = normalizeMemoryText(token)
+    if (!t) return []
+    const aliases = {
+      '变态': ['变态', '変態', '變態'],
+      '変態': ['变态', '変態', '變態'],
+      '變態': ['变态', '変態', '變態']
+    }
+    return aliases[t] || [t]
+  }
+
+  function tokensFromQuery (query) {
+    const ask = normalizeMemoryText(query)
+    if (!ask) return []
+    const raw = ask.split(/[\s,，。.!！?？;；:："“”‘’"'()[\]{}<>]/g).map(t => t.trim()).filter(Boolean)
+    const tokens = []
+    for (const part of raw) {
+      if (part.length < 2) continue
+      tokens.push(part)
+    }
+    if (!tokens.length && ask.length >= 2) {
+      tokens.push(ask)
+    }
+    return Array.from(new Set(tokens)).slice(0, 8)
+  }
+
+  function tokenMatchesHaystack (haystack, token) {
+    const aliases = aliasesForToken(token)
+    if (!aliases.length) return false
+    return aliases.some(t => haystack.includes(t))
+  }
+
+  function memoryMatchesQuery (entry, queryTokens) {
+    const hay = [entry.summary, entry.text, entry.feature]
+    if (Array.isArray(entry.tags)) hay.push(entry.tags.join(' '))
+    if (Array.isArray(entry.triggers)) hay.push(entry.triggers.join(' '))
+    const haystack = hay.map(part => normalizeMemoryText(part || '')).filter(Boolean).join(' ')
+    if (!haystack) return false
+    if (!queryTokens.length) return false
+    if (queryTokens.length === 1) return tokenMatchesHaystack(haystack, queryTokens[0])
+    return queryTokens.every(tok => tokenMatchesHaystack(haystack, tok))
+  }
+
+  function isMemoryOwnedBy (entry, actor) {
+    const name = normalizeMemoryText(actor)
+    if (!name) return false
+    if (entry.firstAuthor === name || entry.lastAuthor === name) return true
+    const haystack = [entry.text, entry.summary, entry.feature].map(v => normalizeMemoryText(v || '')).filter(Boolean).join(' ')
+    return haystack.includes(name)
+  }
+
+  function disableMemories ({ query, actor, reason, scope } = {}) {
+    const q = normalizeMemoryText(query)
+    if (!q) return { ok: false, reason: 'empty_query', disabled: [] }
+    const entries = ensureMemoryEntries()
+    const nowTs = now()
+    const disabled = []
+    const queryTokens = tokensFromQuery(q)
+    const idLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q) || /^mem_\d+/i.test(q)
+
+    for (const entry of entries) {
+      if (!entry || isMemoryDisabled(entry)) continue
+      if (scope === 'owned' && actor && !isMemoryOwnedBy(entry, actor)) continue
+      if (idLike) {
+        if (String(entry.id || '') !== q) continue
+      } else if (!memoryMatchesQuery(entry, queryTokens)) {
+        continue
+      }
+      entry.disabledAt = nowTs
+      entry.disabledBy = actor ? normalizeMemoryText(actor).slice(0, 40) : null
+      entry.disabledReason = normalizeDisableReason(reason || 'player_request')
+      disabled.push(entry.id)
+    }
+
+    if (disabled.length) {
+      persistMemoryState()
+      updateWorldMemoryZones()
+    }
+    return { ok: true, disabled }
+  }
+
+  function disableSelfNicknameMemories ({ actor, reason } = {}) {
+    const name = normalizeMemoryText(actor)
+    if (!name) return { ok: false, reason: 'empty_actor', disabled: [] }
+    const entries = ensureMemoryEntries()
+    const nowTs = now()
+    const disabled = []
+    const keywordHits = [
+      '名字后面',
+      '名字后',
+      '后面加',
+      '后加',
+      '称呼',
+      '外号',
+      '欢迎',
+      '上线',
+      '问候'
+    ]
+    for (const entry of entries) {
+      if (!entry || isMemoryDisabled(entry)) continue
+      if (!isMemoryOwnedBy(entry, name)) continue
+      const haystack = [entry.text, entry.summary, entry.feature, entry.greetSuffix].map(v => normalizeMemoryText(v || '')).filter(Boolean).join(' ')
+      if (!haystack) continue
+      const looksLikeNicknameRule = Boolean(entry.greetSuffix) || keywordHits.some(tok => haystack.includes(tok))
+      if (!looksLikeNicknameRule) continue
+      entry.disabledAt = nowTs
+      entry.disabledBy = name.slice(0, 40)
+      entry.disabledReason = normalizeDisableReason(reason || 'player_request')
+      disabled.push(entry.id)
+    }
+    if (disabled.length) {
+      persistMemoryState()
+      updateWorldMemoryZones()
+    }
+    return { ok: true, disabled }
   }
 
   function keywordMatchMemories (query, limit) {
@@ -335,6 +470,7 @@ function createMemoryService ({
     const entries = ensureMemoryEntries()
     const scored = []
     for (const entry of entries) {
+      if (isMemoryDisabled(entry)) continue
       const hay = [entry.summary, entry.text, entry.feature]
       if (Array.isArray(entry.tags)) hay.push(entry.tags.join(' '))
       if (Array.isArray(entry.triggers)) hay.push(entry.triggers.join(' '))
@@ -571,7 +707,7 @@ function createMemoryService ({
     if (!/(在哪|哪儿|哪里|位置|坐标)/.test(ask)) return null
     const stop = new Set(['在哪', '哪里', '哪儿', '位置', '坐标', '你', '我', '那里'])
     const tokens = Array.from(new Set(ask.split(/[\s,，。!?！?]/g).map(t => t.trim()).filter(t => t.length >= 2 && !stop.has(t))))
-    const entries = ensureMemoryEntries().filter(e => e && e.location)
+    const entries = ensureMemoryEntries().filter(e => e && e.location && !isMemoryDisabled(e))
     if (!entries.length) return null
     let best = null
     for (const entry of entries) {
@@ -617,6 +753,56 @@ function createMemoryService ({
       }
     }
     return null
+  }
+
+  function extractForgetCommand (content) {
+    if (!content) return null
+    const text = String(content).trim()
+    if (!text) return null
+
+    function normalizeForgetQuery (value) {
+      const t = normalizeMemoryText(value)
+      if (!t) return ''
+      return t.replace(/[。.!！?？]+$/g, '').replace(/[了啊呀呢嘛吧]+$/g, '').trim()
+    }
+
+    const direct = [
+      /^(?:忘记|忘掉)(?:一下)?[:：,，\s]*(.+)$/i,
+      /^(?:删掉|删除)(?:这?条)?记忆[:：,，\s]*(.+)$/i,
+      /^(?:别|不要)再?记[:：,，\s]*(.+)$/i
+    ]
+    for (const re of direct) {
+      const m = text.match(re)
+      if (m && m[1]) {
+        const payload = normalizeForgetQuery(m[1])
+        if (payload) return { query: payload, kind: 'forget' }
+      }
+    }
+
+    // Implicit revoke: player asks to stop calling them something (nickname/suffix).
+    const revokeHint = /(不要|别)(再)?(?:叫|喊|称呼)/.test(text) || /(不要|别)(再)?在.{0,6}名字/.test(text) || /名字后面?加/.test(text)
+    if (!revokeHint) return null
+
+    const quoted = text.match(/[“"「『](.+?)[”"」』]/)
+    if (quoted && quoted[1]) {
+      const payload = normalizeForgetQuery(quoted[1])
+      if (payload) return { query: payload, kind: 'revoke' }
+    }
+
+    const m1 = text.match(/(?:叫|喊|称呼)我?([^\s，。,。!！?？]{1,12})/)
+    if (m1 && m1[1]) {
+      const payload = normalizeForgetQuery(m1[1])
+      if (payload) return { query: payload, kind: 'revoke' }
+    }
+    const m2 = text.match(/名字后面?加([^\s，。,。!！?？]{1,12})/)
+    if (m2 && m2[1]) {
+      const payload = normalizeForgetQuery(m2[1])
+      if (payload) return { query: payload, kind: 'revoke' }
+    }
+
+    // Fallback: common slur keyword.
+    if (/(变态|変態|變態)/.test(text)) return { query: '变态', kind: 'revoke' }
+    return { kind: 'revoke', mode: 'self_nickname' }
   }
 
   // --- Dialogue memory & summaries ---
@@ -1212,6 +1398,7 @@ function createMemoryService ({
     for (const memoryId of memoryIds) {
       const entry = entries.find(e => e.id === memoryId)
       if (!entry) continue
+      if (isMemoryDisabled(entry)) continue
 
       // 确保效能字段存在
       if (!entry.effectiveness) {
@@ -1232,7 +1419,6 @@ function createMemoryService ({
         entry.effectiveness.timesUnhelpful++
         const penalty = Math.ceil(Math.abs(score))
         entry.count = Math.max((entry.count || 1) - penalty, 1)
-        entry.updatedAt = nowTs
         changed = true
       }
 
@@ -1255,6 +1441,7 @@ function createMemoryService ({
     let changed = false
 
     for (const entry of entries) {
+      if (isMemoryDisabled(entry)) continue
       // 跳过受保护的记忆
       if (entry.decayInfo?.protected) continue
 
@@ -1314,7 +1501,10 @@ function createMemoryService ({
     addEntry: addMemoryEntry,
     findLocationAnswer: findLocationMemoryAnswer,
     extractCommand: extractMemoryCommand,
+    extractForgetCommand,
     normalizeText: normalizeMemoryText,
+    disableMemories,
+    disableSelfNicknameMemories,
     // REFS: 新增
     findById: findMemoryById,
     applyFeedback: applyFeedbackToMemory,

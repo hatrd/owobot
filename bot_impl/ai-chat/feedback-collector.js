@@ -227,7 +227,11 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
     }
 
     // 将反馈应用到相关记忆
-    applyMemoryFeedback(win.memoryRefs, averageScore)
+    const explicitSignals = signals.filter(s => s?.type && !['ENGAGEMENT', 'IGNORE'].includes(s.type))
+    const memoryScore = explicitSignals.length
+      ? (explicitSignals.reduce((sum, s) => sum + (Number(s.weight) || 0), 0) / explicitSignals.length)
+      : 0
+    applyMemoryFeedback(win.memoryRefs, memoryScore)
 
     info('window resolved:', windowId, 'score:', averageScore.toFixed(2), isPositive ? '(+)' : isNegative ? '(-)' : '(~)')
     persistState()

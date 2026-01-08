@@ -777,6 +777,35 @@ function createChatExecutor ({
       return
     }
     // Memory commands are high-priority and should not be delayed/dropped by pending batching.
+    const forget = memory.longTerm.extractForgetCommand ? memory.longTerm.extractForgetCommand(text) : null
+    if (forget) {
+      const res = (() => {
+        if (forget.query && memory.longTerm.disableMemories) {
+          return memory.longTerm.disableMemories({ query: forget.query, actor: username, reason: forget.kind || 'forget', scope: 'owned' })
+        }
+        if (forget.mode === 'self_nickname' && memory.longTerm.disableSelfNicknameMemories) {
+          return memory.longTerm.disableSelfNicknameMemories({ actor: username, reason: forget.kind || 'revoke' })
+        }
+        return { ok: false, disabled: [] }
+      })()
+      const disabledCount = Array.isArray(res.disabled) ? res.disabled.length : 0
+      if (disabledCount && contextBus) {
+        try { contextBus.pushEvent('memory.disabled', `${username}:${disabledCount}`) } catch {}
+      }
+      if (forget.kind === 'revoke') {
+        const q = String(forget.query || '').trim().slice(0, 24)
+        if (q) {
+          const pref = `${username}不希望被称为“${q}”。`
+          try { memory.longTerm.addEntry?.({ text: pref, author: username, source: 'player', importance: 2 }) } catch {}
+        }
+      }
+      if (!disabledCount) {
+        pulse.sendChatReply(username, '我没找到要忘的那条记忆…你说更具体点？', { reason: 'memory_forget_none' })
+        return
+      }
+      pulse.sendChatReply(username, '好，我不再这样说了。', { reason: 'memory_forget' })
+      return
+    }
     const memoryText = memory.longTerm.extractCommand(text)
     if (memoryText) {
       if (!state.ai?.key) {
