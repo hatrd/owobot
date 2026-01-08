@@ -107,15 +107,35 @@ function findPlayerByName (name) {
   const lowerName = String(name || '').toLowerCase()
   if (!lowerName) return null
   const uuids = listAllPlayerUUIDs()
+  let best = null
+  let bestLastSeen = -1
+  let bestOnlineMs = -1
+
   for (const uuid of uuids) {
     try {
       const data = loadPlayerData(uuid)
-      if (data && String(data.lastKnownName || '').toLowerCase() === lowerName) {
-        return data
+      if (!data) continue
+      if (String(data.lastKnownName || '').toLowerCase() !== lowerName) continue
+
+      const lastSeen = Number(data?.stats?.lastSeen) || 0
+      const onlineMs = Number(data?.stats?.totalOnlineMs) || 0
+
+      if (!best) {
+        best = data
+        bestLastSeen = lastSeen
+        bestOnlineMs = onlineMs
+        continue
+      }
+
+      if (lastSeen > bestLastSeen || (lastSeen === bestLastSeen && onlineMs > bestOnlineMs)) {
+        best = data
+        bestLastSeen = lastSeen
+        bestOnlineMs = onlineMs
       }
     } catch {}
   }
-  return null
+
+  return best
 }
 
 function getAllPlayersData () {

@@ -4,11 +4,44 @@ const dailyStar = require('../../player-stats/daily-star')
 module.exports = function registerStats (ctx) {
   const { bot, register, ok, fail } = ctx
 
+  function resolveOnlineUUIDByName (name) {
+    try {
+      const target = String(name || '').trim()
+      if (!target) return null
+      const players = bot && bot.players
+      if (!players || typeof players !== 'object') return null
+
+      // Fast path: exact key match
+      const direct = players[target]
+      if (direct && direct.uuid) return { uuid: direct.uuid, name: target }
+
+      const targetLower = target.toLowerCase()
+      for (const [n, rec] of Object.entries(players)) {
+        if (!n) continue
+        if (n === bot.username) continue
+        if (n.toLowerCase() !== targetLower) continue
+        if (rec && rec.uuid) return { uuid: rec.uuid, name: n }
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
   async function query_player_stats (args = {}) {
     const { name, period = 'all', type = 'all' } = args
     if (!name) return fail('缺少玩家名')
 
-    const data = dm.findPlayerByName(name)
+    const online = resolveOnlineUUIDByName(name)
+    const data = (() => {
+      if (online && online.uuid) {
+        try {
+          const byUuid = dm.loadPlayerData(online.uuid)
+          if (byUuid) return byUuid
+        } catch {}
+      }
+      return dm.findPlayerByName(name)
+    })()
     if (!data) return fail(`未找到玩家: ${name}`)
 
     const isToday = period === 'today'
