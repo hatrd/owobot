@@ -463,30 +463,144 @@ function createMemoryService ({
   }
 
   function keywordMatchMemories (query, limit) {
-    const ask = normalizeMemoryText(query)
-    if (!ask) return []
-    const tokens = Array.from(new Set(ask.split(/\s+/g).map(t => t.trim()).filter(t => t.length >= 2)))
+    const askRaw = normalizeMemoryText(query)
+    if (!askRaw) return []
+    const ask = askRaw.toLowerCase()
+    const tokens = searchTokensFromQuery(ask)
     if (!tokens.length) return []
     const entries = ensureMemoryEntries()
     const scored = []
+    const queryIsLocation = /(在哪|哪儿|哪里|位置|坐标)/.test(askRaw)
     for (const entry of entries) {
       if (isMemoryDisabled(entry)) continue
-      const hay = [entry.summary, entry.text, entry.feature]
-      if (Array.isArray(entry.tags)) hay.push(entry.tags.join(' '))
-      if (Array.isArray(entry.triggers)) hay.push(entry.triggers.join(' '))
-      const haystack = hay.map(part => normalizeMemoryText(part || '')).filter(Boolean).join(' ')
-      if (!haystack) continue
-      let hits = 0
-      for (const tok of tokens) {
-        if (haystack.includes(tok)) hits += 1
-      }
-      if (!hits) continue
-      const ts = entry.updatedAt || entry.createdAt || 0
-      scored.push({ entry, score: hits + (ts / 1e15) })
+      const score = scoreMemoryForSearch({ entry, tokens, queryIsLocation })
+      if (score <= 0) continue
+      scored.push({ entry, score })
     }
     if (!scored.length) return []
     scored.sort((a, b) => b.score - a.score)
     return scored.slice(0, limit).map(it => it.entry)
+  }
+
+  const CJK_RUN_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]{2,}/g
+  const ASCII_WORD_RE = /[a-z0-9_]{2,}/g
+  const MEMORY_SEARCH_STOPWORDS = new Set([
+    '我们', '你们', '他们', '她们', '它们',
+    '这个', '那个', '这里', '那里', '什么', '怎么', '为什么',
+    '是不是', '能不能', '可以', '需要', '请问', '一下', '现在', '刚才', '刚刚',
+    '今天', '明天', '昨天', '然后', '因为', '所以', '但是', '不过', '其实',
+    '你好', '在吗', '谢谢', '谢了', '好的', 'ok', 'okay', 'hi', 'hello'
+  ])
+
+  function tokenWeight (token) {
+    const t = normalizeMemoryText(token)
+    if (!t) return 1
+    return Math.max(1, Math.min(3, t.length / 2))
+  }
+
+  function isStopwordToken (token) {
+    if (!token) return true
+    if (MEMORY_SEARCH_STOPWORDS.has(token)) return true
+    return false
+  }
+
+  function searchTokensFromQuery (query) {
+    const ask = normalizeMemoryText(query).toLowerCase()
+    if (!ask) return []
+    const out = []
+    const seen = new Set()
+    const MAX = 24
+
+    function pushToken (raw) {
+      if (out.length >= MAX) return
+      const t = normalizeMemoryText(raw).toLowerCase()
+      if (!t || t.length < 2) return
+      if (isStopwordToken(t)) return
+      if (seen.has(t)) return
+      seen.add(t)
+      out.push(t)
+    }
+
+    const cjkRuns = ask.match(CJK_RUN_RE) || []
+    for (const run of cjkRuns) {
+      if (out.length >= MAX) break
+      if (run.length <= 6) pushToken(run)
+      if (run.length >= 3) {
+        for (let i = 0; i <= run.length - 3 && out.length < MAX; i++) pushToken(run.slice(i, i + 3))
+      }
+      for (let i = 0; i <= run.length - 2 && out.length < MAX; i++) pushToken(run.slice(i, i + 2))
+    }
+
+    const asciiWords = ask.match(ASCII_WORD_RE) || []
+    for (const word of asciiWords) {
+      if (out.length >= MAX) break
+      pushToken(word)
+    }
+
+    if (!out.length) {
+      const rawParts = ask.split(/[\s,，。.!！?？;；:："“”‘’"'()[\]{}<>]/g).map(t => t.trim()).filter(Boolean)
+      for (const part of rawParts) {
+        if (out.length >= MAX) break
+        pushToken(part)
+      }
+    }
+
+    return out
+  }
+
+  function scoreMemoryForSearch ({ entry, tokens, queryIsLocation }) {
+    const summary = normalizeMemoryText(entry.summary || '').toLowerCase()
+    const text = normalizeMemoryText(entry.text || '').toLowerCase()
+    const feature = normalizeMemoryText(entry.feature || '').toLowerCase()
+    const greetSuffix = normalizeMemoryText(entry.greetSuffix || '').toLowerCase()
+    const kind = normalizeMemoryText(entry.kind || '').toLowerCase()
+    const tagsText = Array.isArray(entry.tags) ? entry.tags.map(t => normalizeMemoryText(t).toLowerCase()).filter(Boolean).join(' ') : ''
+    const triggersText = Array.isArray(entry.triggers) ? entry.triggers.map(t => normalizeMemoryText(t).toLowerCase()).filter(Boolean).join(' ') : ''
+    const locText = (() => {
+      if (!entry.location) return ''
+      const label = locationLabel(entry.location)
+      const dim = entry.location.dim ? String(entry.location.dim).replace(/^minecraft:/, '') : ''
+      return normalizeMemoryText(`${label} ${dim}`).toLowerCase()
+    })()
+    const contentText = [summary, text, feature, greetSuffix, kind].filter(Boolean).join(' ')
+
+    let score = 0
+    let hits = 0
+    let triggerHits = 0
+
+    for (const tok of tokens) {
+      const w = tokenWeight(tok)
+      if (triggersText && tokenMatchesHaystack(triggersText, tok)) {
+        score += 4 * w
+        hits++
+        triggerHits++
+        continue
+      }
+      if (tagsText && tokenMatchesHaystack(tagsText, tok)) {
+        score += 2 * w
+        hits++
+        continue
+      }
+      if ((contentText && tokenMatchesHaystack(contentText, tok)) || (locText && tokenMatchesHaystack(locText, tok))) {
+        score += 1 * w
+        hits++
+      }
+    }
+
+    if (!hits) return 0
+
+    const count = Number.isFinite(entry.count) ? Math.max(1, entry.count) : 1
+    score += Math.min(1.5, Math.log1p(count) / 2)
+
+    const avg = entry.effectiveness?.averageScore
+    if (Number.isFinite(avg)) score += Math.max(-1, Math.min(1, avg)) * 0.25
+
+    if (queryIsLocation && entry.location) score += 0.6
+    if (triggerHits) score += 0.4
+
+    const ts = entry.updatedAt || entry.createdAt || 0
+    score += ts / 1e15
+    return score
   }
 
   // --- Rewrite queue & background jobs ---

@@ -253,6 +253,21 @@ function createAiCliHandler (options = {}) {
           print('情感状态:', state.aiEmotionalState?.current || 'content')
           break
         }
+        case 'mem':
+        case 'memory': {
+          if (!memory?.longTerm?.buildContext) {
+            print('memory service not available')
+            break
+          }
+          const query = rest.join(' ').trim()
+          memory.longTerm.buildContext({ query, withRefs: true }).then(result => {
+            const text = result && typeof result.text === 'string' ? result.text : ''
+            const refs = Array.isArray(result?.refs) ? result.refs : []
+            print('memoryCtx ->', text || '(empty)')
+            print('memoryRefs ->', refs.length ? refs.join(' ') : '(none)')
+          }).catch(e => print('memoryCtx error:', e?.message || e))
+          break
+        }
         case 'memstats': {
           const stats = memory?.longTerm?.getStats?.() || {}
           print('记忆条目:', stats.totalEntries)
