@@ -1,3 +1,6 @@
+let createContextBus
+try { ({ createContextBus } = require('./ai-chat/context-bus')) } catch {}
+
 class WatcherManager {
   constructor(bot, { state, on, registerCleanup, dlog }) {
     this.bot = bot
@@ -5,6 +8,7 @@ class WatcherManager {
     this.on = on
     this.registerCleanup = registerCleanup
     this.dlog = dlog || (() => {})
+    this.contextBus = createContextBus ? createContextBus({ state }) : null
     this.fireTimer = null
     this.idleTimer = null
     this.explosionCleanup = null
@@ -108,7 +112,9 @@ class WatcherManager {
     try {
       await this.bot.lookAt(fireBlock.position.offset(0.5, 0.5, 0.5), true)
       await this.bot.dig(fireBlock)
-      console.log(`Extinguished fire at ${fireBlock.position}`)
+      const posText = String(fireBlock.position)
+      console.log(`Extinguished fire at ${posText}`)
+      try { if (this.contextBus) this.contextBus.pushEvent('fire.extinguish', posText) } catch {}
     } catch (err) {
       if (err?.message === 'Block is not currently diggable') return
       console.log('Failed to extinguish fire:', err.message || err)
