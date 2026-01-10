@@ -484,13 +484,6 @@ function createChatExecutor ({
     const memoryCtxResult = await memory.longTerm.buildContext({ query: memoryQuery, actor: username, withRefs: true })
     const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
-    // M2: Identity context from minimal-self
-    const identityCtx = (() => {
-      try {
-        const ms = getMinimalSelfInstance()
-        return ms?.buildIdentityContext?.() || ''
-      } catch { return '' }
-    })()
     const peopleProfilesCtx = (() => {
       try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
     })()
@@ -504,7 +497,6 @@ function createChatExecutor ({
       { role: 'system', content: systemPrompt() },
       metaCtx ? { role: 'system', content: metaCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
-      identityCtx ? { role: 'system', content: identityCtx } : null,
       peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx } : null,
       peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,

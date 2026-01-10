@@ -598,6 +598,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     feedbackCollector,
     introspection,
     memory,
+    people,
     mind
   })
 

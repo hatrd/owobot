@@ -161,6 +161,17 @@ function normalizeCommitmentStatus (raw) {
 }
 
 function createPeopleService ({ state, peopleStore, now = () => Date.now(), trace = () => {} } = {}) {
+  function escapeXml (value) {
+    const s = String(value == null ? '' : value)
+    if (!s) return ''
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+  }
+
   function ensureState () {
     if (!state || typeof state !== 'object') return null
     if (!state.aiPeople || typeof state.aiPeople !== 'object') state.aiPeople = {}
@@ -222,11 +233,18 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
   function buildAllProfilesContext () {
     const items = listProfiles().filter(p => p.profile).sort((a, b) => a.name.localeCompare(b.name, 'zh'))
     if (!items.length) return ''
-    const lines = ['人物画像：']
+    const lines = [
+      '<people>',
+      '<!-- profiles -->'
+    ]
     for (const it of items) {
-      lines.push(`${it.name}：${it.profile}`)
+      const name = escapeXml(it.name || '')
+      const profile = escapeXml(it.profile || '')
+      if (!name || !profile) continue
+      lines.push(`<profile n="${name}">${profile}</profile>`)
     }
-    return lines.join('\n')
+    lines.push('</people>')
+    return lines.length > 3 ? lines.join('\n') : ''
   }
 
   function listCommitments () {

@@ -18,10 +18,11 @@ function createAiCliHandler (options = {}) {
     feedbackCollector = null,
     introspection = null,
     memory = null,
+    people = null,
     mind = null
   } = options
 
-  return function handleAiCli (payload) {
+  return async function handleAiCli (payload) {
     try {
       if (!payload || payload.cmd !== 'ai') return
       const [sub, ...rest] = payload.args || []
@@ -46,7 +47,32 @@ function createAiCliHandler (options = {}) {
               print('metaCtx ->', buildMetaContext())
             }
             print('gameCtx ->', buildGameContext())
-            print('chatCtx ->', buildContextPrompt(''))
+            const targetPlayer = rest[0] || ''
+            const query = rest.slice(targetPlayer ? 1 : 0).join(' ').trim()
+            const peopleProfilesCtx = (() => {
+              try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
+            })()
+            if (peopleProfilesCtx) print('peopleProfilesCtx ->', peopleProfilesCtx)
+            const peopleCommitmentsCtx = (() => {
+              try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
+            })()
+            if (peopleCommitmentsCtx) print('peopleCommitmentsCtx ->', peopleCommitmentsCtx)
+            if (memory?.longTerm?.buildContext && query && targetPlayer) {
+              try {
+                const result = await memory.longTerm.buildContext({ query, actor: targetPlayer, withRefs: true })
+                const text = typeof result === 'string' ? result : (result?.text || '')
+                const refs = Array.isArray(result?.refs) ? result.refs : []
+                print('memoryCtx ->', text || '(empty)')
+                print('memoryRefs ->', refs.length ? refs.join(' ') : '(none)')
+              } catch (e) {
+                print('memoryCtx error:', e?.message || e)
+              }
+            } else if (memory?.longTerm?.buildContext && query && !targetPlayer) {
+              print('memoryCtx -> (skipped: provide player: .ai ctx <player> <query>)')
+            } else if (query) {
+              print('memoryCtx -> (skipped: memory service not available)')
+            }
+            print('chatCtx ->', buildContextPrompt(targetPlayer))
           } catch (e) {
             log?.warn && log.warn('ctx dump error:', e?.message || e)
           }
