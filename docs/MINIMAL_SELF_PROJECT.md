@@ -9,14 +9,14 @@
 - M1-M4 模块在后台运行：监听 skill:start/end 与 external:begin/end，记录 world model/agency/identity/narrative，并持久化到 `state.minimalSelf`。
 - 与 ai-chat 的唯一实时接合：`ai-chat/executor.js` 每次 LLM 调用时追加 `ms.buildIdentityContext()` 文本；没有动作评分或闭环调节。
 - M5 驱动力链路被禁用：`drive.generateQuestion()` 返回空串，`minimal-self/index.js` 仅在 message 非空时 emit，导致 `ai-chat.js` 的 `minimal-self:drive` 监听永远不触发。
-- 旧的主动聊天脉冲 `pulse.start()` 已被注释掉，新的驱动力又不产出消息 => 当前没有任何主动聊天/跟进。
+- 旧的主动聊天脉冲（`ai-chat/pulse` 定时主动发言）已移除，新的驱动力又不产出消息 => 当前没有任何主动聊天/跟进。
 - REFS 反馈调节 `_applyFeedbackFromRefs()` 依赖 `toolUsed=drive:*`，但因为没有 drive 消息阈值/冷却不会被反馈更新。
 - 承诺/策略评分仅存在于代码：运行时没有入口创建承诺，也没有地方在工具执行前调用 `scoreAction()`。
 
 ## 0.1 虚假/断开的集成点（需修复）
 
 - **驱动力→聊天**：`bot_impl/minimal-self/drive.js:304-306` 返回 `''`；`bot_impl/minimal-self/index.js:213-218` 只在 message 非空时 emit，`ai-chat.js:onDriveTrigger` 实际上无事可做。（历史原因：旧版集成会在执行任务时也触发“无聊”刷屏，体验极差，因此暂时硬禁用 message 生成。）
-- **主动脉冲缺席**：`bot_impl/ai-chat.js` 注释掉 `pulse.start()`，`ai-chat/pulse` 的定时跟进/对话续航未运行。
+- **主动脉冲缺席**：旧的 `ai-chat/pulse` 定时主动发言已移除；当前仍无任何主动聊天/跟进。
 - **反馈闭环断开**：`drive._applyFeedbackFromRefs()` 查找 `state.aiFeedback.recentSignals` 的 `toolUsed` 前缀 `drive:`；由于没有 drive 消息，阈值/冷却永远不被玩家反馈调节。
 - **身份/承诺未进入聊天决策**：LLM 只看到一行身份画像；`identity.addCommitment()`、`scoreAction()` 没有和聊天工具、记忆或 context-bus 接合，承诺与自我模型脱节。
 - **世界模型未被利用**：`WorldModel` 仅在 skill 事件学习；LLM/工具规划/惊讶引擎都不消费预测或 agency，能动性对行为无反作用。
@@ -73,7 +73,7 @@
 | M2 身份存储 + 策略评分 | ✅ 已完成 | 技能/承诺统计可用，但未与聊天动作/承诺打通 |
 | M3 叙事记忆 | ✅ 已完成 | 可生成 I-CAN/I-DID/I-OWE，并在 `buildIdentityContext()` 中曝光 |
 | M4 自省与调节 | ✅ 已完成 | 自适应 λ/β 定期运行，但不影响聊天决策流 |
-| M5 内在驱动系统 | ⚠️ 代码存在但未产生聊天输出 | `generateQuestion()` 返回空串 → 不会 emit `minimal-self:drive`；`pulse.start()` 停用，主动聊天缺席 |
+| M5 内在驱动系统 | ⚠️ 代码存在但未产生聊天输出 | `generateQuestion()` 返回空串 → 不会 emit `minimal-self:drive`；旧 `ai-chat/pulse` 定时主动发言已移除，主动聊天缺席 |
 
 ---
 
@@ -520,7 +520,7 @@ bot.on('minimal-self:drive', (payload) => {
 
 | 组件 | 状态 | 说明 |
 |------|------|------|
-| `pulse.start()` | **已移除** | 定时脉冲停用，尚未由驱动力接替 |
+| `pulse.start()` | **已移除** | 旧版定时主动发言逻辑已删除，尚未由驱动力接替 |
 | `pulse.sendChatReply()` | **保留** | 驱动力若恢复可复用此函数发送消息 |
 | `pulse.sendDirectReply()` | **保留** | 无目标时的备选方案 |
 | `feedbackCollector` | **整合** | 通过 windowId 追踪反馈（现因无 drive:* toolUsed 而无效） |

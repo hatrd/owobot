@@ -101,34 +101,25 @@ function prepareAiState (state, opts = {}) {
     state.ai.context.recentWindowSec = DEFAULT_RECENT_WINDOW_SEC
   }
 
-  state.aiPulse = state.aiPulse || { enabled: false, lastFlushAt: Date.now(), lastReason: null, lastMessage: null }
+  state.aiPulse = state.aiPulse || { lastFlushAt: Date.now(), lastReason: null, lastMessageAt: 0 }
   if (!Number.isFinite(state.aiPulse.lastFlushAt)) state.aiPulse.lastFlushAt = Date.now()
-  if (!(state.aiPulse.recentKeys instanceof Map)) state.aiPulse.recentKeys = new Map()
   if (!Number.isFinite(state.aiPulse.lastMessageAt)) state.aiPulse.lastMessageAt = 0
-  if (!(state.aiPulse.pendingByUser instanceof Map)) {
-    const restored = new Map()
-    if (state.aiPulse.pendingByUser && typeof state.aiPulse.pendingByUser === 'object') {
-      for (const [name, info] of Object.entries(state.aiPulse.pendingByUser)) {
-        if (!info) continue
-        const count = Number(info.count) || 0
-        const lastAt = Number(info.lastAt) || 0
-        if (count > 0) restored.set(name, { count, lastAt })
-      }
-    }
-    state.aiPulse.pendingByUser = restored
-  }
-  if (!Number.isFinite(state.aiPulse.totalPending)) state.aiPulse.totalPending = 0
-  state.aiPulse.pendingSince = Number.isFinite(state.aiPulse.pendingSince) ? state.aiPulse.pendingSince : null
-  state.aiPulse.pendingLastAt = Number.isFinite(state.aiPulse.pendingLastAt) ? state.aiPulse.pendingLastAt : null
-  if (!Number.isFinite(state.aiPulse.lastSeq)) state.aiPulse.lastSeq = 0
   if (!(state.aiPulse.activeUsers instanceof Map)) state.aiPulse.activeUsers = new Map()
+  // Legacy: proactive pulse removed, scrub unused fields to keep state minimal across hot reloads.
+  for (const k of ['enabled', 'recentKeys', 'pendingByUser', 'totalPending', 'pendingSince', 'pendingLastAt', 'lastSeq', 'lastMessage']) {
+    try { delete state.aiPulse[k] } catch {}
+  }
+  try {
+    if (state.aiPulse._timer) {
+      try { clearInterval(state.aiPulse._timer) } catch {}
+      state.aiPulse._timer = null
+    }
+  } catch {}
 
   state.aiSay = state.aiSay || { seq: 0 }
   if (!Number.isFinite(state.aiSay.seq)) state.aiSay.seq = 0
   if (!(state.aiSay.activeByUser instanceof Map)) state.aiSay.activeByUser = new Map()
 
-  state.aiExtras = state.aiExtras || { events: [] }
-  if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
   if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []
 
   if (!state.aiRecentReplies || !(state.aiRecentReplies instanceof Map)) state.aiRecentReplies = new Map()
@@ -157,7 +148,6 @@ function prepareAiState (state, opts = {}) {
       entry.seq = state.aiRecentSeq
     }
   }
-  state.aiPulse.lastSeq = state.aiRecentSeq
   if (!Array.isArray(state.aiLong) || state.aiLong.length === 0) {
     state.aiLong = Array.isArray(persistedMemory.long) ? persistedMemory.long : []
   } else if (!Array.isArray(state.aiLong)) {

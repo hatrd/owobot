@@ -153,9 +153,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   validateAiConfig()
 
-  if (!state.aiExtras || typeof state.aiExtras !== 'object') state.aiExtras = { events: [] }
-  if (!Array.isArray(state.aiExtras.events)) state.aiExtras.events = []
-
   // REFS: 创建反馈收集器
   const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore, memory })
 
@@ -317,7 +314,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   bot.on('minimal-self:drive', onDriveTrigger)
 
-  // Note: pulse.start() removed - drive system handles proactive messages
+  // Note: proactive pulse removed; drive handles proactive messages
   memory.rewrite.processQueue().catch(() => {})
 
   // REFS: Introspection AI call wrapper (DeepSeek; respects budget)

@@ -37,7 +37,6 @@ function createAiCliHandler (options = {}) {
         case 'clear': {
           state.aiRecent = []
           state.aiRecentSeq = 0
-          if (state.aiPulse) state.aiPulse.lastSeq = 0
           print('recent chat cleared')
           break
         }

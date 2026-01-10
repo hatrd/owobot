@@ -18,8 +18,7 @@ function makePulse () {
   const now = makeNow()
   const state = {
     ai: { enabled: true, key: 'test' },
-    aiPulse: { enabled: true },
-    aiExtras: { events: [] },
+    aiPulse: {},
     aiRecent: [],
     aiRecentSeq: 0
   }
@@ -73,7 +72,6 @@ test('system message <player> msg is treated as player chat when chat event is m
   assert.deepEqual(store[0].payload, { name: 'kuleizi', content: 'owkowk 在哪' })
   assert.equal(state.aiRecent.length, 1)
   assert.equal(state.aiRecent[0].kind, 'player')
-  assert.equal(state.aiPulse.pendingByUser.get('kuleizi').count, 1)
 })
 
 test('non chat system messages still go to server context', () => {
