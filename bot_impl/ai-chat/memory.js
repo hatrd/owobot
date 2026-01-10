@@ -363,7 +363,7 @@ function createMemoryService ({
         scope: scope ?? extra?.scope,
         owners: owners ?? extra?.owners ?? extra?.owner,
         // REFS: 效能追踪字段
-        effectiveness: { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0 },
+        effectiveness: { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0, lastPositiveFeedback: null, lastNegativeFeedback: null },
         decayInfo: { lastDecayAt: null, protected: false }
       }
       ensureMemoryId(entry)
@@ -922,7 +922,11 @@ function createMemoryService ({
     if (relRaw <= 0) return null
     const relevanceScale = Number(cfg?.relevanceScale)
     const relevance = relevanceFromRawScore(relRaw, relevanceScale)
-    const ts = entry.updatedAt || entry.createdAt || 0
+    const ts = Math.max(
+      Number(entry.updatedAt) || 0,
+      Number(entry.createdAt) || 0,
+      Number(entry.effectiveness?.lastPositiveFeedback) || 0
+    )
     const recency = recencyFromTimestamp(ts, cfg?.recencyHalfLifeDays, nowTs)
     const importance = importanceFromEntry(entry, cfg?.importanceCountSaturation)
     const w = normalizeMemoryV2Weights(cfg)
@@ -1256,7 +1260,11 @@ function createMemoryService ({
         const relevance = denseRelevance > 0
           ? clamp01(((wLex * lexicalRelevance) + (wDense * denseRelevance)) / wSum)
           : clamp01(lexicalRelevance)
-        const ts = entry.updatedAt || entry.createdAt || 0
+        const ts = Math.max(
+          Number(entry.updatedAt) || 0,
+          Number(entry.createdAt) || 0,
+          Number(entry.effectiveness?.lastPositiveFeedback) || 0
+        )
         const recency = recencyFromTimestamp(ts, cfg?.recencyHalfLifeDays, nowTs)
         const importance = importanceFromEntry(entry, cfg?.importanceCountSaturation)
         const w = normalizeMemoryV2Weights(cfg)
@@ -2095,7 +2103,7 @@ function createMemoryService ({
 
       // 确保效能字段存在
       if (!entry.effectiveness) {
-        entry.effectiveness = { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0 }
+        entry.effectiveness = { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0, lastPositiveFeedback: null, lastNegativeFeedback: null }
       }
       entry.effectiveness.timesUsed++
 
@@ -2103,13 +2111,14 @@ function createMemoryService ({
       if (score > 0.3) {
         // 正面反馈 → 强化
         entry.effectiveness.timesHelpful++
+        entry.effectiveness.lastPositiveFeedback = nowTs
         const boost = Math.ceil(Math.abs(score))
         entry.count = Math.min((entry.count || 1) + boost, 100)
-        entry.updatedAt = nowTs
         changed = true
       } else if (score < -0.3) {
         // 负面反馈 → 衰减
         entry.effectiveness.timesUnhelpful++
+        entry.effectiveness.lastNegativeFeedback = nowTs
         const penalty = Math.ceil(Math.abs(score))
         entry.count = Math.max((entry.count || 1) - penalty, 1)
         changed = true
@@ -2140,8 +2149,9 @@ function createMemoryService ({
 
       // 计算最后有效使用时间
       const lastUseful = Math.max(
-        entry.effectiveness?.lastPositiveFeedback || 0,
-        entry.updatedAt || entry.createdAt || 0
+        Number(entry.effectiveness?.lastPositiveFeedback) || 0,
+        Number(entry.updatedAt) || 0,
+        Number(entry.createdAt) || 0
       )
 
       const timeSinceUseful = nowTs - lastUseful
