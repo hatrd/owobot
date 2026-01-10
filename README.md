@@ -130,7 +130,7 @@ Default digging policy (simplified)
   - `bot_impl/module-registry.js` lists every hot-reloadable module; edit it to add/remove behaviour safely.
   - `docs/git-worktree-parallel.md` describes a git-worktree-based parallel Codex workflow (spawn/merge sub-tasks cleanly).
   - Run `node scripts/list-tools.js` to dump the AI tool allowlist as JSON (keeps prompts/docs in sync).
-  - Run `npm run inspect:context -- --player <name> [--query <text>]` to preview what gets injected into LLM context (memory + dialogue).
+  - Run `npm run inspect:context -- --player <name> --query <text> [--debug] [--json]` to preview injected LLM context (system/meta/identity + memory + dialogue).
 
 ## CLI Overrides
 All env vars are overridable via CLI:
