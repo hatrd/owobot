@@ -31,6 +31,71 @@ function createMemoryService ({
     try { return text.normalize('NFKC').replace(/\s+/g, ' ').trim() } catch { return text.replace(/\s+/g, ' ').trim() }
   }
 
+  const BOT_USERNAME = (() => {
+    const name = normalizeMemoryText(bot?.username || '')
+    return name ? name.slice(0, 40) : ''
+  })()
+
+  function normalizeActorName (value) {
+    const name = normalizeMemoryText(value)
+    return name ? name.slice(0, 40) : ''
+  }
+
+  function normalizeMemoryScope (value) {
+    const raw = normalizeMemoryText(value).toLowerCase()
+    if (!raw) return ''
+    if (['player', 'user', 'personal', 'owned'].includes(raw)) return 'player'
+    if (['global', 'world', 'public', 'shared'].includes(raw)) return 'global'
+    return ''
+  }
+
+  function normalizeMemoryOwners (value) {
+    const list = Array.isArray(value) ? value : (value ? [value] : [])
+    const out = []
+    const seen = new Set()
+    for (const item of list) {
+      const name = normalizeActorName(item)
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(name)
+    }
+    return out
+  }
+
+  function inferMemoryNamespace (entry) {
+    const author = normalizeActorName(entry?.lastAuthor || entry?.firstAuthor || '')
+    if (author && BOT_USERNAME && author.toLowerCase() === BOT_USERNAME.toLowerCase()) return { scope: 'global', owners: [] }
+    if (author && author.toLowerCase() !== 'ai') return { scope: 'player', owners: [author] }
+    return { scope: 'global', owners: [] }
+  }
+
+  function ensureMemoryNamespace (entry) {
+    if (!entry || typeof entry !== 'object') return
+    const scopeRaw = normalizeMemoryScope(entry.scope)
+    const ownersRaw = normalizeMemoryOwners(entry.owners || entry.owner || [])
+    const inferred = inferMemoryNamespace(entry)
+    const scope = scopeRaw || (ownersRaw.length ? 'player' : inferred.scope)
+    const owners = scope === 'player'
+      ? (ownersRaw.length ? ownersRaw : inferred.owners)
+      : []
+    entry.scope = scope
+    entry.owners = owners
+    try { delete entry.owner } catch {}
+  }
+
+  function memoryAllowedForActor (entry, actor) {
+    const who = normalizeActorName(actor)
+    if (!who) return true
+    const scope = normalizeMemoryScope(entry?.scope) || 'global'
+    if (scope === 'global') return true
+    const owners = normalizeMemoryOwners(entry?.owners || entry?.owner || [])
+    if (!owners.length) return isMemoryOwnedBy(entry, who)
+    const key = who.toLowerCase()
+    return owners.some(o => o.toLowerCase() === key)
+  }
+
   function uniqueStrings (arr) {
     if (!Array.isArray(arr)) return []
     const out = []
@@ -139,6 +204,7 @@ function createMemoryService ({
         item.greetSuffix = normalizeMemoryText(item.greetSuffix).slice(0, 80)
       }
       if (item.kind) item.kind = normalizeMemoryText(item.kind)
+      ensureMemoryNamespace(item)
     }
     return arr
   }
@@ -150,6 +216,8 @@ function createMemoryService ({
       if (isMemoryDisabled(entry)) continue
       const loc = entry && entry.location
       if (!loc || !Number.isFinite(loc.x) || !Number.isFinite(loc.z)) continue
+      const scope = normalizeMemoryScope(entry.scope) || 'global'
+      const owners = normalizeMemoryOwners(entry.owners || entry.owner || [])
       const radius = Number.isFinite(loc.radius) && loc.radius > 0 ? loc.radius : 50
       const suffix = (() => {
         if (typeof entry.greetSuffix !== 'string') return ''
@@ -170,6 +238,11 @@ function createMemoryService ({
         suffix,
         enabled: true,
         source: 'memory'
+      }
+      if (scope === 'player') {
+        zone.scope = 'player'
+        if (owners.length === 1) zone.owner = owners[0]
+        else if (owners.length) zone.owners = owners
       }
       if (loc.dim) zone.dim = loc.dim
       if (typeof entry.instruction === 'string' && entry.instruction.trim()) zone.memoryInstruction = normalizeMemoryText(entry.instruction)
@@ -220,7 +293,7 @@ function createMemoryService ({
     while (entries.length > limit) entries.shift()
   }
 
-  function addMemoryEntry ({ text, author, source, importance, extra } = {}) {
+  function addMemoryEntry ({ text, author, source, importance, scope, owners, extra } = {}) {
     const entries = ensureMemoryEntries()
     const normalized = normalizeMemoryText(text)
     if (!normalized) return { ok: false, reason: 'empty' }
@@ -232,6 +305,8 @@ function createMemoryService ({
       entry.updatedAt = nowTs
       if (author) entry.lastAuthor = author
       if (source) entry.lastSource = source
+      if (scope != null) entry.scope = scope
+      if (owners != null) entry.owners = owners
       if (extra) {
         if (extra.summary) entry.summary = normalizeMemoryText(extra.summary)
         if (extra.instruction) {
@@ -266,6 +341,7 @@ function createMemoryService ({
           if (kind) entry.kind = kind
         }
       }
+      ensureMemoryNamespace(entry)
     } else {
       entry = {
         text: normalized,
@@ -281,6 +357,8 @@ function createMemoryService ({
         summary: extra?.summary ? normalizeMemoryText(extra.summary) : '',
         tone: extra?.tone ? normalizeMemoryText(extra.tone) : '',
         fromAI: extra?.fromAI !== false,
+        scope: scope ?? extra?.scope,
+        owners: owners ?? extra?.owners ?? extra?.owner,
         // REFS: 效能追踪字段
         effectiveness: { timesUsed: 0, timesHelpful: 0, timesUnhelpful: 0, averageScore: 0 },
         decayInfo: { lastDecayAt: null, protected: false }
@@ -307,6 +385,7 @@ function createMemoryService ({
         if (kind) entry.kind = kind
       }
       if (!entry.summary) entry.summary = ''
+      ensureMemoryNamespace(entry)
       entries.push(entry)
     }
     pruneMemories()
@@ -337,8 +416,9 @@ function createMemoryService ({
     return top.slice(0, limit)
   }
 
-  function recentMemories (limit) {
-    const entries = ensureMemoryEntries().filter(e => !isMemoryDisabled(e))
+  function recentMemories (limit, opts = {}) {
+    const actor = normalizeActorName(opts.actor || opts.username || opts.player || '')
+    const entries = ensureMemoryEntries().filter(e => !isMemoryDisabled(e) && (!actor || memoryAllowedForActor(e, actor)))
     if (!entries.length) return []
     const sorted = entries.slice().sort((a, b) => (b?.updatedAt || b?.createdAt || 0) - (a?.updatedAt || a?.createdAt || 0))
     if (!Number.isFinite(limit) || limit <= 0) return sorted
@@ -389,8 +469,13 @@ function createMemoryService ({
   }
 
   function isMemoryOwnedBy (entry, actor) {
-    const name = normalizeMemoryText(actor)
+    const name = normalizeActorName(actor)
     if (!name) return false
+    const owners = normalizeMemoryOwners(entry?.owners || entry?.owner || [])
+    if (owners.length) {
+      const key = name.toLowerCase()
+      return owners.some(o => o.toLowerCase() === key)
+    }
     if (entry.firstAuthor === name || entry.lastAuthor === name) return true
     const haystack = [entry.text, entry.summary, entry.feature].map(v => normalizeMemoryText(v || '')).filter(Boolean).join(' ')
     return haystack.includes(name)
@@ -462,17 +547,19 @@ function createMemoryService ({
     return { ok: true, disabled }
   }
 
-  function keywordMatchMemories (query, limit) {
+  function keywordMatchMemories (query, limit, opts = {}) {
     const askRaw = normalizeMemoryText(query)
     if (!askRaw) return []
     const ask = askRaw.toLowerCase()
     const tokens = searchTokensFromQuery(ask)
     if (!tokens.length) return []
+    const actor = normalizeActorName(opts.actor || opts.username || opts.player || '')
     const entries = ensureMemoryEntries()
     const scored = []
     const queryIsLocation = /(在哪|哪儿|哪里|位置|坐标)/.test(askRaw)
     for (const entry of entries) {
       if (isMemoryDisabled(entry)) continue
+      if (actor && !memoryAllowedForActor(entry, actor)) continue
       const score = scoreMemoryForSearch({ entry, tokens, queryIsLocation })
       if (score <= 0) continue
       scored.push({ entry, score })
@@ -486,6 +573,8 @@ function createMemoryService ({
     if (!entry || typeof entry !== 'object') return null
     const summary = normalizeMemoryText(entry.summary || entry.text).slice(0, 120)
     const author = normalizeMemoryText(entry.lastAuthor || entry.firstAuthor || '').slice(0, 40)
+    const scope = normalizeMemoryScope(entry.scope) || 'global'
+    const owners = normalizeMemoryOwners(entry.owners || entry.owner || [])
     const count = Number.isFinite(entry.count) ? Math.max(1, entry.count) : 1
     const updatedAt = Number.isFinite(entry.updatedAt) ? entry.updatedAt : null
     const createdAt = Number.isFinite(entry.createdAt) ? entry.createdAt : null
@@ -501,6 +590,8 @@ function createMemoryService ({
       id: ensureMemoryId(entry),
       summary,
       author: author || null,
+      scope,
+      owners,
       count,
       updatedAt,
       createdAt,
@@ -513,16 +604,18 @@ function createMemoryService ({
     }
   }
 
-  function keywordMatchMemoriesDebug (query, limit, debugLimit = 12) {
+  function keywordMatchMemoriesDebug (query, limit, debugLimit = 12, opts = {}) {
     const askRaw = normalizeMemoryText(query)
     const ask = askRaw.toLowerCase()
     const tokens = searchTokensFromQuery(ask)
     const queryIsLocation = /(在哪|哪儿|哪里|位置|坐标)/.test(askRaw)
+    const actor = normalizeActorName(opts.actor || opts.username || opts.player || '')
     const entries = ensureMemoryEntries()
 
     const scored = []
     for (const entry of entries) {
       if (isMemoryDisabled(entry)) continue
+      if (actor && !memoryAllowedForActor(entry, actor)) continue
       const detail = scoreMemoryForSearch({ entry, tokens, queryIsLocation, debug: true })
       if (!detail || detail.score <= 0) continue
       scored.push({ entry, ...detail })
@@ -849,6 +942,7 @@ function createMemoryService ({
     if (cfg && cfg.include === false) return ''
     const limit = Math.max(1, opts.limit || cfg?.max || 6)
     const query = typeof opts.query === 'string' ? opts.query : ''
+    const actor = normalizeActorName(opts.actor || opts.username || opts.player || '')
     const debug = opts.debug === true
     const debugLimit = Number.isFinite(Number(opts.debugLimit)) ? Math.max(0, Math.floor(Number(opts.debugLimit))) : 12
     const sections = []
@@ -857,14 +951,14 @@ function createMemoryService ({
     let debugInfo = null
     if (query) {
       if (debug) {
-        debugInfo = keywordMatchMemoriesDebug(query, limit * 2, debugLimit)
+        debugInfo = keywordMatchMemoriesDebug(query, limit * 2, debugLimit, { actor })
         selected = Array.isArray(debugInfo?.selected) ? debugInfo.selected : []
         selected = selected.map(s => findMemoryById(s?.id)).filter(Boolean)
       } else {
-        selected = keywordMatchMemories(query, limit * 2)
+        selected = keywordMatchMemories(query, limit * 2, { actor })
       }
     }
-    if (!selected.length) selected = recentMemories(limit)
+    if (!selected.length) selected = recentMemories(limit, { actor })
     if (selected.length) {
       const slice = selected.slice(0, limit)
       for (const m of slice) {

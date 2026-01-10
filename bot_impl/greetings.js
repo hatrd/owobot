@@ -225,13 +225,15 @@ class GreetingManager {
     else if (hour >= 14 && hour < 19) salutation = '下午好呀'
     else if (hour >= 19 || hour < 5) salutation = '晚上好呀'
     if (!salutation) salutation = '你好呀'
-    const suffixes = this.collectGreetingSuffixes()
+    const suffixes = this.collectGreetingSuffixes({ username })
     const suffix = suffixes.length ? suffixes[Math.floor(Math.random() * suffixes.length)] : GREET_DEFAULT_SUFFIX
     return `${salutation} ${username}${suffix ? ` ${suffix}` : ''}`
   }
 
   collectGreetingSuffixes(opts = {}) {
     const state = this.state
+    const targetUser = this.resolvePlayerUsername(opts.username)
+    const targetKey = targetUser ? String(targetUser).toLowerCase() : ''
     const staticZones = Array.isArray(state.greetZones) ? state.greetZones : []
     const memoryZones = Array.isArray(state.worldMemoryZones) ? state.worldMemoryZones : []
     const zones = staticZones.concat(memoryZones)
@@ -250,6 +252,19 @@ class GreetingManager {
     const suffixes = []
     for (const zone of zones) {
       if (!zone || zone.enabled === false) continue
+      if (targetKey) {
+        const scope = typeof zone.scope === 'string' ? zone.scope.toLowerCase() : ''
+        const owners = Array.isArray(zone.owners)
+          ? zone.owners
+          : zone.owner
+            ? [zone.owner]
+            : []
+        if (scope === 'player') {
+          if (!owners.length) continue
+          const ok = owners.some(o => String(o || '').toLowerCase() === targetKey)
+          if (!ok) continue
+        }
+      }
       const suffix = typeof zone.suffix === 'string' ? zone.suffix.trim() : ''
       if (!suffix) continue
       const radius = Number(zone.radius)
