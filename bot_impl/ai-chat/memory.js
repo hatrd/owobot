@@ -20,7 +20,7 @@ const PEOPLE_INSPECTOR_SYSTEM_PROMPT = [
   '',
   '规则：',
   '- 只记录“确定无疑”的信息，不要编造。',
-  '- profile 是覆盖写入：若本段聊天出现该玩家画像信息更新，请输出“完整画像”字符串；否则不要输出该玩家。',
+  '- 你会收到“当前已知画像/承诺”。profile 是覆盖写入：若本段聊天出现该玩家画像信息更新，请在旧画像基础上更新并输出“完整新画像”字符串，默认保留旧画像中的要点，除非本段聊天明确否定/修改；否则不要输出该玩家。',
   '- commitments 只记录 bot 自己对玩家的承诺/答应（不是工具调用即时完成的动作）；默认 status=pending；deadlineMs 可省略。',
   '- 如果没有任何更新，输出 {"profiles":[],"commitments":[]}。',
   '- 只输出 JSON，不要输出 Markdown，不要输出解释。'
@@ -2145,10 +2145,36 @@ function createMemoryService ({
     if (!Array.isArray(lines) || !lines.length) return null
 
     const snap = buildPeopleSnapshotForInspector(participants && participants.length ? participants : (owner ? [owner] : []))
+    const knownProfiles = (() => {
+      const list = Array.isArray(snap.profiles) ? snap.profiles : []
+      const out = []
+      for (const p of list) {
+        const player = normalizeActorName(p?.player || p?.name || '')
+        if (!player) continue
+        const profile = normalizeMemoryText(p?.profile || '')
+        out.push(`- ${player}: ${profile || '（空）'}`)
+      }
+      return out.length ? out.join('\n') : '(empty)'
+    })()
+    const knownCommitments = (() => {
+      const list = Array.isArray(snap.commitments) ? snap.commitments : []
+      const out = []
+      for (const c of list) {
+        const player = normalizeActorName(c?.player || c?.name || '')
+        const action = normalizeMemoryText(c?.action || c?.text || '')
+        if (!player || !action) continue
+        const status = normalizeInspectorStatus(c?.status)
+        if (status !== 'pending') continue
+        out.push(`- ${player}: ${action}`)
+      }
+      return out.length ? out.join('\n') : '(empty)'
+    })()
     const joined = lines.map(l => `${l.user}: ${l.text}`).join('\n')
     const user = [
       `玩家：${(participants && participants.length) ? participants.join('、') : (owner || '未知')}`,
-      `已知人物画像/承诺（供合并更新）：${JSON.stringify(snap)}`,
+      `当前已知人物画像（覆盖写入前的内容；如需更新请保留旧要点）：\n${knownProfiles}`,
+      `当前已知 bot 承诺（仅供参考）：\n${knownCommitments}`,
+      `已知人物画像/承诺（JSON快照，供合并更新）：${JSON.stringify(snap)}`,
       `聊天记录（旧→新）：\n${joined}`,
       '请只输出严格 JSON：'
     ].join('\n')
