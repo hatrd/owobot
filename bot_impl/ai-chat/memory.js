@@ -790,6 +790,175 @@ function createMemoryService ({
     }
   }
 
+  function clamp01 (value) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return 0
+    if (n <= 0) return 0
+    if (n >= 1) return 1
+    return n
+  }
+
+  function resolveMemoryMode (cfg) {
+    const raw = normalizeMemoryText(cfg?.mode).toLowerCase()
+    if (!raw) return 'keyword'
+    if (['keyword', 'legacy'].includes(raw)) return 'keyword'
+    if (['v2', 'multi', 'multisignal', 'multi-signal'].includes(raw)) return 'v2'
+    if (['hybrid', 'rrf'].includes(raw)) return 'hybrid'
+    return 'keyword'
+  }
+
+  function normalizeMemoryV2Weights (cfg) {
+    const wRelevance = Number(cfg?.wRelevance)
+    const wRecency = Number(cfg?.wRecency)
+    const wImportance = Number(cfg?.wImportance)
+    const sum = (Number.isFinite(wRelevance) ? wRelevance : 0) +
+      (Number.isFinite(wRecency) ? wRecency : 0) +
+      (Number.isFinite(wImportance) ? wImportance : 0)
+    if (!Number.isFinite(sum) || sum <= 0) return { wRelevance: 1, wRecency: 0, wImportance: 0 }
+    return { wRelevance: wRelevance / sum, wRecency: wRecency / sum, wImportance: wImportance / sum }
+  }
+
+  function relevanceFromRawScore (raw, scale) {
+    const s = Number(scale)
+    const denom = Number.isFinite(s) && s > 0 ? s : 18
+    const x = Math.max(0, Number(raw) || 0) / denom
+    const score = 1 - Math.exp(-x)
+    return clamp01(score)
+  }
+
+  function recencyFromTimestamp (ts, halfLifeDays, nowTs) {
+    const t = Number(ts)
+    if (!Number.isFinite(t) || t <= 0) return 0
+    const nowMs = Number.isFinite(nowTs) ? nowTs : now()
+    const ageMs = Math.max(0, nowMs - t)
+    const hlDays = Number(halfLifeDays)
+    const hlMs = (Number.isFinite(hlDays) && hlDays > 0 ? hlDays : 14) * 24 * 60 * 60 * 1000
+    const score = Math.exp(-Math.LN2 * (ageMs / hlMs))
+    return clamp01(score)
+  }
+
+  function importanceFromEntry (entry, saturation) {
+    const count = Number.isFinite(entry?.count) ? Math.max(1, entry.count) : 1
+    const sat = Number(saturation)
+    const denom = Number.isFinite(sat) && sat > 1 ? sat : 20
+    const countNorm = clamp01(Math.log1p(count) / Math.log1p(denom))
+    const avg = entry?.effectiveness?.averageScore
+    const effNorm = Number.isFinite(avg) ? clamp01((Math.max(-1, Math.min(1, avg)) + 1) / 2) : 0.5
+    return clamp01(0.8 * countNorm + 0.2 * effNorm)
+  }
+
+  function scoreMemoryRelevanceRaw ({ entry, tokens, queryIsLocation, debug = false }) {
+    const summary = normalizeMemoryText(entry.summary || '').toLowerCase()
+    const text = normalizeMemoryText(entry.text || '').toLowerCase()
+    const feature = normalizeMemoryText(entry.feature || '').toLowerCase()
+    const greetSuffix = normalizeMemoryText(entry.greetSuffix || '').toLowerCase()
+    const kind = normalizeMemoryText(entry.kind || '').toLowerCase()
+    const tagsText = Array.isArray(entry.tags) ? entry.tags.map(t => normalizeMemoryText(t).toLowerCase()).filter(Boolean).join(' ') : ''
+    const triggersText = Array.isArray(entry.triggers) ? entry.triggers.map(t => normalizeMemoryText(t).toLowerCase()).filter(Boolean).join(' ') : ''
+    const locText = (() => {
+      if (!entry.location) return ''
+      const label = locationLabel(entry.location)
+      const dim = entry.location.dim ? String(entry.location.dim).replace(/^minecraft:/, '') : ''
+      return normalizeMemoryText(`${label} ${dim}`).toLowerCase()
+    })()
+    const contentText = [summary, text, feature, greetSuffix, kind].filter(Boolean).join(' ')
+
+    let score = 0
+    let hits = 0
+    let triggerHits = 0
+    const tokenMatches = debug ? [] : null
+
+    for (const tok of tokens) {
+      const w = tokenWeight(tok)
+      if (triggersText && tokenMatchesHaystack(triggersText, tok)) {
+        const delta = 4 * w
+        score += delta
+        hits++
+        triggerHits++
+        if (tokenMatches) tokenMatches.push({ token: tok, match: 'trigger', weight: w, score: delta })
+        continue
+      }
+      if (tagsText && tokenMatchesHaystack(tagsText, tok)) {
+        const delta = 2 * w
+        score += delta
+        hits++
+        if (tokenMatches) tokenMatches.push({ token: tok, match: 'tag', weight: w, score: delta })
+        continue
+      }
+      if ((contentText && tokenMatchesHaystack(contentText, tok)) || (locText && tokenMatchesHaystack(locText, tok))) {
+        const delta = 1 * w
+        score += delta
+        hits++
+        if (tokenMatches) tokenMatches.push({ token: tok, match: 'content', weight: w, score: delta })
+        continue
+      }
+      if (tokenMatches) tokenMatches.push({ token: tok, match: null, weight: w, score: 0 })
+    }
+
+    if (!hits) return debug ? { score: 0, hits: 0, triggerHits: 0, tokenMatches, boosts: null } : 0
+
+    const locBoost = queryIsLocation && entry.location ? 0.6 : 0
+    if (locBoost) score += locBoost
+    const triggerBoost = triggerHits ? 0.4 : 0
+    if (triggerBoost) score += triggerBoost
+
+    if (!debug) return score
+    return {
+      score,
+      hits,
+      triggerHits,
+      tokenMatches,
+      boosts: { locBoost, triggerBoost }
+    }
+  }
+
+  function scoreMemoryV2 ({ entry, tokens, queryIsLocation, cfg, nowTs, debug = false }) {
+    const relDetail = scoreMemoryRelevanceRaw({ entry, tokens, queryIsLocation, debug })
+    const relRaw = debug ? (relDetail?.score || 0) : (Number(relDetail) || 0)
+    if (relRaw <= 0) return null
+    const relevanceScale = Number(cfg?.relevanceScale)
+    const relevance = relevanceFromRawScore(relRaw, relevanceScale)
+    const ts = entry.updatedAt || entry.createdAt || 0
+    const recency = recencyFromTimestamp(ts, cfg?.recencyHalfLifeDays, nowTs)
+    const importance = importanceFromEntry(entry, cfg?.importanceCountSaturation)
+    const w = normalizeMemoryV2Weights(cfg)
+    const score = clamp01((w.wRelevance * relevance) + (w.wRecency * recency) + (w.wImportance * importance))
+    if (!debug) return { score, relevance, recency, importance, relevanceRaw: relRaw }
+    return {
+      score,
+      relevance,
+      recency,
+      importance,
+      relevanceRaw: relRaw,
+      hits: relDetail?.hits || 0,
+      triggerHits: relDetail?.triggerHits || 0,
+      tokenMatches: relDetail?.tokenMatches || null,
+      boosts: relDetail?.boosts || null
+    }
+  }
+
+  function dedupeMemoryEntries (entries, limit) {
+    const out = []
+    const seen = new Set()
+    for (const entry of entries) {
+      if (!entry) continue
+      const id = String(entry.id || '')
+      const loc = entry.location ? locationLabel(entry.location) : ''
+      const dim = entry.location?.dim ? String(entry.location.dim).toLowerCase() : ''
+      const locKey = loc ? `loc:${loc}@${dim}` : ''
+      const sumKey = (() => {
+        const s = normalizeMemoryText(entry.summary || entry.text).toLowerCase()
+        return s ? `sum:${s.slice(0, 80)}` : ''
+      })()
+      const key = locKey || sumKey || (id ? `id:${id}` : '')
+      if (key && seen.has(key)) continue
+      if (key) seen.add(key)
+      out.push(entry)
+      if (out.length >= limit) break
+    }
+    return out
+  }
+
   // --- Rewrite queue & background jobs ---
 
   function recentChatSnippet (count = 5) {
@@ -943,13 +1112,14 @@ function createMemoryService ({
     const limit = Math.max(1, opts.limit || cfg?.max || 6)
     const query = typeof opts.query === 'string' ? opts.query : ''
     const actor = normalizeActorName(opts.actor || opts.username || opts.player || '')
+    const mode = resolveMemoryMode(cfg)
     const debug = opts.debug === true
     const debugLimit = Number.isFinite(Number(opts.debugLimit)) ? Math.max(0, Math.floor(Number(opts.debugLimit))) : 12
     const sections = []
     const refs = []
     let selected = []
     let debugInfo = null
-    if (query) {
+    if (query && mode === 'keyword') {
       if (debug) {
         debugInfo = keywordMatchMemoriesDebug(query, limit * 2, debugLimit, { actor })
         selected = Array.isArray(debugInfo?.selected) ? debugInfo.selected : []
@@ -958,7 +1128,56 @@ function createMemoryService ({
         selected = keywordMatchMemories(query, limit * 2, { actor })
       }
     }
-    if (!selected.length) selected = recentMemories(limit, { actor })
+    if (query && mode !== 'keyword') {
+      const askRaw = normalizeMemoryText(query)
+      const tokensAll = searchTokensFromQuery(askRaw)
+      const actorToken = actor ? actor.toLowerCase() : ''
+      const tokens = actorToken ? tokensAll.filter(t => t !== actorToken) : tokensAll
+      const queryIsLocation = /(在哪|哪儿|哪里|位置|坐标)/.test(askRaw)
+      const entries = ensureMemoryEntries()
+      const nowTs = now()
+      const scored = []
+
+      for (const entry of entries) {
+        if (isMemoryDisabled(entry)) continue
+        if (actor && !memoryAllowedForActor(entry, actor)) continue
+        const detail = scoreMemoryV2({ entry, tokens, queryIsLocation, cfg, nowTs, debug })
+        if (!detail) continue
+        scored.push({ entry, ...detail })
+      }
+
+      scored.sort((a, b) => b.score - a.score)
+      const minScore = clamp01(cfg?.minScore ?? 0.3)
+      const minRelevance = clamp01(cfg?.minRelevance ?? 0.06)
+      const kept = scored.filter(r => r.score >= minScore && r.relevance >= minRelevance)
+      selected = dedupeMemoryEntries(kept.map(r => r.entry), limit)
+
+      if (debug) {
+        const top = scored.slice(0, Math.max(0, Math.floor(Number(debugLimit) || 0) || 0))
+        debugInfo = {
+          mode,
+          query: askRaw,
+          tokens,
+          queryIsLocation,
+          totalEntries: entries.length,
+          matchedCount: scored.length,
+          thresholds: { minScore, minRelevance },
+          selected: selected.map(m => memoryDebugSummary(m)).filter(Boolean),
+          scoredTop: top.map(row => ({
+            score: row.score,
+            components: { relevance: row.relevance, recency: row.recency, importance: row.importance },
+            relevanceRaw: row.relevanceRaw,
+            hits: row.hits || 0,
+            triggerHits: row.triggerHits || 0,
+            tokenMatches: row.tokenMatches || null,
+            cut: { minScoreOk: row.score >= minScore, minRelevanceOk: row.relevance >= minRelevance },
+            entry: memoryDebugSummary(row.entry)
+          }))
+        }
+      }
+    }
+
+    if (!selected.length && mode === 'keyword') selected = recentMemories(limit, { actor })
     if (selected.length) {
       const slice = selected.slice(0, limit)
       for (const m of slice) {
@@ -967,14 +1186,16 @@ function createMemoryService ({
       }
       const parts = slice.map((m, idx) => memoryLineWithMeta(m, idx))
       if (parts.length) sections.push(`长期记忆: ${parts.join(' | ')}`)
-      if (debug) {
+      if (debug && mode === 'keyword') {
         if (!debugInfo) debugInfo = { query: normalizeMemoryText(query), tokens: [], queryIsLocation: false, totalEntries: ensureMemoryEntries().length, matchedCount: 0, scoredTop: [], selected: [] }
         debugInfo.mode = debugInfo.matchedCount ? 'keyword' : 'recent'
+        debugInfo.selected = slice.map(m => memoryDebugSummary(m)).filter(Boolean)
+      } else if (debug && debugInfo && !Array.isArray(debugInfo.selected)) {
         debugInfo.selected = slice.map(m => memoryDebugSummary(m)).filter(Boolean)
       }
     } else if (debug) {
       if (!debugInfo) debugInfo = { query: normalizeMemoryText(query), tokens: [], queryIsLocation: false, totalEntries: ensureMemoryEntries().length, matchedCount: 0, scoredTop: [], selected: [] }
-      debugInfo.mode = 'empty'
+      if (!debugInfo.mode) debugInfo.mode = mode === 'keyword' ? 'empty' : mode
     }
     const text = sections.join(' ')
     if (debug) {

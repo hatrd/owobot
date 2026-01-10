@@ -36,7 +36,19 @@ function buildDefaultContext () {
     memory: {
       include: true,
       max: 6,
-      storeMax: DEFAULT_MEMORY_STORE_MAX
+      storeMax: DEFAULT_MEMORY_STORE_MAX,
+      mode: 'keyword',
+      // v2/hybrid thresholds: prefer empty over noisy fallback
+      minScore: 0.3,
+      minRelevance: 0.06,
+      // v2/hybrid scoring weights
+      wRelevance: 0.6,
+      wRecency: 0.2,
+      wImportance: 0.2,
+      // v2/hybrid scoring knobs
+      recencyHalfLifeDays: 14,
+      relevanceScale: 18,
+      importanceCountSaturation: 20
     }
   }
 }
