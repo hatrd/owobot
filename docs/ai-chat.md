@@ -52,6 +52,18 @@
 5. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
+   - Query：`executor.callAI()` 先用 `buildMemoryQuery({ username, message, recentChat, worldHint })` 构造会话语境查询，再传给 `buildContext({ query: memoryQuery, actor: username })`
+   - Mode：`state.ai.context.memory.mode=keyword|v2|hybrid`
+     - `keyword`：关键词/触发词命中；**无命中时会 recent fallback**（补最近记忆）
+     - `v2`：多信号打分（relevance/recency/importance）+ `minScore/minRelevance` 阈值裁剪 + 去重；**宁缺毋滥，无 recent fallback**
+     - `hybrid`：稀疏（lexical）+ 稠密（embeddings，可选）RRF 融合后再按 v2-style 打分；**宁缺毋滥，无 recent fallback**
+   - 关键可调参（v2/hybrid）：`minScore/minRelevance`、`wRelevance/wRecency/wImportance`、`recencyHalfLifeDays`、`importanceCountSaturation`
+   - Embeddings（hybrid）：`embeddingProvider` 为空则自动退化为 sparse-only；向量存到 `data/ai-memory-embeddings.json`（可重建，不膨胀 `data/ai-memory.json`）
+   - Backfill：
+     - 命名空间：`node scripts/memory-backfill-v2.js --dry-run` / `--apply`（写入前会生成 `.bak.*`）
+     - 向量：`node scripts/memory-embeddings-backfill.js --provider hash --dim 64 --dry-run` / `--apply`
+   - Namespacing：长期记忆条目含 `scope=player|global` + `owners[]`；召回会按 `actor` 强过滤，避免跨玩家污染
+   - Feedback：`refs` 由反馈链路使用，显式正/负反馈会影响 `count/effectiveness`，并更新 `lastPositiveFeedback` 参与 recency/decay
    - 格式：`长期记忆: 1. ... | 2. ...`
    - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
 6. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
@@ -63,8 +75,9 @@
 ### 4.2 如何对齐“真实注入内容”
 
 - 离线查看（不依赖 bot 在线）：`npm run inspect:context -- --player <name> [--query <text>] [--memory-limit N]`
-  - 输出：`memoryCtx`（长期记忆 system）+ `contextPrompt`（system）
-  - 不包含：`systemPrompt/metaCtx/gameCtx/identityCtx`（这些只在运行时由 `executor.callAI()` 拼装）
+  - 输出：`systemPrompt/metaCtx/identityCtx/memoryCtx/contextPrompt`（其中 `gameCtx` 需要 bot 在线才有）
+  - 对比：加 `--compare` 会同一 query 跑 `keyword/v2/hybrid`（JSON 输出含 `compare.memory` + `compare.diff`）
+  - Debug：加 `--debug` 会输出检索 `tokens/scoredTop/thresholds` 以及 `trace`（token 估算）
 - 运行时查看（bot 在线）：`.ai ctx`（打印 `metaCtx/gameCtx/chatCtx`）
 
 ## 5. 对话记忆
@@ -96,4 +109,4 @@
 
 ---
 
-*Version: 2.1 | Docs aligned to runtime prompt assembly*
+*Version: 2.2 | Docs aligned to runtime prompt assembly*

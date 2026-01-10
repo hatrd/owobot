@@ -97,7 +97,7 @@ function buildIdentityContext ({ projectRoot, state, bot }) {
 function usage () {
   return [
     'Usage:',
-    '  node scripts/inspect-injected-context.js --player <name> --query <text> [--memory-limit <n>] [--debug] [--json]',
+    '  node scripts/inspect-injected-context.js --player <name> --query <text> [--memory-limit <n>] [--debug] [--compare] [--json]',
     '',
     'Prints the exact snippets injected into LLM context for that player:',
     '- system prompt (ai-system.txt)',
@@ -108,7 +108,8 @@ function usage () {
     '',
     'Examples:',
     "  node scripts/inspect-injected-context.js --player Shiki --query '我家在哪' --debug",
-    '  node scripts/inspect-injected-context.js --player Shiki --query 你好 --json'
+    '  node scripts/inspect-injected-context.js --player Shiki --query 你好 --json',
+    "  node scripts/inspect-injected-context.js --player Shiki --query '基地坐标' --compare --json"
   ].join('\n')
 }
 
@@ -119,6 +120,16 @@ async function main () {
   const memoryLimitRaw = args['memory-limit'] || args.memoryLimit || args.limit
   const memoryLimit = memoryLimitRaw != null ? Number(memoryLimitRaw) : null
   const debug = parseBool(args.debug, false)
+  const compareRaw = args.compare
+  const compare = (() => {
+    if (compareRaw == null) return false
+    if (compareRaw === true) return true
+    if (compareRaw === false) return false
+    const v = String(compareRaw).trim().toLowerCase()
+    if (!v) return true
+    if (['0', 'false', 'no', 'n', 'off'].includes(v)) return false
+    return true
+  })()
   const json = parseBool(args.json, false) || String(args.format || '').toLowerCase() === 'json'
   const injectQuery = !args['no-inject-query'] && parseBool(args['inject-query'], true)
   const debugLimitRaw = args['debug-limit'] || args.debugLimit
@@ -217,17 +228,66 @@ async function main () {
     ? buildMemoryQuery({ username: player, message: query, recentChat, worldHint: null })
     : ''
 
-  const memoryCtxResult = await memory.longTerm.buildContext({
-    query: memoryQuery,
-    actor: player,
-    withRefs: true,
-    ...(debug ? { debug: true, debugLimit } : {}),
-    ...(Number.isFinite(memoryLimit) && memoryLimit > 0 ? { limit: Math.floor(memoryLimit) } : {})
-  })
-  const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
-  const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
-  const memoryDebug = memoryCtxResult && typeof memoryCtxResult === 'object' ? (memoryCtxResult.debug || null) : null
-  const memoryTrace = memoryCtxResult && typeof memoryCtxResult === 'object' ? (memoryCtxResult.trace || null) : null
+  const ensureMemoryCfg = () => {
+    if (!state.ai) state.ai = {}
+    if (!state.ai.context || typeof state.ai.context !== 'object') state.ai.context = defaults.buildDefaultContext()
+    if (!state.ai.context.memory || typeof state.ai.context.memory !== 'object') state.ai.context.memory = {}
+    return state.ai.context.memory
+  }
+  const memoryCfg = ensureMemoryCfg()
+
+  const runMemoryContext = async (modeOverride) => {
+    const cfg = ensureMemoryCfg()
+    const prevMode = cfg.mode
+    if (modeOverride != null) cfg.mode = modeOverride
+    try {
+      const result = await memory.longTerm.buildContext({
+        query: memoryQuery,
+        actor: player,
+        withRefs: true,
+        ...(debug ? { debug: true, debugLimit } : {}),
+        ...(Number.isFinite(memoryLimit) && memoryLimit > 0 ? { limit: Math.floor(memoryLimit) } : {})
+      })
+      const text = typeof result === 'string' ? result : (result?.text || '')
+      const refs = Array.isArray(result?.refs) ? result.refs : []
+      const dbg = result && typeof result === 'object' ? (result.debug || null) : null
+      const trace = result && typeof result === 'object' ? (result.trace || null) : null
+      return { text, refs, debug: dbg, trace }
+    } finally {
+      try { cfg.mode = prevMode } catch {}
+    }
+  }
+
+  const memoryMode = typeof memoryCfg.mode === 'string' ? memoryCfg.mode : ''
+  const memoryMain = await runMemoryContext(memoryMode)
+  const memoryCtx = memoryMain.text || ''
+  const memoryRefs = memoryMain.refs || []
+  const memoryDebug = memoryMain.debug || null
+  const memoryTrace = memoryMain.trace || null
+
+  const compareModes = (() => {
+    if (!compare) return []
+    if (typeof compareRaw === 'string') {
+      const raw = compareRaw.trim()
+      const v = raw.toLowerCase()
+      const isBoolToken = ['1', 'true', 'yes', 'y', 'on', '0', 'false', 'no', 'n', 'off'].includes(v)
+      if (raw && !isBoolToken) return raw.split(',').map(s => String(s || '').trim()).filter(Boolean)
+    }
+    return ['keyword', 'v2', 'hybrid']
+  })()
+
+  const compareResults = {}
+  if (compare && compareModes.length) {
+    const seen = new Set()
+    for (const rawMode of compareModes) {
+      const mode = String(rawMode || '').trim()
+      if (!mode) continue
+      const key = mode.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      compareResults[mode] = await runMemoryContext(mode)
+    }
+  }
 
   const ctx = state.ai?.context || defaults.buildDefaultContext()
   const maxEntries = Number.isFinite(ctx.recentCount) ? Math.max(1, Math.floor(ctx.recentCount)) : defaults.DEFAULT_RECENT_COUNT
@@ -252,11 +312,38 @@ async function main () {
   const totalTokens = tokenEst.reduce((acc, it) => acc + (it.tokens || 0), 0)
 
   if (json) {
+    const diffRefs = (a = [], b = []) => {
+      const left = Array.isArray(a) ? a : []
+      const right = Array.isArray(b) ? b : []
+      const setL = new Set(left)
+      const setR = new Set(right)
+      return {
+        common: left.filter(id => setR.has(id)),
+        onlyLeft: left.filter(id => !setR.has(id)),
+        onlyRight: right.filter(id => !setL.has(id))
+      }
+    }
+    const compareDiff = (() => {
+      if (!compare) return null
+      const baselineMode = Object.prototype.hasOwnProperty.call(compareResults, 'keyword')
+        ? 'keyword'
+        : (Object.keys(compareResults)[0] || null)
+      const base = baselineMode ? compareResults[baselineMode]?.refs : null
+      if (!baselineMode || !Array.isArray(base)) return null
+      const out = {}
+      for (const [mode, res] of Object.entries(compareResults)) {
+        if (mode === baselineMode) continue
+        out[mode] = diffRefs(base, res?.refs)
+      }
+      return Object.keys(out).length ? { baseline: baselineMode, modes: out } : null
+    })()
+
     const payload = {
       player,
       query,
       injectedQuery: Boolean(injectQuery && query),
       memory: {
+        mode: memoryMode || null,
         query: memoryQuery || '',
         rawQuery: query || '',
         limit: Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : (state.ai?.context?.memory?.max || 6),
@@ -265,6 +352,9 @@ async function main () {
         debug: memoryDebug,
         trace: memoryTrace
       },
+      ...(compare && Object.keys(compareResults).length
+        ? { compare: { enabled: true, modes: Object.keys(compareResults), memory: compareResults, diff: compareDiff } }
+        : null),
       chatContext: {
         xml: xmlCtx || '',
         dialogue: conv || '',
