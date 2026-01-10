@@ -48,7 +48,17 @@ function buildDefaultContext () {
       // v2/hybrid scoring knobs
       recencyHalfLifeDays: 14,
       relevanceScale: 18,
-      importanceCountSaturation: 20
+      importanceCountSaturation: 20,
+      // hybrid dense retrieval (disabled unless embeddingProvider is set)
+      embeddingProvider: '',
+      embeddingDim: 64,
+      embeddingTimeoutMs: 15000,
+      hybridSparseK: 20,
+      hybridDenseK: 20,
+      rrfK: 60,
+      wLexical: 0.6,
+      wDense: 0.4,
+      denseMinSim: 0.25
     }
   }
 }

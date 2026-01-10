@@ -1,5 +1,6 @@
 const { randomUUID } = require('crypto')
 const H = require('../ai-chat-helpers')
+const { createMemoryEmbeddings } = require('./memory-embeddings')
 
 const MEMORY_REWRITE_SYSTEM_PROMPT = [
   '你是Minecraft服务器里的记忆整理助手。玩家会告诉你一条记忆，你需要判断是否值得记录。',
@@ -19,6 +20,7 @@ function createMemoryService ({
 }) {
   const memoryCtrl = { running: false }
   let messenger = () => {}
+  const memoryEmbeddings = createMemoryEmbeddings({ state, defaults, log })
 
   function setMessenger (fn) {
     messenger = typeof fn === 'function' ? fn : () => {}
@@ -342,6 +344,7 @@ function createMemoryService ({
         }
       }
       ensureMemoryNamespace(entry)
+      try { memoryEmbeddings.enqueueEntry(entry, state.ai?.context?.memory) } catch {}
     } else {
       entry = {
         text: normalized,
@@ -386,6 +389,7 @@ function createMemoryService ({
       }
       if (!entry.summary) entry.summary = ''
       ensureMemoryNamespace(entry)
+      try { memoryEmbeddings.enqueueEntry(entry, state.ai?.context?.memory) } catch {}
       entries.push(entry)
     }
     pruneMemories()
@@ -1128,7 +1132,7 @@ function createMemoryService ({
         selected = keywordMatchMemories(query, limit * 2, { actor })
       }
     }
-    if (query && mode !== 'keyword') {
+    if (query && mode === 'v2') {
       const askRaw = normalizeMemoryText(query)
       const tokensAll = searchTokensFromQuery(askRaw)
       const actorToken = actor ? actor.toLowerCase() : ''
@@ -1173,6 +1177,134 @@ function createMemoryService ({
             cut: { minScoreOk: row.score >= minScore, minRelevanceOk: row.relevance >= minRelevance },
             entry: memoryDebugSummary(row.entry)
           }))
+        }
+      }
+    }
+
+    if (query && mode === 'hybrid') {
+      const askRaw = normalizeMemoryText(query)
+      const tokensAll = searchTokensFromQuery(askRaw)
+      const actorToken = actor ? actor.toLowerCase() : ''
+      const tokens = actorToken ? tokensAll.filter(t => t !== actorToken) : tokensAll
+      const queryIsLocation = /(在哪|哪儿|哪里|位置|坐标)/.test(askRaw)
+      const entries = ensureMemoryEntries()
+      const nowTs = now()
+      const embCfg = memoryEmbeddings.resolveConfig(cfg)
+      const queryVec = embCfg.enabled ? await memoryEmbeddings.embedQuery(askRaw, cfg) : null
+
+      const sparseK = Number.isFinite(Number(cfg?.hybridSparseK)) ? Math.max(1, Math.floor(Number(cfg.hybridSparseK))) : 20
+      const denseK = Number.isFinite(Number(cfg?.hybridDenseK)) ? Math.max(1, Math.floor(Number(cfg.hybridDenseK))) : 20
+      const rrfK = Number.isFinite(Number(cfg?.rrfK)) ? Math.max(1, Math.floor(Number(cfg.rrfK))) : 60
+      const denseMinSim = clamp01(cfg?.denseMinSim ?? 0.25)
+
+      const wLexRaw = Number(cfg?.wLexical)
+      const wDenseRaw = Number(cfg?.wDense)
+      const wLex = Number.isFinite(wLexRaw) && wLexRaw >= 0 ? wLexRaw : 0.6
+      const wDense = Number.isFinite(wDenseRaw) && wDenseRaw >= 0 ? wDenseRaw : 0.4
+      const wSum = (wLex + wDense) > 0 ? (wLex + wDense) : 1
+
+      const lexicalList = []
+      const denseList = []
+
+      for (const entry of entries) {
+        if (isMemoryDisabled(entry)) continue
+        if (actor && !memoryAllowedForActor(entry, actor)) continue
+
+        const lexRaw = tokens.length ? scoreMemoryRelevanceRaw({ entry, tokens, queryIsLocation, debug: false }) : 0
+        const lexScore = Number(lexRaw) || 0
+        if (lexScore > 0) lexicalList.push({ entry, lexRaw: lexScore })
+
+        if (queryVec) {
+          const vec = memoryEmbeddings.getEntryVector(entry, cfg)
+          if (vec && vec.length === queryVec.length) {
+            const sim = memoryEmbeddings.cosineSimilarity(queryVec, vec)
+            const dense = clamp01(sim)
+            if (dense >= denseMinSim) denseList.push({ entry, dense })
+          }
+        }
+      }
+
+      lexicalList.sort((a, b) => b.lexRaw - a.lexRaw)
+      denseList.sort((a, b) => b.dense - a.dense)
+      const lexicalTop = lexicalList.slice(0, sparseK)
+      const denseTop = denseList.slice(0, denseK)
+
+      const rrf = new Map()
+      const upsertRrf = (id, delta) => {
+        if (!id) return
+        rrf.set(id, (rrf.get(id) || 0) + delta)
+      }
+      for (let i = 0; i < lexicalTop.length; i++) {
+        const id = String(lexicalTop[i]?.entry?.id || '')
+        upsertRrf(id, 1 / (rrfK + (i + 1)))
+      }
+      for (let i = 0; i < denseTop.length; i++) {
+        const id = String(denseTop[i]?.entry?.id || '')
+        upsertRrf(id, 1 / (rrfK + (i + 1)))
+      }
+
+      const denseById = new Map(denseTop.map(r => [String(r.entry?.id || ''), r.dense]))
+      const lexById = new Map(lexicalTop.map(r => [String(r.entry?.id || ''), r.lexRaw]))
+
+      const candidates = []
+      for (const [id, rrfScore] of rrf.entries()) {
+        const entry = findMemoryById(id)
+        if (!entry) continue
+        const lexRaw = lexById.get(id) || 0
+        const lexicalRelevance = lexRaw > 0 ? relevanceFromRawScore(lexRaw, cfg?.relevanceScale) : 0
+        const denseRelevance = denseById.get(id) || 0
+        const relevance = denseRelevance > 0
+          ? clamp01(((wLex * lexicalRelevance) + (wDense * denseRelevance)) / wSum)
+          : clamp01(lexicalRelevance)
+        const ts = entry.updatedAt || entry.createdAt || 0
+        const recency = recencyFromTimestamp(ts, cfg?.recencyHalfLifeDays, nowTs)
+        const importance = importanceFromEntry(entry, cfg?.importanceCountSaturation)
+        const w = normalizeMemoryV2Weights(cfg)
+        const score = clamp01((w.wRelevance * relevance) + (w.wRecency * recency) + (w.wImportance * importance))
+        candidates.push({
+          entry,
+          score,
+          relevance,
+          recency,
+          importance,
+          hybrid: { lexicalRelevance, denseRelevance, rrf: rrfScore, lexicalRaw: lexRaw }
+        })
+      }
+
+      candidates.sort((a, b) => (b.score - a.score) || ((b.hybrid?.rrf || 0) - (a.hybrid?.rrf || 0)) || (b.relevance - a.relevance))
+      const minScore = clamp01(cfg?.minScore ?? 0.3)
+      const minRelevance = clamp01(cfg?.minRelevance ?? 0.06)
+      const kept = candidates.filter(r => r.score >= minScore && r.relevance >= minRelevance)
+      selected = dedupeMemoryEntries(kept.map(r => r.entry), limit)
+
+      if (debug) {
+        const top = candidates.slice(0, Math.max(0, Math.floor(Number(debugLimit) || 0) || 0))
+        debugInfo = {
+          mode,
+          query: askRaw,
+          tokens,
+          queryIsLocation,
+          totalEntries: entries.length,
+          matchedCount: candidates.length,
+          thresholds: { minScore, minRelevance },
+          embedding: { enabled: Boolean(queryVec), provider: embCfg?.provider || null, storePath: memoryEmbeddings.storePath || null },
+          fusion: { sparseK, denseK, rrfK, wLexical: wLex, wDense },
+          selected: selected.map(m => memoryDebugSummary(m)).filter(Boolean),
+          scoredTop: top.map(row => {
+            const lexDetail = tokens.length
+              ? scoreMemoryRelevanceRaw({ entry: row.entry, tokens, queryIsLocation, debug: true })
+              : { hits: 0, triggerHits: 0, tokenMatches: [], boosts: null }
+            return {
+              score: row.score,
+              components: { relevance: row.relevance, recency: row.recency, importance: row.importance },
+              hybrid: row.hybrid,
+              hits: lexDetail?.hits || 0,
+              triggerHits: lexDetail?.triggerHits || 0,
+              tokenMatches: lexDetail?.tokenMatches || null,
+              cut: { minScoreOk: row.score >= minScore, minRelevanceOk: row.relevance >= minRelevance },
+              entry: memoryDebugSummary(row.entry)
+            }
+          })
         }
       }
     }
