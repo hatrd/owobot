@@ -883,7 +883,25 @@ function createMemoryService ({
       debugInfo.mode = 'empty'
     }
     const text = sections.join(' ')
-    if (debug) return { text, refs, debug: debugInfo }
+    if (debug) {
+      const trace = {
+        version: 1,
+        mode: debugInfo?.mode || 'unknown',
+        query: query ? normalizeMemoryText(query) : '',
+        limit,
+        tokenEstimate: H.estTokensFromText(text),
+        refs: refs.slice(),
+        selected: Array.isArray(debugInfo?.selected) ? debugInfo.selected : [],
+        candidates: Array.isArray(debugInfo?.scoredTop) ? debugInfo.scoredTop : [],
+        meta: {
+          tokens: Array.isArray(debugInfo?.tokens) ? debugInfo.tokens : [],
+          queryIsLocation: Boolean(debugInfo?.queryIsLocation),
+          totalEntries: Number.isFinite(debugInfo?.totalEntries) ? debugInfo.totalEntries : null,
+          matchedCount: Number.isFinite(debugInfo?.matchedCount) ? debugInfo.matchedCount : null
+        }
+      }
+      return { text, refs, debug: debugInfo, trace }
+    }
     if (opts.withRefs) return { text, refs }
     return text
   }

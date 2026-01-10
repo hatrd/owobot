@@ -201,6 +201,7 @@ async function main () {
   const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
   const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
   const memoryDebug = memoryCtxResult && typeof memoryCtxResult === 'object' ? (memoryCtxResult.debug || null) : null
+  const memoryTrace = memoryCtxResult && typeof memoryCtxResult === 'object' ? (memoryCtxResult.trace || null) : null
 
   const ctx = state.ai?.context || defaults.buildDefaultContext()
   const maxEntries = Number.isFinite(ctx.recentCount) ? Math.max(1, Math.floor(ctx.recentCount)) : defaults.DEFAULT_RECENT_COUNT
@@ -233,7 +234,8 @@ async function main () {
         limit: Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : (state.ai?.context?.memory?.max || 6),
         text: memoryCtx || '',
         refs: memoryRefs,
-        debug: memoryDebug
+        debug: memoryDebug,
+        trace: memoryTrace
       },
       chatContext: {
         xml: xmlCtx || '',
@@ -276,6 +278,7 @@ async function main () {
     blocks.push('')
     blocks.push('--- memory debug ---')
     blocks.push(`mode: ${memoryDebug.mode || 'unknown'}`)
+    if (memoryTrace && Number.isFinite(memoryTrace.tokenEstimate)) blocks.push(`token_est.memoryCtx: ${memoryTrace.tokenEstimate}`)
     if (Array.isArray(memoryDebug.tokens)) blocks.push(`tokens: ${memoryDebug.tokens.join(', ')}`)
     if (Number.isFinite(memoryDebug.totalEntries)) blocks.push(`totalEntries: ${memoryDebug.totalEntries}`)
     if (Number.isFinite(memoryDebug.matchedCount)) blocks.push(`matchedCount: ${memoryDebug.matchedCount}`)

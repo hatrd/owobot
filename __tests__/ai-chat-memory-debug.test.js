@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import memoryMod from '../bot_impl/ai-chat/memory.js'
+import H from '../bot_impl/ai-chat-helpers.js'
 
 const { createMemoryService } = memoryMod
 
@@ -27,5 +28,9 @@ test('buildMemoryContext(debug) returns scored memory debug info', async () => {
   assert.ok(Array.isArray(res.debug?.scoredTop) && res.debug.scoredTop.length > 0)
   assert.equal(res.debug.scoredTop[0]?.entry?.id, 'm1')
   assert.ok(res.debug.scoredTop[0]?.tokenMatches?.some(t => t && t.match === 'trigger'))
-})
 
+  assert.equal(res.trace?.version, 1)
+  assert.equal(res.trace?.mode, 'keyword')
+  assert.equal(res.trace?.tokenEstimate, H.estTokensFromText(res.text))
+  assert.deepEqual(res.trace?.refs?.slice(0, 2), ['m1', 'm2'])
+})
