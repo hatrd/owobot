@@ -38,6 +38,17 @@ function buildDefaultContext () {
       max: 6,
       storeMax: DEFAULT_MEMORY_STORE_MAX,
       mode: 'keyword',
+      // Location context injection (long-term memory is primarily places now)
+      location: {
+        include: true,
+        // Always inject the nearest place if the bot is very close (even without explicit location question)
+        alwaysRange: 48,
+        // When user asks about "here/where", inject nearby places within this range
+        nearRange: 160,
+        nearMax: 3,
+        requireDimMatch: true,
+        preferInsideZone: true
+      },
       // v2/hybrid thresholds: prefer empty over noisy fallback
       minScore: 0.3,
       minRelevance: 0.06,

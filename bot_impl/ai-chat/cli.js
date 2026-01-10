@@ -57,7 +57,7 @@ function createAiCliHandler (options = {}) {
               try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
             })()
             if (peopleCommitmentsCtx) print('peopleCommitmentsCtx ->', peopleCommitmentsCtx)
-            if (memory?.longTerm?.buildContext && query && targetPlayer) {
+            if (memory?.longTerm?.buildContext && targetPlayer) {
               try {
                 const result = await memory.longTerm.buildContext({ query, actor: targetPlayer, withRefs: true })
                 const text = typeof result === 'string' ? result : (result?.text || '')

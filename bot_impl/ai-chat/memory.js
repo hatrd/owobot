@@ -85,6 +85,8 @@ function createMemoryService ({
   }
 
   function inferMemoryNamespace (entry) {
+    // Places are shared by default (long-term memory is primarily locations now).
+    if (entry && typeof entry === 'object' && entry.location) return { scope: 'global', owners: [] }
     const author = normalizeActorName(entry?.lastAuthor || entry?.firstAuthor || '')
     if (author && BOT_USERNAME && author.toLowerCase() === BOT_USERNAME.toLowerCase()) return { scope: 'global', owners: [] }
     if (author && author.toLowerCase() !== 'ai') return { scope: 'player', owners: [author] }
@@ -163,6 +165,102 @@ function createMemoryService ({
       if (dimNorm) out.dim = dimNorm.toLowerCase()
     }
     return out
+  }
+
+  function normalizeDimensionName (raw) {
+    if (typeof raw !== 'string') return ''
+    const t = normalizeMemoryText(raw).toLowerCase()
+    if (!t) return ''
+    if (t.startsWith('minecraft:')) return t
+    if (t === 'overworld') return 'minecraft:overworld'
+    if (t === 'nether' || t === 'the_nether') return 'minecraft:the_nether'
+    if (t === 'end' || t === 'the_end') return 'minecraft:the_end'
+    return t
+  }
+
+  function getBotLocationSnapshot () {
+    try {
+      const pos = bot?.entity?.position
+      if (!pos) return null
+      const x = Number(pos.x)
+      const y = Number(pos.y)
+      const z = Number(pos.z)
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return null
+      const dim = normalizeDimensionName(bot?.game?.dimension || bot?.dimension || '')
+      return { x, y: Number.isFinite(y) ? y : null, z, dim: dim || null }
+    } catch { return null }
+  }
+
+  function distanceToLocation (me, loc) {
+    if (!me || !loc) return Infinity
+    const dx = Number(loc.x) - Number(me.x)
+    const dz = Number(loc.z) - Number(me.z)
+    const dy = (Number.isFinite(Number(loc.y)) && Number.isFinite(Number(me.y))) ? (Number(loc.y) - Number(me.y)) : 0
+    const d2 = (dx * dx) + (dz * dz) + (dy * dy)
+    return d2 > 0 ? Math.sqrt(d2) : 0
+  }
+
+  function resolveLocationContextConfig (memoryCfg, limit) {
+    const src = (memoryCfg && typeof memoryCfg.location === 'object' && memoryCfg.location) ? memoryCfg.location : (memoryCfg || {})
+    const toPosInt = (v, def) => {
+      const n = Number(v)
+      if (!Number.isFinite(n) || n <= 0) return def
+      return Math.max(1, Math.floor(n))
+    }
+    const toPosNum = (v, def) => {
+      const n = Number(v)
+      if (!Number.isFinite(n) || n <= 0) return def
+      return n
+    }
+    return {
+      include: src.include !== false,
+      alwaysRange: toPosNum(src.alwaysRange ?? src.always_range, 48),
+      nearRange: toPosNum(src.nearRange ?? src.near_range ?? src.nearbyRange ?? src.range, 160),
+      nearMax: Math.min(toPosInt(src.nearMax ?? src.near_max ?? src.max, 3), Math.max(1, Math.floor(limit || 6))),
+      requireDimMatch: src.requireDimMatch !== false,
+      preferInsideZone: src.preferInsideZone !== false
+    }
+  }
+
+  function pickNearbyLocationEntries ({ actor, limit, cfg, includeOutsideRange = false } = {}) {
+    const me = getBotLocationSnapshot()
+    if (!me) return []
+    const entries = ensureMemoryEntries()
+    const out = []
+    const wantDimMatch = cfg?.requireDimMatch !== false
+    const meDim = me.dim ? normalizeDimensionName(me.dim) : ''
+    const nearRange = Number.isFinite(Number(cfg?.nearRange)) ? Math.max(1, Number(cfg.nearRange)) : 160
+
+    for (const entry of entries) {
+      if (!entry || isMemoryDisabled(entry)) continue
+      if (!entry.location) continue
+      if (actor && !memoryAllowedForActor(entry, actor)) continue
+
+      const loc = normalizeLocationValue(entry.location)
+      if (!loc) continue
+      const locDim = loc.dim ? normalizeDimensionName(loc.dim) : ''
+      if (wantDimMatch && meDim && locDim && meDim !== locDim) continue
+
+      const d = distanceToLocation(me, loc)
+      const radius = Number.isFinite(Number(loc.radius)) ? Math.max(1, Number(loc.radius)) : 0
+      const inZone = radius > 0 && d <= radius
+      const ok = includeOutsideRange ? true : (inZone || d <= Math.max(nearRange, radius || 0))
+      if (!ok) continue
+      out.push({ entry, d, inZone, radius })
+    }
+
+    if (!out.length) return []
+    out.sort((a, b) => {
+      if (cfg?.preferInsideZone !== false) {
+        if (a.inZone !== b.inZone) return a.inZone ? -1 : 1
+      }
+      const dd = a.d - b.d
+      if (dd !== 0) return dd
+      return (b.entry?.updatedAt || b.entry?.createdAt || 0) - (a.entry?.updatedAt || a.entry?.createdAt || 0)
+    })
+
+    const max = Number.isFinite(Number(limit)) ? Math.max(1, Math.floor(Number(limit))) : 3
+    return out.slice(0, max).map(r => r.entry)
   }
 
   function locationLabel (loc) {
@@ -1145,6 +1243,9 @@ function createMemoryService ({
     const refs = []
     let selected = []
     let debugInfo = null
+    const askNorm = query ? normalizeMemoryText(query) : ''
+    const askWantsHere = Boolean(askNorm) && /(这里|这儿|此处|附近|周围)/.test(askNorm)
+    const askIsLocation = Boolean(askNorm) && /(在哪|哪儿|哪里|位置|坐标)/.test(askNorm)
     if (query && mode === 'keyword') {
       if (debug) {
         debugInfo = keywordMatchMemoriesDebug(query, limit * 2, debugLimit, { actor })
@@ -1334,6 +1435,33 @@ function createMemoryService ({
         }
       }
     }
+
+    // Location context injection: based on (a) query hints, or (b) distance between bot and saved places.
+    try {
+      const locCfg = resolveLocationContextConfig(cfg, limit)
+      if (locCfg.include) {
+        let inject = []
+        if (!askNorm || askIsLocation || askWantsHere) {
+          inject = pickNearbyLocationEntries({ actor, limit: locCfg.nearMax, cfg: locCfg })
+        } else {
+          const nearest = pickNearbyLocationEntries({ actor, limit: 1, cfg: locCfg, includeOutsideRange: true })
+          const me = getBotLocationSnapshot()
+          const first = nearest && nearest[0] ? nearest[0] : null
+          const loc = first?.location ? normalizeLocationValue(first.location) : null
+          const d = (me && loc) ? distanceToLocation(me, loc) : Infinity
+          if (first && Number.isFinite(d) && d <= locCfg.alwaysRange) inject = [first]
+        }
+        if (inject.length) {
+          const merged = []
+          for (const e of selected) merged.push(e)
+          for (const e of inject) merged.push(e)
+          selected = dedupeMemoryEntries(merged, limit)
+          if (debug && debugInfo && typeof debugInfo === 'object') {
+            debugInfo.locationInjected = true
+          }
+        }
+      }
+    } catch {}
 
     if (!selected.length && mode === 'keyword') selected = recentMemories(limit, { actor })
     if (selected.length) {
