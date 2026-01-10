@@ -136,6 +136,7 @@ async function main () {
   const H = require(path.join(projectRoot, 'bot_impl', 'ai-chat-helpers'))
   const { prepareAiState } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'state-init'))
   const { createMemoryService } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'memory'))
+  const { buildMemoryQuery } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'memory-query'))
   const { createContextBus } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'context-bus'))
   const { createPulseService } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'pulse'))
   const defaults = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'config'))
@@ -192,8 +193,33 @@ async function main () {
     try { pulse.captureChat(player, query) } catch {}
   }
 
+  const recentChat = (() => {
+    try {
+      const store = contextBus.getStore ? contextBus.getStore() : []
+      const out = []
+      for (let i = store.length - 1; i >= 0 && out.length < 8; i--) {
+        const e = store[i]
+        if (!e || e.type !== 'player') continue
+        const who = e.payload?.name
+        if (String(who || '').trim() !== String(player || '').trim()) continue
+        const text = e.payload?.content
+        if (typeof text !== 'string' || !text.trim()) continue
+        out.push({ user: who, text, t: e.t })
+      }
+      out.reverse()
+      return out
+    } catch {
+      return []
+    }
+  })()
+
+  const memoryQuery = query
+    ? buildMemoryQuery({ username: player, message: query, recentChat, worldHint: null })
+    : ''
+
   const memoryCtxResult = await memory.longTerm.buildContext({
-    query,
+    query: memoryQuery,
+    actor: player,
     withRefs: true,
     ...(debug ? { debug: true, debugLimit } : {}),
     ...(Number.isFinite(memoryLimit) && memoryLimit > 0 ? { limit: Math.floor(memoryLimit) } : {})
@@ -231,6 +257,8 @@ async function main () {
       query,
       injectedQuery: Boolean(injectQuery && query),
       memory: {
+        query: memoryQuery || '',
+        rawQuery: query || '',
         limit: Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : (state.ai?.context?.memory?.max || 6),
         text: memoryCtx || '',
         refs: memoryRefs,
@@ -253,6 +281,7 @@ async function main () {
     `player: ${player}`,
     query ? `query: ${query}` : null,
     `injected.query: ${injectQuery && query ? 'yes' : 'no'}`,
+    memoryQuery ? `memory.query: ${memoryQuery}` : null,
     `memory.limit: ${Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : (state.ai?.context?.memory?.max || 6)}`,
     `token_est.total: ${totalTokens}`,
     tokenEst.length ? `token_est.by_message: ${tokenEst.map(it => `${it.name}=${it.tokens}`).join(', ')}` : null,

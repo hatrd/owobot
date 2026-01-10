@@ -1,6 +1,7 @@
 const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const timeUtils = require('../time-utils')
 const feedbackPool = require('./feedback-pool')
+const { buildMemoryQuery } = require('./memory-query')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -292,6 +293,41 @@ function createChatExecutor ({
     return [base, conv].filter(Boolean).join('\n\n')
   }
 
+  function collectRecentChatForMemoryQuery (username, limit = 8) {
+    const name = String(username || '').trim()
+    if (!name) return []
+    const cap = Math.max(0, Math.min(50, Math.floor(Number(limit) || 0)))
+    if (cap <= 0) return []
+
+    const out = []
+    if (contextBus && typeof contextBus.getStore === 'function') {
+      const store = contextBus.getStore() || []
+      for (let i = store.length - 1; i >= 0 && out.length < cap; i--) {
+        const e = store[i]
+        if (!e || e.type !== 'player') continue
+        const who = e.payload?.name
+        if (String(who || '').trim() !== name) continue
+        const text = e.payload?.content
+        if (typeof text !== 'string' || !text.trim()) continue
+        out.push({ user: who, text, t: e.t })
+      }
+      out.reverse()
+      return out
+    }
+
+    const recent = Array.isArray(state.aiRecent) ? state.aiRecent : []
+    for (let i = recent.length - 1; i >= 0 && out.length < cap; i--) {
+      const r = recent[i]
+      if (!r) continue
+      if (String(r.user || '').trim() !== name) continue
+      const text = r.text
+      if (typeof text !== 'string' || !text.trim()) continue
+      out.push({ user: r.user, text, t: r.t })
+    }
+    out.reverse()
+    return out
+  }
+
   function getMinimalSelfInstance () {
     try {
       return require('../minimal-self').getInstance()
@@ -438,7 +474,13 @@ function createChatExecutor ({
     const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
-    const memoryCtxResult = await memory.longTerm.buildContext({ query: content, withRefs: true })
+    const memoryQuery = buildMemoryQuery({
+      username,
+      message: content,
+      recentChat: collectRecentChatForMemoryQuery(username, 8),
+      worldHint: null
+    })
+    const memoryCtxResult = await memory.longTerm.buildContext({ query: memoryQuery, actor: username, withRefs: true })
     const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     // M2: Identity context from minimal-self
