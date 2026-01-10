@@ -2,10 +2,12 @@ const H = require('./ai-chat-helpers')
 const actionsMod = require('./actions')
 const observer = require('./agent/observer')
 const memoryStore = require('./memory-store')
+const peopleStore = require('./people-store')
 const { prepareAiState } = require('./ai-chat/state-init')
 const { createAiCliHandler } = require('./ai-chat/cli')
 const { createPulseService } = require('./ai-chat/pulse')
 const { createMemoryService } = require('./ai-chat/memory')
+const { createPeopleService } = require('./ai-chat/people')
 const { createChatExecutor } = require('./ai-chat/executor')
 const { createFeedbackCollector } = require('./ai-chat/feedback-collector')
 const { createIntrospectionEngine } = require('./ai-chat/introspection')
@@ -125,6 +127,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     buildDefaultContext
   }
   const memory = createMemoryService({ state, log, memoryStore, defaults, bot, traceChat, now })
+  const people = createPeopleService({ state, peopleStore, now, trace: traceChat })
   const persistedMemory = memoryStore.load()
   const persistedEvolution = memoryStore.loadEvolution()
   prepareAiState(state, {
@@ -220,6 +223,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     traceChat,
     pulse,
     memory,
+    people,
     canAfford,
     applyUsage,
     buildGameContext,

@@ -24,6 +24,7 @@ function createChatExecutor ({
   traceChat = () => {},
   pulse,
   memory,
+  people = null,
   canAfford,
   applyUsage,
   buildGameContext,
@@ -490,6 +491,12 @@ function createChatExecutor ({
         return ms?.buildIdentityContext?.() || ''
       } catch { return '' }
     })()
+    const peopleProfilesCtx = (() => {
+      try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
+    })()
+    const peopleCommitmentsCtx = (() => {
+      try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
+    })()
     const metaCtx = buildMetaContext()
     const inlineUserContent = options?.inlineUserContent === true
     const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
@@ -498,6 +505,8 @@ function createChatExecutor ({
       metaCtx ? { role: 'system', content: metaCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       identityCtx ? { role: 'system', content: identityCtx } : null,
+      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx } : null,
+      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx } : null,
       memoryCtx ? { role: 'system', content: memoryCtx } : null,
       { role: 'system', content: contextPrompt },
       inlinePrompt ? { role: 'system', content: inlinePrompt } : null
@@ -506,6 +515,8 @@ function createChatExecutor ({
       try {
         log.info('gameCtx ->', gameCtx)
         log.info('chatCtx ->', buildContextPrompt(username))
+        log.info('peopleProfilesCtx ->', peopleProfilesCtx)
+        log.info('peopleCommitmentsCtx ->', peopleCommitmentsCtx)
         log.info('memoryCtx ->', memoryCtx)
       } catch {}
     }
@@ -681,15 +692,25 @@ function createChatExecutor ({
       const actionRaw = payload.args?.action
       const action = typeof actionRaw === 'string' ? actionRaw.trim() : ''
       if (!action) return H.trimReply('没听懂要承诺什么呢~', maxReplyLen || 120)
-      const ms = getMinimalSelfInstance()
-      const identity = ms?.getIdentity?.()
-      if (!identity || typeof identity.addCommitment !== 'function') {
-        return H.trimReply('现在记不住承诺呢~', maxReplyLen || 120)
-      }
       const player = payload.args?.player ? String(payload.args.player) : username
       const deadlineRaw = payload.args?.deadlineMs
       const deadlineMs = Number.isFinite(deadlineRaw) ? deadlineRaw : null
-      const commitment = identity.addCommitment(player, action, deadlineMs)
+      const storedInPeople = (() => {
+        try {
+          return Boolean(people?.upsertCommitment?.({ player, action, status: 'pending', deadlineMs, source: 'tool:add_commitment' })?.ok)
+        } catch { return false }
+      })()
+      const ms = getMinimalSelfInstance()
+      const identity = ms?.getIdentity?.()
+      const commitment = (() => {
+        try {
+          if (!identity || typeof identity.addCommitment !== 'function') return null
+          return identity.addCommitment(player, action, deadlineMs)
+        } catch { return null }
+      })()
+      if (!storedInPeople && !commitment) {
+        return H.trimReply('现在记不住承诺呢~', maxReplyLen || 120)
+      }
       if (contextBus) {
         try { contextBus.pushEvent('commitment.add', `${player}:${action}`) } catch {}
       }

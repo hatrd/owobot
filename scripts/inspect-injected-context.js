@@ -144,9 +144,11 @@ async function main () {
   const projectRoot = path.resolve(__dirname, '..')
   try { process.chdir(projectRoot) } catch {}
   const memoryStore = require(path.join(projectRoot, 'bot_impl', 'memory-store'))
+  const peopleStore = require(path.join(projectRoot, 'bot_impl', 'people-store'))
   const H = require(path.join(projectRoot, 'bot_impl', 'ai-chat-helpers'))
   const { prepareAiState } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'state-init'))
   const { createMemoryService } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'memory'))
+  const { createPeopleService } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'people'))
   const { buildMemoryQuery } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'memory-query'))
   const { createContextBus } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'context-bus'))
   const { createPulseService } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'pulse'))
@@ -180,6 +182,7 @@ async function main () {
   }
 
   const memory = createMemoryService({ state, log, memoryStore, defaults: defaultsBundle, bot, now })
+  const people = createPeopleService({ state, peopleStore, now })
   const persistedMemory = memoryStore.load()
   const persistedEvolution = memoryStore.loadEvolution()
 
@@ -299,11 +302,19 @@ async function main () {
   const systemPrompt = buildSystemPrompt({ projectRoot, botName: bot.username })
   const metaCtx = buildMetaContext({ projectRoot, now })
   const identityCtx = buildIdentityContext({ projectRoot, state, bot })
+  const peopleProfilesCtx = (() => {
+    try { return people.buildAllProfilesContext() || '' } catch { return '' }
+  })()
+  const peopleCommitmentsCtx = (() => {
+    try { return people.buildAllCommitmentsContext() || '' } catch { return '' }
+  })()
 
   const messages = [
     systemPrompt ? { role: 'system', name: 'systemPrompt', content: systemPrompt } : null,
     metaCtx ? { role: 'system', name: 'metaCtx', content: metaCtx } : null,
     identityCtx ? { role: 'system', name: 'identityCtx', content: identityCtx } : null,
+    peopleProfilesCtx ? { role: 'system', name: 'peopleProfilesCtx', content: peopleProfilesCtx } : null,
+    peopleCommitmentsCtx ? { role: 'system', name: 'peopleCommitmentsCtx', content: peopleCommitmentsCtx } : null,
     memoryCtx ? { role: 'system', name: 'memoryCtx', content: memoryCtx } : null,
     { role: 'system', name: 'contextPrompt', content: contextPrompt }
   ].filter(Boolean)
@@ -360,6 +371,10 @@ async function main () {
         dialogue: conv || '',
         text: contextPrompt || ''
       },
+      people: {
+        profiles: peopleProfilesCtx || '',
+        commitments: peopleCommitmentsCtx || ''
+      },
       messages,
       tokenEstimate: { total: totalTokens, perMessage: tokenEst }
     }
@@ -384,6 +399,12 @@ async function main () {
     '',
     '--- injected: identityCtx (system) ---',
     identityCtx || '(empty)',
+    '',
+    '--- injected: peopleProfilesCtx (system) ---',
+    peopleProfilesCtx || '(empty)',
+    '',
+    '--- injected: peopleCommitmentsCtx (system) ---',
+    peopleCommitmentsCtx || '(empty)',
     '',
     '--- injected: memoryCtx (system) ---',
     memoryCtx || '(empty)',
