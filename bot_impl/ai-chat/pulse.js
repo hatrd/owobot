@@ -181,6 +181,19 @@ function createPulseService ({
     if (!normalized.steps.length) return false
     if (!username || username === bot.username) return false
 
+    try {
+      if (contextBus) {
+        const from = String(opts?.from || '').trim()
+        for (const step of normalized.steps) {
+          if (!step || step.kind !== 'text') continue
+          const line = String(step.text || '').trim()
+          if (!line) continue
+          if (from && typeof contextBus.pushBotFrom === 'function') contextBus.pushBotFrom(line, from)
+          else if (typeof contextBus.pushBot === 'function') contextBus.pushBot(line)
+        }
+      }
+    } catch {}
+
     const cancelPrevious = normalized.cancelPrevious !== false
     if (cancelPrevious) cancelSay(username, 'superseded')
 

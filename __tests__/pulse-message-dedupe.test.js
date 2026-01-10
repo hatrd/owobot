@@ -105,3 +105,15 @@ test('deathchest chat + system notices emit a single event', () => {
   assert.deepEqual(store[0].payload, { eventType: 'death_info', data: systemText })
   assert.equal(state.aiRecent.length, 0)
 })
+
+test('say: injects planned bot lines into context bus immediately', () => {
+  const { contextBus, pulse } = makePulse()
+  const ok = pulse.say('kuleizi', { steps: ['第一句', '第二句'], gapMs: 0, typing: { enabled: false } }, { from: 'LLM' })
+  assert.equal(ok, true)
+  const store = contextBus.getStore()
+  assert.equal(store.length, 2)
+  assert.equal(store[0].type, 'bot')
+  assert.deepEqual(store[0].payload, { content: '第一句', from: 'LLM' })
+  assert.equal(store[1].type, 'bot')
+  assert.deepEqual(store[1].payload, { content: '第二句', from: 'LLM' })
+})
