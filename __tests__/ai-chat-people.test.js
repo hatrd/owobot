@@ -27,10 +27,10 @@ test('people.setProfile overwrites and persists by username key', async () => {
 
   const res = people.setProfile({ player: 'Alice', profile: '叫我   阿猫  ', source: 'test' })
   assert.equal(res.ok, true)
-  assert.equal(res.key, 'alice')
-  assert.equal(state.aiPeople.profiles.alice.profile, '叫我 阿猫')
+  assert.equal(res.key, 'Alice')
+  assert.equal(state.aiPeople.profiles.Alice.profile, '叫我 阿猫')
   assert.equal(getSaveCalls(), 1)
-  assert.deepEqual(Object.keys(getSaved().profiles), ['alice'])
+  assert.deepEqual(Object.keys(getSaved().profiles), ['Alice'])
 })
 
 test('people.upsertCommitment de-dupes by (player, action) and persists updates', async () => {
@@ -80,4 +80,3 @@ test('people.buildAllProfilesContext only includes non-empty profiles', async ()
   assert.doesNotMatch(ctx, /Alice/)
   assert.match(ctx, /Bob：喜欢被叫鲍勃/)
 })
-

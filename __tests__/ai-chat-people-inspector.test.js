@@ -48,8 +48,7 @@ test('dialogue summary triggers rule-based people profile overwrite', async () =
 
   await memory.dialogue.queueSummary('Alice', sessionEntry, 'test')
 
-  assert.ok(state.aiPeople?.profiles?.alice?.profile)
-  assert.match(state.aiPeople.profiles.alice.profile, /阿猫/)
-  assert.ok(savedPeople?.profiles?.alice?.profile)
+  assert.ok(state.aiPeople?.profiles?.Alice?.profile)
+  assert.match(state.aiPeople.profiles.Alice.profile, /阿猫/)
+  assert.ok(savedPeople?.profiles?.Alice?.profile)
 })
-

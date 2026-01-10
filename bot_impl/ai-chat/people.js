@@ -4,11 +4,6 @@ function normalizeName (name) {
   return String(name || '').replace(/\u00a7./g, '').trim().slice(0, 40)
 }
 
-function normalizeKey (name) {
-  const clean = normalizeName(name)
-  return clean ? clean.toLowerCase() : ''
-}
-
 function safeArray (value) {
   return Array.isArray(value) ? value : []
 }
@@ -16,6 +11,144 @@ function safeArray (value) {
 function safeObject (value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return value
+}
+
+function normalizeKey (name) {
+  return normalizeName(name)
+}
+
+function foldKey (name) {
+  const clean = normalizeKey(name)
+  return clean ? clean.toLowerCase() : ''
+}
+
+function resolveKey (profiles, player) {
+  const haystack = safeObject(profiles)
+  const needle = foldKey(player)
+  if (!needle) return ''
+  for (const k of Object.keys(haystack)) {
+    if (!k) continue
+    if (foldKey(k) === needle) return k
+    const rec = haystack[k]
+    const recName = normalizeName(rec?.name || rec?.player || '')
+    if (recName && foldKey(recName) === needle) return k
+  }
+  return ''
+}
+
+function pickPreferredProfile (a, b) {
+  const aRec = a && typeof a === 'object' ? a : {}
+  const bRec = b && typeof b === 'object' ? b : {}
+  const aText = typeof aRec.profile === 'string' ? aRec.profile.trim() : ''
+  const bText = typeof bRec.profile === 'string' ? bRec.profile.trim() : ''
+  if (aText && !bText) return aRec
+  if (bText && !aText) return bRec
+  const aUpdatedAt = Number(aRec.updatedAt) || 0
+  const bUpdatedAt = Number(bRec.updatedAt) || 0
+  if (aUpdatedAt !== bUpdatedAt) return aUpdatedAt > bUpdatedAt ? aRec : bRec
+  return aRec
+}
+
+function migrateProfiles (rawProfiles) {
+  const profiles = safeObject(rawProfiles)
+  const out = {}
+  const index = new Map() // fold -> key
+  let changed = false
+
+  for (const [rawKey, rawVal] of Object.entries(profiles)) {
+    const rec = rawVal && typeof rawVal === 'object' ? rawVal : {}
+    const name = normalizeName(rec.name || rec.player || rawKey)
+    const desiredKey = normalizeKey(name || rawKey)
+    if (!desiredKey) continue
+    const folded = foldKey(desiredKey)
+    if (!folded) continue
+
+    const normalized = { ...rec, name: name || desiredKey }
+    if (rawKey !== desiredKey) changed = true
+
+    const existingKey = index.get(folded)
+    if (!existingKey) {
+      out[desiredKey] = normalized
+      index.set(folded, desiredKey)
+      continue
+    }
+
+    if (existingKey === desiredKey) {
+      out[desiredKey] = pickPreferredProfile(out[desiredKey], normalized)
+      continue
+    }
+
+    changed = true
+    const existing = out[existingKey]
+    const preferred = pickPreferredProfile(existing, normalized)
+    if (preferred === existing) continue
+
+    delete out[existingKey]
+    out[desiredKey] = preferred
+    index.set(folded, desiredKey)
+  }
+
+  return { profiles: out, changed }
+}
+
+function migrateCommitments (rawCommitments, profiles) {
+  const list = safeArray(rawCommitments)
+  const out = []
+  const seen = new Map() // fold::action -> item
+  let changed = false
+
+  for (const item of list) {
+    const rec = item && typeof item === 'object' ? item : null
+    if (!rec) continue
+
+    const player = normalizeName(rec.player || rec.name || rec.playerName || rec.playerKey || '')
+    const playerKey = player ? (resolveKey(profiles, player) || player) : ''
+    const action = typeof rec.action === 'string' ? rec.action.trim() : ''
+
+    const normalized = {
+      ...rec,
+      ...(player ? { player } : null),
+      ...(playerKey ? { playerKey } : null),
+      ...(action ? { action } : null)
+    }
+
+    if (player && typeof rec.player === 'string' && rec.player !== player) changed = true
+    if (playerKey && typeof rec.playerKey === 'string' && rec.playerKey !== playerKey) changed = true
+    if (action && typeof rec.action === 'string' && rec.action !== action) changed = true
+
+    const foldPlayer = playerKey ? foldKey(playerKey) : foldKey(player)
+    const foldAction = action ? action.toLowerCase() : (typeof rec.action === 'string' ? rec.action.trim().toLowerCase() : '')
+    const dedupeKey = foldPlayer && foldAction ? `${foldPlayer}::${foldAction}` : ''
+    if (!dedupeKey) { out.push(normalized); continue }
+
+    const existing = seen.get(dedupeKey)
+    if (!existing) {
+      seen.set(dedupeKey, normalized)
+      out.push(normalized)
+      continue
+    }
+
+    changed = true
+    const preferred = (() => {
+      const a = existing
+      const b = normalized
+      const aUpdatedAt = Number(a.updatedAt) || 0
+      const bUpdatedAt = Number(b.updatedAt) || 0
+      if (aUpdatedAt !== bUpdatedAt) return aUpdatedAt > bUpdatedAt ? a : b
+      const aStatus = String(a.status || '').trim().toLowerCase()
+      const bStatus = String(b.status || '').trim().toLowerCase()
+      if (aStatus !== 'pending' && bStatus === 'pending') return a
+      if (bStatus !== 'pending' && aStatus === 'pending') return b
+      return a
+    })()
+
+    if (preferred === existing) continue
+    seen.set(dedupeKey, preferred)
+    const idx = out.indexOf(existing)
+    if (idx >= 0) out[idx] = preferred
+  }
+
+  return { commitments: out, changed }
 }
 
 function normalizeCommitmentStatus (raw) {
@@ -49,6 +182,16 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     const persisted = peopleStore.load()
     slice.profiles = safeObject(persisted?.profiles)
     slice.commitments = safeArray(persisted?.commitments)
+
+    const profMig = migrateProfiles(slice.profiles)
+    const comMig = migrateCommitments(slice.commitments, profMig.profiles)
+    if (profMig.changed) slice.profiles = profMig.profiles
+    if (comMig.changed) slice.commitments = comMig.commitments
+    if ((profMig.changed || comMig.changed) && peopleStore && typeof peopleStore.save === 'function') {
+      try {
+        peopleStore.save({ profiles: slice.profiles, commitments: slice.commitments })
+      } catch {}
+    }
     slice._loaded = true
   }
 
@@ -125,6 +268,15 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     const key = normalizeKey(name)
     if (!key) return { ok: false, reason: 'empty_player' }
     const text = typeof profile === 'string' ? profile.replace(/\s+/g, ' ').trim() : ''
+
+    const existingKey = resolveKey(slice.profiles, key)
+    if (existingKey && existingKey !== key) {
+      try {
+        slice.profiles[key] = slice.profiles[existingKey]
+        delete slice.profiles[existingKey]
+      } catch {}
+    }
+
     slice.profiles[key] = {
       name,
       profile: text,
@@ -140,18 +292,18 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     const slice = ensureState()
     if (!slice) return { ok: false, reason: 'no_state' }
     const name = normalizeName(player)
-    const playerKey = normalizeKey(name)
+    const playerKey = resolveKey(slice.profiles, name) || normalizeKey(name)
     const act = typeof action === 'string' ? action.replace(/\s+/g, ' ').trim() : ''
     if (!playerKey || !act) return { ok: false, reason: 'empty' }
 
     const st = normalizeCommitmentStatus(status)
     const nowTs = now()
     const list = safeArray(slice.commitments)
-    const needle = `${playerKey}::${act.toLowerCase()}`
+    const needle = `${foldKey(playerKey)}::${act.toLowerCase()}`
     let existing = null
     for (const c of list) {
       if (!c || typeof c !== 'object') continue
-      const k = normalizeKey(c.playerKey || c.player || c.name || '')
+      const k = foldKey(c.playerKey || c.player || c.name || '')
       const a = typeof c.action === 'string' ? c.action.trim().toLowerCase() : ''
       if (!k || !a) continue
       if (`${k}::${a}` === needle) { existing = c; break }
