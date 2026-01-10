@@ -9,12 +9,30 @@ const MEMORY_REWRITE_SYSTEM_PROMPT = [
   '所有 JSON 属性都必须双引号，内容用中文，禁止添加额外说明。'
 ].join('\n')
 
+const PEOPLE_INSPECTOR_SYSTEM_PROMPT = [
+  '你是Minecraft服务器聊天的“人物画像/承诺”记忆检查器。',
+  '输入是一段聊天记录（包含玩家与bot发言）。你需要抽取并更新两类结构化信息：',
+  '1) 人物画像 profiles：玩家希望被如何称呼、关系、偏好、禁忌称呼等（用一句中文描述）。',
+  '2) bot承诺 commitments：bot明确答应将来要为玩家做的事（非立即执行的动作）。',
+  '',
+  '请只输出严格 JSON，且只包含以下字段：',
+  '{"profiles":[{"player":"玩家名","profile":"一句画像（覆盖写入）"}],"commitments":[{"player":"玩家名","action":"承诺内容","status":"pending|done|failed","deadlineMs":1700000000000}]}',
+  '',
+  '规则：',
+  '- 只记录“确定无疑”的信息，不要编造。',
+  '- profile 是覆盖写入：若本段聊天出现该玩家画像信息更新，请输出“完整画像”字符串；否则不要输出该玩家。',
+  '- commitments 只记录 bot 自己对玩家的承诺/答应（不是工具调用即时完成的动作）；默认 status=pending；deadlineMs 可省略。',
+  '- 如果没有任何更新，输出 {"profiles":[],"commitments":[]}。',
+  '- 只输出 JSON，不要输出 Markdown，不要输出解释。'
+].join('\n')
+
 function createMemoryService ({
   state,
   log,
   memoryStore,
   defaults,
   bot,
+  people = null,
   traceChat = () => {},
   now = () => Date.now()
 }) {
@@ -1998,6 +2016,187 @@ function createMemoryService ({
     return summary.replace(/\s+/g, ' ').trim()
   }
 
+  function normalizeInspectorStatus (raw) {
+    const v = normalizeMemoryText(raw).toLowerCase()
+    if (!v) return 'pending'
+    if (['pending', 'todo', 'open'].includes(v)) return 'pending'
+    if (['done', 'fulfilled', 'complete', 'completed'].includes(v)) return 'done'
+    if (['failed', 'fail', 'canceled', 'cancelled', 'abandoned'].includes(v)) return 'failed'
+    return 'pending'
+  }
+
+  function buildPeopleSnapshotForInspector (participants) {
+    try {
+      if (!people || typeof people.dumpForLLM !== 'function') return { profiles: [], commitments: [] }
+      const snap = people.dumpForLLM() || {}
+      const prof = Array.isArray(snap.profiles) ? snap.profiles : []
+      const com = Array.isArray(snap.commitments) ? snap.commitments : []
+      if (!Array.isArray(participants) || !participants.length) return { profiles: prof, commitments: com }
+      const allow = new Set(participants.map(p => normalizeActorName(p).toLowerCase()).filter(Boolean))
+      return {
+        profiles: prof.filter(p => allow.has(normalizeActorName(p?.player || p?.name || '').toLowerCase())),
+        commitments: com.filter(c => allow.has(normalizeActorName(c?.player || c?.name || '').toLowerCase()))
+      }
+    } catch {
+      return { profiles: [], commitments: [] }
+    }
+  }
+
+  function sanitizePeoplePatch (patch) {
+    const out = { profiles: [], commitments: [] }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return out
+    const profiles = Array.isArray(patch.profiles) ? patch.profiles : []
+    const commitments = Array.isArray(patch.commitments) ? patch.commitments : []
+
+    const seenProfiles = new Set()
+    for (const raw of profiles) {
+      if (!raw || typeof raw !== 'object') continue
+      const player = normalizeActorName(raw.player || raw.name || '')
+      const profile = normalizeMemoryText(raw.profile ?? raw.description ?? raw.text ?? '')
+      if (!player || !profile) continue
+      const key = player.toLowerCase()
+      if (seenProfiles.has(key)) continue
+      seenProfiles.add(key)
+      out.profiles.push({ player, profile: profile.slice(0, 240) })
+    }
+
+    const seenCommitments = new Set()
+    for (const raw of commitments) {
+      if (!raw || typeof raw !== 'object') continue
+      const player = normalizeActorName(raw.player || raw.name || '')
+      const action = normalizeMemoryText(raw.action ?? raw.text ?? '')
+      if (!player || !action) continue
+      const key = `${player.toLowerCase()}::${action.toLowerCase()}`
+      if (seenCommitments.has(key)) continue
+      seenCommitments.add(key)
+      const status = normalizeInspectorStatus(raw.status)
+      const deadlineMs = Number.isFinite(raw.deadlineMs)
+        ? raw.deadlineMs
+        : (Number.isFinite(raw.deadline) ? raw.deadline : (Number.isFinite(raw.deadline_ms) ? raw.deadline_ms : null))
+      out.commitments.push({
+        player,
+        action: action.slice(0, 180),
+        status,
+        ...(Number.isFinite(deadlineMs) ? { deadlineMs } : null)
+      })
+    }
+
+    return out
+  }
+
+  function extractPeoplePatchByRules (lines, owner) {
+    const out = { profiles: [], commitments: [] }
+    if (!Array.isArray(lines) || !lines.length) return out
+
+    const existingProfiles = new Map()
+    try {
+      const list = people?.listProfiles?.() || []
+      for (const p of list) {
+        const name = normalizeActorName(p?.name || p?.player || p?.key || '')
+        if (!name) continue
+        const profile = typeof p.profile === 'string' ? p.profile.trim() : ''
+        if (profile) existingProfiles.set(name.toLowerCase(), profile)
+      }
+    } catch {}
+
+    const updates = new Map()
+    const setProfile = (player, patchText) => {
+      const name = normalizeActorName(player)
+      if (!name) return
+      const key = name.toLowerCase()
+      const base = existingProfiles.get(key) || ''
+      const merged = base ? `${base}；${patchText}` : patchText
+      updates.set(key, { player: name, profile: merged })
+    }
+
+    for (const line of lines) {
+      const who = normalizeActorName(line?.user || '')
+      const text = normalizeMemoryText(line?.text || '')
+      if (!who || !text) continue
+      const isBot = BOT_USERNAME && who.toLowerCase() === BOT_USERNAME.toLowerCase()
+      if (!isBot) {
+        const mNick = text.match(/(?:^|[，。！？,.!?\s])(叫我|喊我|称呼我|以后叫我|请叫我)\s*([^\s，。！？,.!?]{1,20})/)
+        if (mNick && mNick[2]) {
+          setProfile(who, `称呼偏好：${mNick[2].trim()}`)
+        }
+        const mAvoid = text.match(/(?:^|[，。！？,.!?\s])(别叫我|不要叫我|别喊我)\s*([^\s，。！？,.!?]{1,20})/)
+        if (mAvoid && mAvoid[2]) {
+          setProfile(who, `禁忌称呼：${mAvoid[2].trim()}`)
+        }
+      } else {
+        const ownerName = normalizeActorName(owner || '')
+        if (!ownerName) continue
+        const m = text.match(/(?:记下了承诺|承诺)[:：]\s*(.+)$/)
+        if (m && m[1] && m[1].trim()) {
+          out.commitments.push({ player: ownerName, action: m[1].trim(), status: 'pending' })
+        }
+      }
+    }
+
+    if (updates.size) {
+      out.profiles = [...updates.values()]
+    }
+    return out
+  }
+
+  async function extractPeoplePatchByLLM (lines, participants, owner) {
+    if (!state.ai?.key) return null
+    if (!people || typeof people.applyPatch !== 'function') return null
+    if (!Array.isArray(lines) || !lines.length) return null
+
+    const snap = buildPeopleSnapshotForInspector(participants && participants.length ? participants : (owner ? [owner] : []))
+    const joined = lines.map(l => `${l.user}: ${l.text}`).join('\n')
+    const user = [
+      `玩家：${(participants && participants.length) ? participants.join('、') : (owner || '未知')}`,
+      `已知人物画像/承诺（供合并更新）：${JSON.stringify(snap)}`,
+      `聊天记录（旧→新）：\n${joined}`,
+      '请只输出严格 JSON：'
+    ].join('\n')
+
+    const messages = [
+      { role: 'system', content: PEOPLE_INSPECTOR_SYSTEM_PROMPT },
+      { role: 'user', content: user }
+    ]
+    const raw = await runSummaryModel(messages, 280, 0.1)
+    if (!raw) return null
+    const jsonText = extractJsonLoose(raw) || raw
+    try {
+      const parsed = JSON.parse(jsonText)
+      return sanitizePeoplePatch(parsed)
+    } catch {
+      return null
+    }
+  }
+
+  async function maybeWritePeopleMemoryFromConversation (lines, participants, owner, reason) {
+    if (!people || typeof people.applyPatch !== 'function') return false
+    let changed = false
+
+    try {
+      const rules = extractPeoplePatchByRules(lines, owner)
+      const hasRules = (rules.profiles && rules.profiles.length) || (rules.commitments && rules.commitments.length)
+      if (hasRules) {
+        const res = people.applyPatch({ ...rules, source: `rules:${reason || 'dialogue'}` })
+        if (res?.changed) changed = true
+      }
+    } catch (e) {
+      traceChat('[chat] people rules error', e?.message || e)
+    }
+
+    try {
+      const llm = await extractPeoplePatchByLLM(lines, participants, owner)
+      const hasLLM = llm && ((llm.profiles && llm.profiles.length) || (llm.commitments && llm.commitments.length))
+      if (hasLLM) {
+        const res = people.applyPatch({ ...llm, source: `llm:${reason || 'dialogue'}` })
+        if (res?.changed) changed = true
+      }
+    } catch (e) {
+      traceChat('[chat] people llm error', e?.message || e)
+    }
+
+    return changed
+  }
+
   async function processConversationSummary (job) {
     try {
       const lines = (state.aiRecent || []).filter(line => Number(line?.seq) > job.startSeq && Number(line?.seq) <= job.endSeq)
@@ -2014,9 +2213,11 @@ function createMemoryService ({
         endedAt: job.endedAt || now(),
         tier: 'raw'
       }
+      if (!Array.isArray(state.aiDialogues)) state.aiDialogues = []
       state.aiDialogues.push(record)
       trimConversationStore()
       persistMemoryState()
+      try { await maybeWritePeopleMemoryFromConversation(lines, record.participants, job.username, job.reason || 'summary') } catch {}
     } catch (e) {
       traceChat('[chat] process summary error', e?.message || e)
     }
@@ -2039,7 +2240,7 @@ function createMemoryService ({
         endedAt: entry.lastAt || now(),
         reason
       }
-      processConversationSummary(payload).catch(err => traceChat('[chat] summary error', err?.message || err))
+      return processConversationSummary(payload).catch(err => traceChat('[chat] summary error', err?.message || err))
     } catch (e) {
       traceChat('[chat] summary queue error', e?.message || e)
     }
