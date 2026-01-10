@@ -48,8 +48,9 @@
 3. `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
    - 开关：`state.ai.context.game.include=false`
    - 参数：`invTop/nearPlayerRange/nearPlayerMax/dropsRange/dropsMax`（hostileRange 固定 24）
-4. `identityCtx`（可无）：`bot_impl/minimal-self` 的 `buildIdentityContext()` 输出（模块缺失/返回空则不注入）
-5. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
+4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext()` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，会注入**全部**已录入画像的玩家）
+5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext()` 输出（`承诺（未完成）：...`，会注入全部 pending 承诺）
+6. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
    - Query：`executor.callAI()` 先用 `buildMemoryQuery({ username, message, recentChat, worldHint })` 构造会话语境查询，再传给 `buildContext({ query: memoryQuery, actor: username })`
@@ -66,19 +67,19 @@
    - Feedback：`refs` 由反馈链路使用，显式正/负反馈会影响 `count/effectiveness`，并更新 `lastPositiveFeedback` 参与 recency/decay
    - 格式：`长期记忆: 1. ... | 2. ...`
    - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
-6. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
+7. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
-7. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
+8. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
 
 ### 4.2 如何对齐“真实注入内容”
 
 - 离线查看（不依赖 bot 在线）：`npm run inspect:context -- --player <name> [--query <text>] [--memory-limit N]`
-  - 输出：`systemPrompt/metaCtx/identityCtx/memoryCtx/contextPrompt`（其中 `gameCtx` 需要 bot 在线才有）
+  - 输出：`systemPrompt/metaCtx/peopleProfilesCtx/peopleCommitmentsCtx/memoryCtx/contextPrompt`；`gameCtx` 需要 bot 在线（用 `.ai ctx` 或 trace log）
   - 对比：加 `--compare` 会同一 query 跑 `keyword/v2/hybrid`（JSON 输出含 `compare.memory` + `compare.diff`）
   - Debug：加 `--debug` 会输出检索 `tokens/scoredTop/thresholds` 以及 `trace`（token 估算）
-- 运行时查看（bot 在线）：`.ai ctx`（打印 `metaCtx/gameCtx/chatCtx`）
+- 运行时查看（bot 在线）：`.ai ctx [player] [query...]`（打印 `metaCtx/gameCtx/chatCtx`，并尽量对齐注入的 `people/memory`）
 
 ## 5. 对话记忆
 
@@ -92,7 +93,7 @@
 | 命令 | 说明 |
 |------|------|
 | `.ai on/off` | 启用/禁用 AI |
-| `.ai ctx` | 打印 `metaCtx/gameCtx/chatCtx(buildContextPrompt)`（便于对齐 prompt 片段） |
+| `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`metaCtx/gameCtx/chatCtx`；若可用还会打印 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
 | `.ai context show` | 打印 `state.ai.context` |
 | `.ai context recent N` | 设置注入 `xmlCtx` 的最大条数（下限被 clamp 到 ≥1） |
 | `.ai context window SEC` | 设置 `xmlCtx` 的窗口秒数（CLI 下限 10s） |

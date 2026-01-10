@@ -7,7 +7,7 @@
 ## 0. 现状摘要
 
 - M1-M4 模块在后台运行：监听 skill:start/end 与 external:begin/end，记录 world model/agency/identity/narrative，并持久化到 `state.minimalSelf`。
-- 与 ai-chat 的唯一实时接合：`ai-chat/executor.js` 每次 LLM 调用时追加 `ms.buildIdentityContext()` 文本；没有动作评分或闭环调节。
+- 与 ai-chat 的 prompt 注入已移除：不再在每次 LLM 调用时追加 `ms.buildIdentityContext()`（避免上下文膨胀与噪声）。
 - M5 驱动力链路被禁用：`drive.generateQuestion()` 返回空串，`minimal-self/index.js` 仅在 message 非空时 emit，导致 `ai-chat.js` 的 `minimal-self:drive` 监听永远不触发。
 - 旧的主动聊天脉冲（`ai-chat/pulse` 定时主动发言）已移除，新的驱动力又不产出消息 => 当前没有任何主动聊天/跟进。
 - REFS 反馈调节 `_applyFeedbackFromRefs()` 依赖 `toolUsed=drive:*`，但因为没有 drive 消息阈值/冷却不会被反馈更新。
@@ -407,21 +407,7 @@ state.minimalSelf = {
 
 ## 7. 集成点
 
-### 7.1 AI Prompt 注入
-
-位置: `bot_impl/ai-chat/executor.js:168-174`
-
-```javascript
-// M2: Identity context from minimal-self
-const identityCtx = (() => {
-  try {
-    const ms = require('../minimal-self').getInstance()
-    return ms?.buildIdentityContext?.() || ''
-  } catch { return '' }
-})()
-```
-
-### 7.2 技能执行监听
+### 7.1 技能执行监听
 
 位置: `bot_impl/index.js:294-299`
 

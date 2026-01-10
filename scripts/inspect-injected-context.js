@@ -84,16 +84,6 @@ function buildMetaContext ({ projectRoot, now }) {
   }
 }
 
-function buildIdentityContext ({ projectRoot, state, bot }) {
-  try {
-    const minimalSelf = require(path.join(projectRoot, 'bot_impl', 'minimal-self'))
-    const ms = new minimalSelf.MinimalSelf(bot, state)
-    return ms.buildIdentityContext() || ''
-  } catch {
-    return ''
-  }
-}
-
 function usage () {
   return [
     'Usage:',
@@ -102,7 +92,6 @@ function usage () {
     'Prints the exact snippets injected into LLM context for that player:',
     '- system prompt (ai-system.txt)',
     '- meta time context (buildMetaContext)',
-    '- minimal-self identity context (best-effort offline)',
     '- long-term memory system message (memory.longTerm.buildContext)',
     '- chat context system message (context bus XML + dialogue memory)',
     '',
@@ -301,7 +290,6 @@ async function main () {
 
   const systemPrompt = buildSystemPrompt({ projectRoot, botName: bot.username })
   const metaCtx = buildMetaContext({ projectRoot, now })
-  const identityCtx = buildIdentityContext({ projectRoot, state, bot })
   const peopleProfilesCtx = (() => {
     try { return people.buildAllProfilesContext() || '' } catch { return '' }
   })()
@@ -312,7 +300,6 @@ async function main () {
   const messages = [
     systemPrompt ? { role: 'system', name: 'systemPrompt', content: systemPrompt } : null,
     metaCtx ? { role: 'system', name: 'metaCtx', content: metaCtx } : null,
-    identityCtx ? { role: 'system', name: 'identityCtx', content: identityCtx } : null,
     peopleProfilesCtx ? { role: 'system', name: 'peopleProfilesCtx', content: peopleProfilesCtx } : null,
     peopleCommitmentsCtx ? { role: 'system', name: 'peopleCommitmentsCtx', content: peopleCommitmentsCtx } : null,
     memoryCtx ? { role: 'system', name: 'memoryCtx', content: memoryCtx } : null,
@@ -396,9 +383,6 @@ async function main () {
     '',
     '--- injected: metaCtx (system) ---',
     metaCtx || '(empty)',
-    '',
-    '--- injected: identityCtx (system) ---',
-    identityCtx || '(empty)',
     '',
     '--- injected: peopleProfilesCtx (system) ---',
     peopleProfilesCtx || '(empty)',
