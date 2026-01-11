@@ -127,8 +127,33 @@ module.exports = function registerMovement (ctx) {
     const { name, range = 3 } = args
     if (!name) return fail('缺少玩家名')
     const wanted = String(name).trim()
-    const ent = resolvePlayerEntityExact(bot, wanted)
-    if (!ent) return fail('未找到玩家')
+    const safeName = (() => {
+      const trimmed = wanted.trim()
+      if (!trimmed) return ''
+      const m = trimmed.match(/^[A-Za-z0-9_\\.]{1,32}$/)
+      return m ? m[0] : ''
+    })()
+    if (!safeName) return fail('玩家名不合法')
+    const ent = resolvePlayerEntityExact(bot, safeName)
+    if (!ent) {
+      const cmd = `/tpa ${safeName}`
+      const now = Date.now()
+      const lastAt = Number(bot?.state?.followPlayerTpaLastAt) || 0
+      const lastName = String(bot?.state?.followPlayerTpaLastName || '')
+      if (!bot.state || typeof bot.state !== 'object') bot.state = {}
+      if (safeName !== lastName || now - lastAt >= 6000) {
+        bot.state.followPlayerTpaLastAt = now
+        bot.state.followPlayerTpaLastName = safeName
+        try { bot.chat(cmd) } catch {}
+        try {
+          if (Array.isArray(bot.state.aiRecent)) {
+            bot.state.aiRecent.push({ kind: 'bot', content: cmd, t: now })
+            if (bot.state.aiRecent.length > 200) bot.state.aiRecent.splice(0, bot.state.aiRecent.length - 200)
+          }
+        } catch {}
+      }
+      return ok('')
+    }
     if (isSelfEntity(bot, ent)) return fail('不能和自己交互')
     const pkg = getPathfinder()
     if (!pkg) return fail('无寻路')
@@ -144,7 +169,7 @@ module.exports = function registerMovement (ctx) {
     try { m.scaffoldingBlocks = [] } catch {}
     bot.pathfinder.setMovements(m)
     bot.pathfinder.setGoal(new goals.GoalFollow(ent, range), true)
-    return ok(`跟随 ${wanted}`)
+    return ok('')
   }
 
   async function stop () {

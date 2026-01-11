@@ -5,7 +5,7 @@ const { buildMemoryQuery } = require('./memory-query')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
-  'goto', 'goto_block', 'follow_player', 'hunt_player', 'defend_area', 'defend_player',
+  'goto', 'goto_block', 'hunt_player', 'defend_area', 'defend_player',
   'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest',
   'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'autofish', 'mine_ore',
   'range_attack', 'attack_armor_stand', 'skill_start', 'sort_chests', 'deposit', 'deposit_all', 'withdraw',
@@ -790,7 +790,8 @@ function createChatExecutor ({
       const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
       const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
       const finalText = H.trimReply(baseMsg || fallback, maxReplyLen || 120)
-      if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
+      const suppressSuccessReply = (toolLower === 'follow_player' && res && res.ok === true)
+      if (!suppressSuccessReply && finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     }
     runTool().catch((err) => { log?.warn && log.warn('tool async failure', err?.message || err) })
     return ''
