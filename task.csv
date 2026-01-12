@@ -1,0 +1,4 @@
+id,task,status,notes,files,verify,commit
+001,Add caching-economics doc to docs,DONE,"Move downloaded article to docs; keep /plan untracked/ignored.",docs/上下文缓存经济学.md,"git status --short; test -f docs/上下文缓存经济学.md",589a6da
+002,Link caching doc from docs/ai-chat.md,DONE,"Add a small “相关阅读” link so prompt-assembly docs surface caching behavior.",docs/ai-chat.md,"rg \"上下文缓存经济学\" docs/ai-chat.md",d712f0a
+003,Track tasks and record commit hashes,DONE,"Commit task.csv after tasks 001/002 so it can record their hashes (row 003 commit is this file’s commit).",task.csv,"codex review --uncommitted; git status --short",
