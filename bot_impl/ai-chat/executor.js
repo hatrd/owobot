@@ -2,6 +2,7 @@ const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const timeUtils = require('../time-utils')
 const feedbackPool = require('./feedback-pool')
 const { buildMemoryQuery } = require('./memory-query')
+const cacheStats = require('./cache-stats')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -481,7 +482,9 @@ function createChatExecutor ({
       recentChat: collectRecentChatForMemoryQuery(username, 8),
       worldHint: null
     })
+    const cacheBefore = cacheStats.snapshotEmbeddingStore(state)
     const memoryCtxResult = await memory.longTerm.buildContext({ query: memoryQuery, actor: username, withRefs: true })
+    cacheStats.logEmbeddingStoreHitRate({ log, state, before: cacheBefore, username, phase: 'memory' })
     const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     const peopleProfilesCtx = (() => {

@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const H = require('../ai-chat-helpers')
+const cacheStats = require('./cache-stats')
 
 const CJK_RUN_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]{2,}/g
 const ASCII_WORD_RE = /[a-z0-9_]{2,}/g
@@ -193,12 +194,24 @@ function createMemoryEmbeddings ({ state, defaults, log }) {
   }
 
   function getStoredVector (id, updatedAt) {
+    const stats = cacheStats.ensureEmbeddingStoreStats(state)
     const store = getStore()
     const rec = store?.vectors?.[id]
-    if (!rec || typeof rec !== 'object') return null
-    if (Number.isFinite(updatedAt) && Number(rec.updatedAt) !== Number(updatedAt)) return null
+    if (stats) stats.lookups += 1
+    if (!rec || typeof rec !== 'object') {
+      if (stats) stats.misses += 1
+      return null
+    }
+    if (Number.isFinite(updatedAt) && Number(rec.updatedAt) !== Number(updatedAt)) {
+      if (stats) stats.misses += 1
+      return null
+    }
     const v = rec.v
-    if (!Array.isArray(v) || !v.length) return null
+    if (!Array.isArray(v) || !v.length) {
+      if (stats) stats.misses += 1
+      return null
+    }
+    if (stats) stats.hits += 1
     return new Float32Array(v.map(n => Number(n) || 0))
   }
 
@@ -285,4 +298,3 @@ module.exports = {
   embedOpenAICompatible,
   createMemoryEmbeddings
 }
-

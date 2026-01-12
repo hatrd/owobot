@@ -13,6 +13,7 @@ const { createFeedbackCollector } = require('./ai-chat/feedback-collector')
 const { createIntrospectionEngine } = require('./ai-chat/introspection')
 const { createPureSurprise } = require('./ai-chat/pure-surprise')
 const { createContextBus } = require('./ai-chat/context-bus')
+const cacheStats = require('./ai-chat/cache-stats')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
@@ -323,6 +324,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   // REFS: Introspection AI call wrapper (DeepSeek; respects budget)
   async function aiCall ({ systemPrompt, userPrompt, maxTokens, temperature }) {
+    const cacheBefore = cacheStats.snapshotEmbeddingStore(state)
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) throw new Error('AI key not configured')
     const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
@@ -376,6 +378,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       return String(reply).trim()
     } finally {
       clearTimeout(timeout)
+      cacheStats.logEmbeddingStoreHitRate({ log, state, before: cacheBefore, phase: 'introspection' })
     }
   }
 

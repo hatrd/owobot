@@ -1,4 +1,5 @@
 const DAY_WINDOW_SHIFT_HOURS = 4
+const { ensureEmbeddingStoreStats } = require('./cache-stats')
 
 function startOfHour (ts) {
   const d = new Date(ts)
@@ -163,6 +164,7 @@ function prepareAiState (state, opts = {}) {
   if (!Array.isArray(state.worldMemoryZones)) state.worldMemoryZones = []
   if (typeof updateWorldMemoryZones === 'function') updateWorldMemoryZones()
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
+  ensureEmbeddingStoreStats(state)
   state.aiSpend = state.aiSpend || {
     day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 },
     month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 },
