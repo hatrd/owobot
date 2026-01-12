@@ -34,7 +34,7 @@ test('movement.follow_player falls back to /tpa when player entity not found', a
   assert.equal(res1.msg, '')
   assert.equal(bot._lastChat, '/tpa owkowk')
   assert.equal(chatCalls, 1)
-  assert.equal(bot.state.aiRecent.at(-1)?.content, '/tpa owkowk')
+  assert.equal(bot.state.aiRecent.at(-1)?.text, '/tpa owkowk')
 
   const res2 = await registry.get('follow_player')({ name: 'owkowk' })
   assert.equal(res2.ok, true)

@@ -3,6 +3,9 @@
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
 
+  let pushRecentChatEntry
+  try { ({ pushRecentChatEntry } = require('./ai-chat/recent')) } catch {}
+
   const S = state.tpaHere = state.tpaHere || {}
   const cfg = S.cfg = Object.assign({ enabled: true, cooldownMs: 6000, acceptEnabled: true, acceptCooldownMs: 1500 }, S.cfg || {})
 
@@ -44,9 +47,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try { bot.chat(cmd) } catch {}
       recordTeleportAchievement('tpa', username)
       try {
-        if (Array.isArray(state.aiRecent)) {
-          state.aiRecent.push({ kind: 'bot', content: cmd, t: now() })
-        }
+        pushRecentChatEntry?.(state, bot?.username || 'bot', cmd, 'bot', {}, { now, requireExisting: true })
       } catch {}
     } catch {}
   }
@@ -74,9 +75,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         try { bot.chat('/tpaccept') } catch {}
         dlog && dlog('[tpa] auto /tpaccept')
         try {
-          if (Array.isArray(state.aiRecent)) {
-            state.aiRecent.push({ kind: 'bot', content: '/tpaccept', t: now() })
-          }
+          pushRecentChatEntry?.(state, bot?.username || 'bot', '/tpaccept', 'bot', {}, { now, requireExisting: true })
         } catch {}
         recordTeleportAchievement('tpaccept', lastReqUser || null)
       }

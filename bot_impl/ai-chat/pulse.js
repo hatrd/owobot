@@ -2,6 +2,7 @@ const ACTIVE_CHAT_WINDOW_MS = 60 * 1000
 const PLAYER_CHAT_DEDUPE_MS = 1200
 const CHAT_EVENT_DEDUPE_MS = 250
 const DEATHCHEST_DEDUPE_MS = 8000
+const recent = require('./recent')
 
 function createPulseService ({
   state,
@@ -326,32 +327,7 @@ function createPulseService ({
   }
 
   function pushRecentChatEntry (username, text, kind = 'player', meta = {}) {
-    const trimmed = String(text || '').trim()
-    if (!trimmed) return null
-    if (!Array.isArray(state.aiRecent)) state.aiRecent = []
-    if (!Number.isFinite(state.aiRecentSeq)) state.aiRecentSeq = 0
-    state.aiRecentSeq += 1
-    const entry = { t: now(), user: username || '??', text: trimmed.slice(0, 160), kind, seq: state.aiRecentSeq }
-    state.aiRecent.push(entry)
-    rotateRecentIfNeeded(entry)
-    if (contextBus) {
-      if (kind === 'player') contextBus.pushPlayer(username, trimmed)
-      else if (kind === 'bot') {
-        const from = String(meta?.from || '').trim()
-        if (from && typeof contextBus.pushBotFrom === 'function') contextBus.pushBotFrom(trimmed, from)
-        else contextBus.pushBot(trimmed)
-      }
-    }
-    return entry
-  }
-
-  function rotateRecentIfNeeded (lastEntry) {
-    const cs = state.ai.context || {}
-    const recentMax = Math.max(20, cs.recentStoreMax || 200)
-    if (!Array.isArray(state.aiRecent) || state.aiRecent.length <= recentMax) return
-    const active = state.aiPulse?.activeUsers
-    if (active instanceof Map && active.size > 0) return
-    state.aiRecent = lastEntry ? [lastEntry] : []
+    return recent.pushRecentChatEntry(state, username, text, kind, meta, { now, contextBus })
   }
 
   function recordBotChat (text, meta = {}) {

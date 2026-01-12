@@ -1,6 +1,8 @@
 module.exports = function registerMovement (ctx) {
   const { bot, register, ok, fail, ensurePathfinder, wait, shared, pvp, Vec3 } = ctx
   const { isSelfEntity, resolvePlayerEntityExact } = require('../lib/self')
+  let pushRecentChatEntry
+  try { ({ pushRecentChatEntry } = require('../../ai-chat/recent')) } catch {}
 
   function getPathfinder () {
     if (!ensurePathfinder()) return null
@@ -146,9 +148,7 @@ module.exports = function registerMovement (ctx) {
         bot.state.followPlayerTpaLastName = safeName
         try { bot.chat(cmd) } catch {}
         try {
-          if (Array.isArray(bot.state.aiRecent)) {
-            bot.state.aiRecent.push({ kind: 'bot', content: cmd, t: now })
-          }
+          pushRecentChatEntry?.(bot.state, bot?.username || 'bot', cmd, 'bot', {}, { now: () => now, requireExisting: true })
         } catch {}
       }
       return ok('')
