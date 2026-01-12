@@ -3,6 +3,7 @@ const { Vec3 } = require('vec3')
 const pvp = require('../pvp')
 const observer = require('../agent/observer')
 const skillRunnerMod = require('../agent/runner')
+const { ensurePathfinder: ensurePathfinderForBot } = require('../lib/pathfinder')
 
 const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'use_item', 'toss', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'range_attack', 'attack_armor_stand', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests', 'query_player_stats', 'query_leaderboard', 'announce_daily_star']
 
@@ -52,14 +53,10 @@ function createContext (bot, { log, on, registerCleanup } = {}) {
       registry.set(name, fn)
     },
     ensurePathfinder () {
-      try {
-        if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
-        if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder)
-        return true
-      } catch (err) {
-        if (log?.warn) log.warn('pathfinder missing', err?.message || err)
-        return false
-      }
+      const pkg = ensurePathfinderForBot(bot)
+      if (!pkg) { if (log?.warn) log.warn('pathfinder missing') ; return false }
+      pathfinderPkg = pkg
+      return true
     },
     get pathfinder () {
       return pathfinderPkg

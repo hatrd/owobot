@@ -1,6 +1,9 @@
 // Auto-fishing: if inventory has a fishing rod and nearby water is present,
 // move to a valid shore and fish in a loop. Respects externalBusy to yield to higher-priority actions.
 
+const { ensureMcData: ensureMcDataForBot } = require('./lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('./lib/pathfinder')
+
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[FISH]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[FISH]', ...a) }
   const { Vec3 } = require('vec3')
@@ -101,9 +104,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function ensurePathfinder () {
     try {
-      const pf = require('mineflayer-pathfinder')
-      if (!bot.pathfinder) bot.loadPlugin(pf.pathfinder)
-      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const pf = ensurePathfinderForBot(bot)
+      if (!pf) { L.warn('pathfinder missing') ; return null }
+      const mcData = ensureMcDataForBot(bot)
+      if (!mcData) { L.warn('mcData missing') ; return null }
       const m = new pf.Movements(bot, mcData)
       m.canDig = false; m.allowSprinting = true; m.allowParkour = false; m.allow1by1towers = false
       bot.pathfinder.setMovements(m)

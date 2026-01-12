@@ -1,5 +1,8 @@
 // Minimal follow: if a player holds an iron nugget, follow the nearest holder.
 
+const { ensureMcData: ensureMcDataForBot } = require('./lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('./lib/pathfinder')
+
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[FOLLOW]', ...a), debug: (...a) => (dlog ? dlog(...a) : console.log('[FOLLOW]', ...a)) }
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
@@ -14,18 +17,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const cfg = S.cfg = Object.assign({ debug: false, canDig: false, doorAssist: true, parkour: false, towers: false, heartbeatMs: 2000 }, S.cfg || {})
 
   function ensurePathfinderLoaded () {
-    try {
-      if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
-      if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder)
-      return true
-    } catch (e) {
+    const pkg = ensurePathfinderForBot(bot)
+    if (!pkg) {
       console.warn('follow: install mineflayer-pathfinder to enable following')
       return false
     }
+    pathfinderPkg = pkg
+    return true
   }
 
   function ensureMcData () {
-    try { mcData = bot.mcData || require('minecraft-data')(bot.version); bot.mcData = mcData } catch {}
+    mcData = ensureMcDataForBot(bot)
   }
 
   // --- Door helpers (open wooden doors/fence gates opportunistically) ---
@@ -38,7 +40,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function walkToPos (pos, range = 1, timeoutMs = 5000) {
     try {
-      if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
+      if (!ensurePathfinderLoaded()) return false
       const { goals } = pathfinderPkg
       bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(0, range)), true)
       const until = Date.now() + Math.max(1000, timeoutMs)

@@ -1,5 +1,7 @@
 // Auto-plant saplings periodically when inventory has any *_sapling
 const { Vec3 } = require('vec3')
+const { ensureMcData: ensureMcDataForBot } = require('./lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('./lib/pathfinder')
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
@@ -127,16 +129,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let pathfinderPkg = null
 
   function ensurePathfinder () {
-    try {
-      if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
-      if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder)
-      return true
-    } catch { return false }
+    const pkg = ensurePathfinderForBot(bot)
+    if (!pkg) return false
+    pathfinderPkg = pkg
+    return true
   }
 
   function getMcData () {
-    if (bot.mcData) return bot.mcData
-    try { return require('minecraft-data')(bot.version) } catch { return null }
+    return ensureMcDataForBot(bot)
   }
 
   function isSolidSupport (block) {

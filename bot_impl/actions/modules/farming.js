@@ -1,4 +1,5 @@
 const inventory = require('../lib/inventory')
+const { ensureMcData } = require('../../lib/mcdata')
 
 module.exports = function registerFarming (ctx) {
   const { bot, register, ok, fail, wait, assertCanEquipHand } = ctx
@@ -27,7 +28,7 @@ module.exports = function registerFarming (ctx) {
     const pkg = ensurePathfinder()
     if (!pkg) return fail('无寻路')
     const { Movements, goals } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.allowSprinting = true; m.canDig = false
     bot.pathfinder.setMovements(m)
@@ -120,7 +121,7 @@ module.exports = function registerFarming (ctx) {
     const pkg = ensurePathfinder()
     if (!pkg) return fail('无寻路')
     const { Movements, goals } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true)
     m.allowSprinting = true

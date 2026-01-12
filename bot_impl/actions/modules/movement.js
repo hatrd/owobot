@@ -1,3 +1,5 @@
+const { ensureMcData } = require('../../lib/mcdata')
+
 module.exports = function registerMovement (ctx) {
   const { bot, register, ok, fail, ensurePathfinder, wait, shared, pvp, Vec3 } = ctx
   const { isSelfEntity, resolvePlayerEntityExact } = require('../lib/self')
@@ -15,7 +17,7 @@ module.exports = function registerMovement (ctx) {
     const pkg = getPathfinder()
     if (!pkg) return fail('无寻路')
     const { Movements, goals } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true)
     m.allowSprinting = true
@@ -53,7 +55,7 @@ module.exports = function registerMovement (ctx) {
     const pkg = getPathfinder()
     if (!pkg) return fail('无寻路')
     const { Movements, goals } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true)
     m.allowSprinting = true
@@ -157,7 +159,7 @@ module.exports = function registerMovement (ctx) {
     const pkg = getPathfinder()
     if (!pkg) return fail('无寻路')
     const { Movements, goals } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true)
     m.allowSprinting = true

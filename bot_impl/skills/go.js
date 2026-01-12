@@ -1,11 +1,15 @@
 // High-level go skill: navigate to coords or follow a player until within radius
 
+const { ensureMcData: ensureMcDataForBot } = require('../lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('../lib/pathfinder')
+
 function ensurePathfinder (bot, log) {
   try {
-    const pkg = require('mineflayer-pathfinder')
-    if (!bot.pathfinder) bot.loadPlugin(pkg.pathfinder)
+    const pkg = ensurePathfinderForBot(bot)
+    if (!pkg) { log && log.warn && log.warn('pathfinder missing'); return { ok: false } }
     const { Movements } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcDataForBot(bot)
+    if (!mcData) return { ok: false }
     const m = new Movements(bot, mcData)
     m.canDig = false; m.allowSprinting = true
     return { ok: true, pkg, m }

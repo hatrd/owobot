@@ -1,6 +1,8 @@
 // Auto-eat: keep hunger up by consuming edible items in inventory.
 // No external deps; uses minecraft-data to detect foods.
 
+const { ensureMcData: ensureMcDataForBot } = require('./lib/mcdata')
+
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
   let timer = null
@@ -20,9 +22,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let pauseUntil = 0
 
   function ensureMcData () {
-    if (!mcData) {
-      try { mcData = bot.mcData || require('minecraft-data')(bot.version); bot.mcData = mcData } catch {}
-    }
+    if (!mcData) mcData = ensureMcDataForBot(bot)
     return mcData
   }
 

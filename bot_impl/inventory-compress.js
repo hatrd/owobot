@@ -2,12 +2,12 @@
 // - Respects externalBusy and currentWindow
 // - Uses nearby crafting table for 3x3 recipes; 2x2/1x1 works without table
 
+const { ensureMcData } = require('./lib/mcdata')
+
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log
   let iv = null
   let pausedUntil = 0
-
-  function ensureMcData () { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
 
   function emptySlotsCount () {
     try { const s = bot.inventory?.slots || []; let c = 0; for (let i = 9; i < s.length; i++) if (!s[i]) c++; return c } catch { return 0 }
@@ -29,7 +29,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   async function craftMany (outName, tableBlock, amount) {
-    const mcData = ensureMcData()
+    const mcData = ensureMcData(bot)
     const def = mcData?.itemsByName?.[outName]
     if (!def) return false
     const recipes = bot.recipesFor(def.id, null, 1, tableBlock) || []
@@ -66,7 +66,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const free = emptySlotsCount()
     if (free >= 6) return // only when space is a little tight
 
-    const mcData = ensureMcData()
+    const mcData = ensureMcData(bot)
     const table = findCraftingTableNearby(6)
     for (const rule of COMPRESS) {
       // Skip 3x3 rules if no table

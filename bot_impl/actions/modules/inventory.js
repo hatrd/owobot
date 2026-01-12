@@ -1,3 +1,5 @@
+const { ensureMcData } = require('../../lib/mcdata')
+
 module.exports = function registerInventory (ctx) {
   const { bot, register, ok, fail, assertCanEquipHand, isMainHandLocked } = ctx
 
@@ -154,18 +156,9 @@ module.exports = function registerInventory (ctx) {
     } catch { return 0 }
   }
 
-  function ensureMcData () {
-    try {
-      if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version)
-      return bot.mcData
-    } catch {
-      return null
-    }
-  }
-
   function isEdible (item) {
     try {
-      const mc = ensureMcData()
+      const mc = ensureMcData(bot)
       if (!mc || !item) return false
       const def = mc.items[item.type] || mc.itemsByName?.[item.name]
       const food = mc.foods?.[item.type] || mc.foodsByName?.[def?.name]

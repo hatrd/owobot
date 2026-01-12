@@ -1,5 +1,7 @@
 // Auto-swim: if the bot is in water, hold jump to float/swim up
 
+const { ensurePathfinder: ensurePathfinderForBot } = require('./lib/pathfinder')
+
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[SWIM]', ...a), debug: (...a) => dlog && dlog(...a) }
 
@@ -55,11 +57,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let lateralGoalUntil = 0
 
   function ensurePathfinder () {
-    try {
-      const pf = require('mineflayer-pathfinder')
-      if (!bot.pathfinder) bot.loadPlugin(pf.pathfinder)
-      return pf
-    } catch { return null }
+    return ensurePathfinderForBot(bot)
   }
 
   function isAir (b) { try { return !b || String(b.name || '').toLowerCase() === 'air' } catch { return false } }

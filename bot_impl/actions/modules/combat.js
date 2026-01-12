@@ -2,6 +2,7 @@ const { oreLabelFromOnly } = require('../lib/ore')
 const { countItemByName, ensureItemEquipped, itemsMatchingName } = require('../lib/inventory')
 const { isSelfEntity, resolvePlayerEntityExact } = require('../lib/self')
 const logging = require('../../logging')
+const { ensureMcData } = require('../../lib/mcdata')
 
 module.exports = function registerCombat (ctx) {
   const { bot, register, ok, fail, wait, shared, assertCanEquipHand, isMainHandLocked, Vec3, on } = ctx
@@ -54,7 +55,7 @@ module.exports = function registerCombat (ctx) {
     if (!name) return fail('缺少玩家名')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.allowSprinting = true; m.canDig = (args.dig === true)
     bot.pathfinder.setMovements(m)
@@ -141,7 +142,7 @@ module.exports = function registerCombat (ctx) {
     const collect = (String(args.collect ?? 'true').toLowerCase() !== 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     const wantsLogs = (() => {
       try {
@@ -642,7 +643,7 @@ module.exports = function registerCombat (ctx) {
         const dist = here.distanceTo(origin)
         if (dist > 1.8) {
           const { Movements, goals } = pathfinderPkg
-          const mcData2 = bot.mcData || require('minecraft-data')(bot.version)
+          const mcData2 = ensureMcData(bot)
           const m2 = new Movements(bot, mcData2)
           m2.canDig = true
           m2.allowSprinting = true
@@ -751,7 +752,7 @@ module.exports = function registerCombat (ctx) {
     }
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
@@ -819,7 +820,7 @@ module.exports = function registerCombat (ctx) {
     const durationMs = args.durationMs != null ? Math.max(500, parseInt(args.durationMs, 10)) : null
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.allowSprinting = true
     m.canDig = false
@@ -1077,7 +1078,7 @@ module.exports = function registerCombat (ctx) {
         return false
       }
       const { Movements, goals } = pathfinderPkg
-      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const mcData = ensureMcData(bot)
       const m = new Movements(bot, mcData)
       m.allowSprinting = true
       m.canDig = (args.dig === true)
@@ -1210,7 +1211,7 @@ module.exports = function registerCombat (ctx) {
     const initialMounted = !!bot.vehicle
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
@@ -1316,7 +1317,7 @@ module.exports = function registerCombat (ctx) {
   async function flee_trap (args = {}) {
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
@@ -1457,7 +1458,7 @@ module.exports = function registerCombat (ctx) {
     const { radius = 8, followRange = 3, tickMs = 250 } = args
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.allowSprinting = true
     m.canDig = (args.dig === true) // 默认不挖掘，防止破坏脚手架/刷怪塔结构
@@ -1669,7 +1670,7 @@ module.exports = function registerCombat (ctx) {
     if (!name) return fail('缺少玩家名')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.allowSprinting = true
     m.canDig = (args.dig === true)
@@ -1842,7 +1843,7 @@ module.exports = function registerCombat (ctx) {
     if (what !== 'drops' && what !== 'items') return fail('未知collect类型')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
@@ -2180,7 +2181,7 @@ module.exports = function registerCombat (ctx) {
     if (!origin) return fail('未就绪')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
@@ -2430,7 +2431,7 @@ module.exports = function registerCombat (ctx) {
       try { bot.on('agent:stop_all', stopHandler) } catch {}
 
       const { Movements, goals } = pathfinderPkg
-      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const mcData = ensureMcData(bot)
       const moveProfile = new Movements(bot, mcData)
       moveProfile.canDig = false
       moveProfile.allowSprinting = true
@@ -2767,7 +2768,7 @@ module.exports = function registerCombat (ctx) {
     const containerType = normalizeContainerType(args.containerType ?? args.container)
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
@@ -2918,7 +2919,7 @@ module.exports = function registerCombat (ctx) {
     const multi = (String(args.multi || args.searchAll || 'true').toLowerCase() !== 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcData(bot)
     const m = new Movements(bot, mcData)
     m.canDig = false; m.allowSprinting = true
     bot.pathfinder.setMovements(m)

@@ -1,6 +1,9 @@
 // Skill: mine_ore — scan for nearby ore veins and mine them.
 // Intent-level: mines ores within a radius, performing simple vein-mining.
 
+const { ensureMcData: ensureMcDataForBot } = require('../lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('../lib/pathfinder')
+
 module.exports = function mineOreFactory ({ bot, args, log }) {
   const L = log
   const baseRadius = Math.max(4, parseInt(args.radius || '32', 10))
@@ -115,9 +118,12 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
     }
   }
 
-  function ensureMcData () { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
+  function ensureMcData () { return ensureMcDataForBot(bot) }
   function ensurePathfinder () {
-    try { if (!pathfinder) pathfinder = require('mineflayer-pathfinder'); if (!bot.pathfinder) bot.loadPlugin(pathfinder.pathfinder); return true } catch { return false }
+    const pkg = ensurePathfinderForBot(bot)
+    if (!pkg) return false
+    pathfinder = pkg
+    return true
   }
   function ensureToolSel () { if (!toolSel) toolSel = require('../tool-select'); return toolSel }
   function ensureActions () { if (!actions) { try { actions = require('../actions').install(bot, { log }) } catch {} } return actions }

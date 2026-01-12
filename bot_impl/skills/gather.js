@@ -1,13 +1,17 @@
 // High-level gather skill: obtain target item with qty
 
+const { ensureMcData: ensureMcDataForBot } = require('../lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('../lib/pathfinder')
+
 function invCount (bot, name) { try { const n = String(name||'').toLowerCase(); return (bot.inventory?.items()||[]).filter(it=>String(it.name||'').toLowerCase()===n).reduce((a,b)=>a+(b.count||0),0) } catch { return 0 } }
 
 function ensurePathfinder (bot, log) {
   try {
-    const pkg = require('mineflayer-pathfinder')
-    if (!bot.pathfinder) bot.loadPlugin(pkg.pathfinder)
+    const pkg = ensurePathfinderForBot(bot)
+    if (!pkg) { log && log.warn && log.warn('pathfinder missing'); return { ok: false } }
     const { Movements } = pkg
-    const mcData = bot.mcData || require('minecraft-data')(bot.version)
+    const mcData = ensureMcDataForBot(bot)
+    if (!mcData) return { ok: false }
     const m = new Movements(bot, mcData)
     m.canDig = true; m.allowSprinting = true
     return { ok: true, pkg, m }

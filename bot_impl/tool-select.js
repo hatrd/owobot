@@ -1,6 +1,8 @@
 // Choose and equip the best tool for a given block
 
-function getMcData (bot) { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
+const { ensureMcData } = require('./lib/mcdata')
+
+function getMcData (bot) { return ensureMcData(bot) }
 
 const { assertCanEquipHand, isMainHandLocked } = require('./hand-lock')
 

@@ -1,6 +1,6 @@
 // High-level craft skill: craft item with qty, minimal 2x2 recipes support
 
-function ensureMcData (bot) { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
+const { ensureMcData } = require('../lib/mcdata')
 
 module.exports = function craftFactory ({ bot, args, log }) {
   const item = String(args.item || '').toLowerCase()
@@ -42,4 +42,3 @@ module.exports = function craftFactory ({ bot, args, log }) {
 
   return { start, tick, cancel }
 }
-

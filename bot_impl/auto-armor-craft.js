@@ -4,6 +4,9 @@
 // - A crafting_table exists nearby (within radius)
 // - No higher-priority external action is running
 
+const { ensureMcData: ensureMcDataForBot } = require('./lib/mcdata')
+const { ensurePathfinder: ensurePathfinderForBot } = require('./lib/pathfinder')
+
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   if (log && typeof log.debug === 'function') dlog = (...a) => log.debug(...a)
   const L = log || { info: (...a) => console.log('[AUTOARMOR]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[AUTOARMOR]', ...a) }
@@ -58,9 +61,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function ensurePathfinder () {
     try {
-      const pf = require('mineflayer-pathfinder')
-      if (!bot.pathfinder) bot.loadPlugin(pf.pathfinder)
-      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const pf = ensurePathfinderForBot(bot)
+      if (!pf) { L.warn('pathfinder missing') ; return null }
+      const mcData = ensureMcDataForBot(bot)
+      if (!mcData) return null
       const m = new pf.Movements(bot, mcData)
       m.canDig = true; m.allowSprinting = true
       bot.pathfinder.setMovements(m)
@@ -87,7 +91,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function craftOne (itemName, tableBlock) {
     try {
-      const mcData = bot.mcData || require('minecraft-data')(bot.version)
+      const mcData = ensureMcDataForBot(bot)
       const item = mcData?.itemsByName?.[itemName]
       if (!item) return false
       const recs = bot.recipesFor(item.id, null, 1, tableBlock) || []
