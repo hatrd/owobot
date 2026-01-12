@@ -243,6 +243,32 @@ function createChatExecutor ({
     return raw.replace(/{{BOT_NAME}}/g, botName)
   }
 
+  function buildStablePrefixMessages () {
+    return [
+      { role: 'system', content: systemPrompt() }
+    ]
+  }
+
+  function buildDynamicTailMessages ({
+    metaCtx,
+    gameCtx,
+    peopleProfilesCtx,
+    peopleCommitmentsCtx,
+    memoryCtx,
+    contextPrompt,
+    inlinePrompt
+  }) {
+    return [
+      metaCtx ? { role: 'user', content: metaCtx } : null,
+      gameCtx ? { role: 'user', content: gameCtx } : null,
+      peopleProfilesCtx ? { role: 'user', content: peopleProfilesCtx } : null,
+      peopleCommitmentsCtx ? { role: 'user', content: peopleCommitmentsCtx } : null,
+      memoryCtx ? { role: 'user', content: memoryCtx } : null,
+      contextPrompt ? { role: 'user', content: contextPrompt } : null,
+      inlinePrompt ? { role: 'user', content: inlinePrompt } : null
+    ].filter(Boolean)
+  }
+
   function buildMetaContext () {
     try {
       if (!metaTimeFormatter) throw new Error('no formatter')
@@ -496,16 +522,17 @@ function createChatExecutor ({
     const metaCtx = buildMetaContext()
     const inlineUserContent = options?.inlineUserContent === true
     const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
-    const messages = [
-      { role: 'system', content: systemPrompt() },
-      metaCtx ? { role: 'system', content: metaCtx } : null,
-      gameCtx ? { role: 'system', content: gameCtx } : null,
-      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx } : null,
-      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx } : null,
-      memoryCtx ? { role: 'system', content: memoryCtx } : null,
-      { role: 'system', content: contextPrompt },
-      inlinePrompt ? { role: 'system', content: inlinePrompt } : null
-    ].filter(Boolean)
+    const stablePrefix = buildStablePrefixMessages()
+    const dynamicTail = buildDynamicTailMessages({
+      metaCtx,
+      gameCtx,
+      peopleProfilesCtx,
+      peopleCommitmentsCtx,
+      memoryCtx,
+      contextPrompt,
+      inlinePrompt
+    })
+    const messages = stablePrefix.concat(dynamicTail)
     if (state.ai.trace && log?.info) {
       try {
         log.info('gameCtx ->', gameCtx)
