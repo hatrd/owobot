@@ -269,6 +269,51 @@ function createChatExecutor ({
     ].filter(Boolean)
   }
 
+  function stablePrefixSignature ({ stablePrefixMessages, tools }) {
+    try {
+      const crypto = require('crypto')
+      const payload = JSON.stringify({
+        v: 1,
+        messages: stablePrefixMessages || [],
+        tools: tools || []
+      })
+      return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 16)
+    } catch {
+      return null
+    }
+  }
+
+  function extractCachedTokens (usage) {
+    if (!usage || typeof usage !== 'object') return null
+    const direct = usage.cached_tokens ?? usage.cachedTokens ?? usage.cache_tokens ?? usage.cacheTokens
+    if (Number.isFinite(direct)) return direct
+    const details = usage.prompt_tokens_details ?? usage.promptTokensDetails ?? usage.input_tokens_details ?? usage.inputTokensDetails
+    if (!details || typeof details !== 'object') return null
+    const nested = details.cached_tokens ?? details.cachedTokens ?? details.cache_read_tokens ?? details.cacheReadTokens
+    return Number.isFinite(nested) ? nested : null
+  }
+
+  function recordPromptCacheStats ({ username, model, prefixSig, promptTokens, cachedTokens, countCall = true }) {
+    if (!state || typeof state !== 'object') return
+    if (!state.aiCacheStats || typeof state.aiCacheStats !== 'object') state.aiCacheStats = {}
+    if (!state.aiCacheStats.promptCache || typeof state.aiCacheStats.promptCache !== 'object') {
+      state.aiCacheStats.promptCache = { calls: 0, promptTokens: 0, cachedTokens: 0, lastPrefixSig: null, last: null }
+    }
+    const pc = state.aiCacheStats.promptCache
+    if (countCall) pc.calls = Number.isFinite(pc.calls) ? pc.calls + 1 : 1
+    if (Number.isFinite(promptTokens)) pc.promptTokens = (Number.isFinite(pc.promptTokens) ? pc.promptTokens : 0) + promptTokens
+    if (Number.isFinite(cachedTokens)) pc.cachedTokens = (Number.isFinite(pc.cachedTokens) ? pc.cachedTokens : 0) + cachedTokens
+    if (prefixSig) pc.lastPrefixSig = prefixSig
+    pc.last = {
+      at: now(),
+      user: String(username || '').trim() || null,
+      model: String(model || '').trim() || null,
+      prefixSig: prefixSig || null,
+      promptTokens: Number.isFinite(promptTokens) ? promptTokens : null,
+      cachedTokens: Number.isFinite(cachedTokens) ? cachedTokens : null
+    }
+  }
+
   function buildMetaContext () {
     try {
       if (!metaTimeFormatter) throw new Error('no formatter')
@@ -533,6 +578,13 @@ function createChatExecutor ({
       inlinePrompt
     })
     const messages = stablePrefix.concat(dynamicTail)
+    const prefixSig = stablePrefixSignature({ stablePrefixMessages: stablePrefix, tools: TOOL_FUNCTIONS })
+    if (prefixSig) {
+      recordPromptCacheStats({ username, model: model || defaults.DEFAULT_MODEL, prefixSig, promptTokens: null, cachedTokens: null, countCall: false })
+      if (state.ai.trace && log?.info) {
+        try { log.info('[prompt-cache] stablePrefix.sig ->', prefixSig) } catch {}
+      }
+    }
     if (state.ai.trace && log?.info) {
       try {
         log.info('gameCtx ->', gameCtx)
@@ -580,10 +632,21 @@ function createChatExecutor ({
       const usage = data?.usage || {}
       const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
       const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : estTokensFromText(reply)
+      const cachedTok = extractCachedTokens(usage)
       applyUsage(inTok, outTok)
       if (state.ai.trace && log?.info) {
         const delta = (inTok / 1000) * (state.ai.priceInPerKT || 0) + (outTok / 1000) * (state.ai.priceOutPerKT || 0)
         log.info('usage inTok=', inTok, 'outTok=', outTok, 'cost+=', delta.toFixed(4))
+        if (Number.isFinite(cachedTok)) log.info('[prompt-cache] cachedTok=', cachedTok, 'inTok=', inTok, 'sig=', prefixSig || '(none)')
+      }
+      if (Number.isFinite(cachedTok) || prefixSig) {
+        recordPromptCacheStats({
+          username,
+          model: model || defaults.DEFAULT_MODEL,
+          prefixSig,
+          promptTokens: inTok,
+          cachedTokens: cachedTok
+        })
       }
       const toolCalls = extractToolCalls(choice)
       if (toolCalls.length) {

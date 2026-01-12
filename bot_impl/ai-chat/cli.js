@@ -43,6 +43,15 @@ function createAiCliHandler (options = {}) {
         }
         case 'ctx': {
           try {
+            const pc = state.aiCacheStats?.promptCache
+            if (pc && (pc.lastPrefixSig || Number.isFinite(pc.calls))) {
+              const calls = Number.isFinite(pc.calls) ? pc.calls : 0
+              const promptTokens = Number.isFinite(pc.promptTokens) ? pc.promptTokens : 0
+              const cachedTokens = Number.isFinite(pc.cachedTokens) ? pc.cachedTokens : 0
+              const rate = promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) + '%' : 'n/a'
+              if (pc.lastPrefixSig) print('stablePrefix.sig ->', pc.lastPrefixSig)
+              if (calls > 0) print('promptCache ->', `calls=${calls} cached=${cachedTokens}/${promptTokens} (${rate})`)
+            }
             if (typeof buildMetaContext === 'function') {
               print('metaCtx ->', buildMetaContext())
             }

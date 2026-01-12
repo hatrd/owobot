@@ -165,6 +165,12 @@ function prepareAiState (state, opts = {}) {
   if (typeof updateWorldMemoryZones === 'function') updateWorldMemoryZones()
   state.aiStats = state.aiStats || { perUser: new Map(), global: [] }
   ensureEmbeddingStoreStats(state)
+  if (!state.aiCacheStats.promptCache || typeof state.aiCacheStats.promptCache !== 'object') {
+    state.aiCacheStats.promptCache = { calls: 0, promptTokens: 0, cachedTokens: 0, lastPrefixSig: null, last: null }
+  }
+  if (!Number.isFinite(state.aiCacheStats.promptCache.calls)) state.aiCacheStats.promptCache.calls = 0
+  if (!Number.isFinite(state.aiCacheStats.promptCache.promptTokens)) state.aiCacheStats.promptCache.promptTokens = 0
+  if (!Number.isFinite(state.aiCacheStats.promptCache.cachedTokens)) state.aiCacheStats.promptCache.cachedTokens = 0
   state.aiSpend = state.aiSpend || {
     day: { start: dayStart(), inTok: 0, outTok: 0, cost: 0 },
     month: { start: monthStart(), inTok: 0, outTok: 0, cost: 0 },
