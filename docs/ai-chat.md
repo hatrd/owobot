@@ -2,7 +2,7 @@
 
 `bot_impl/ai-chat.js` 负责装配 AI 聊天模块；真正的「上下文注入/Prompt 拼装」主要发生在：
 
-- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（以 system 注入为主；玩家原始消息来自 `xmlCtx`，不再额外注入 `user`）
+- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（system 只放 stable prefix；动态上下文统一用 user message 后置；玩家原始消息来自 `xmlCtx`）
 - `bot_impl/ai-chat/context-bus.js`：把时序事件序列化成紧凑 XML（`<ctx>...</ctx>`）
 - `bot_impl/ai-chat/memory.js`：长期记忆检索（`长期记忆: ...`）+ 对话摘要（`对话记忆：...`）
 - `bot_impl/agent/observer.js`：游戏快照（`游戏: ...`）
@@ -43,10 +43,19 @@
 ### 4.1 真正注入到 LLM 的顺序（`executor.callAI()`）
 
 > 注意：这里说的是“LLM 看到的 messages[]”。工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接。
+>
+> 为了提高 prompt cache 命中率，`messages[]` 按 **stable prefix + dynamic tail** 组织：
+> - stable prefix：尽量不变（system policies + tool schemas + 静态协议）
+> - dynamic tail：每轮变化（时间、游戏快照、最近聊天 XML、people/memory 召回等）
 
-顺序（全部为 system message）：
+顺序：
+
+**Stable prefix（缓存候选；system message）**
 
 1. `systemPrompt()`（必有）：来自 `bot_impl/prompts/ai-system.txt`，并替换 `{{BOT_NAME}}`
+
+**Dynamic tail（高动态；user message）**
+
 2. `metaCtx`（几乎必有）：`现在是北京时间 ...，你在 ShikiMC 服务器中。服主为 Shiki。`
 3. `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
    - 开关：`state.ai.context.game.include=false`
@@ -70,11 +79,11 @@
    - Feedback：`refs` 由反馈链路使用，显式正/负反馈会影响 `count/effectiveness`，并更新 `lastPositiveFeedback` 参与 recency/decay
    - 格式：`长期记忆: 1. ... | 2. ...`
    - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
-7. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
+7. `contextPrompt`（user）：`executor.buildContextPrompt(username)`，由三段拼接：
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
-8. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
+8. （可选）`inlinePrompt`（user）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
 
 ### 4.2 如何对齐“真实注入内容”
 
@@ -83,6 +92,22 @@
   - 对比：加 `--compare` 会同一 query 跑 `keyword/v2/hybrid`（JSON 输出含 `compare.memory` + `compare.diff`）
   - Debug：加 `--debug` 会输出检索 `tokens/scoredTop/thresholds` 以及 `trace`（token 估算）
 - 运行时查看（bot 在线）：`.ai ctx [player] [query...]`（打印 `metaCtx/gameCtx/chatCtx`，并尽量对齐注入的 `people/memory`）
+  - 同时会打印 `stablePrefix.sig` 以及累计 `promptCache`（若 provider 返回 cached tokens 字段）
+
+### 4.3 Prompt cache 约定（踩坑清单）
+
+核心目标：让 provider 复用 stable prefix（system + tool schemas）对应的 KV cache。
+
+禁止：
+- 动态 system（把时间/进度/状态写进 system prompt）
+- 编辑历史消息（改动 `messages[i]` 内容）
+- 滑动窗口截断（删除旧消息/中间插入）
+- 用摘要替换历史（导致前缀变化）
+
+推荐：
+- system prompt 只放稳定的 policies/协议（本仓库 `ai-system.txt` + `{{BOT_NAME}}` 替换）
+- 动态状态统一放到 dynamic tail（user message）
+- 需要控 token 时，优先“结束 session → 开新 session”或用子 Agent 隔离上下文（主会话只接收摘要结果）
 
 ## 5. 对话记忆
 
