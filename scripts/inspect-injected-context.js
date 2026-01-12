@@ -84,6 +84,20 @@ function buildMetaContext ({ projectRoot, now }) {
   }
 }
 
+function stablePrefixSignature ({ stablePrefixMessages, tools }) {
+  try {
+    const crypto = require('crypto')
+    const payload = JSON.stringify({
+      v: 1,
+      messages: stablePrefixMessages || [],
+      tools: tools || []
+    })
+    return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 16)
+  } catch {
+    return null
+  }
+}
+
 function usage () {
   return [
     'Usage:',
@@ -296,14 +310,24 @@ async function main () {
   const peopleCommitmentsCtx = (() => {
     try { return people.buildAllCommitmentsContext() || '' } catch { return '' }
   })()
+  const toolSchemas = (() => {
+    try {
+      const { buildToolFunctionList } = require(path.join(projectRoot, 'bot_impl', 'ai-chat', 'tool-schemas'))
+      return buildToolFunctionList() || []
+    } catch {
+      return []
+    }
+  })()
+  const stablePrefixMessages = systemPrompt ? [{ role: 'system', content: systemPrompt }] : []
+  const stablePrefixSig = stablePrefixSignature({ stablePrefixMessages, tools: toolSchemas })
 
   const messages = [
     systemPrompt ? { role: 'system', name: 'systemPrompt', content: systemPrompt } : null,
-    metaCtx ? { role: 'system', name: 'metaCtx', content: metaCtx } : null,
-    peopleProfilesCtx ? { role: 'system', name: 'peopleProfilesCtx', content: peopleProfilesCtx } : null,
-    peopleCommitmentsCtx ? { role: 'system', name: 'peopleCommitmentsCtx', content: peopleCommitmentsCtx } : null,
-    memoryCtx ? { role: 'system', name: 'memoryCtx', content: memoryCtx } : null,
-    { role: 'system', name: 'contextPrompt', content: contextPrompt }
+    metaCtx ? { role: 'user', name: 'metaCtx', content: metaCtx } : null,
+    peopleProfilesCtx ? { role: 'user', name: 'peopleProfilesCtx', content: peopleProfilesCtx } : null,
+    peopleCommitmentsCtx ? { role: 'user', name: 'peopleCommitmentsCtx', content: peopleCommitmentsCtx } : null,
+    memoryCtx ? { role: 'user', name: 'memoryCtx', content: memoryCtx } : null,
+    { role: 'user', name: 'contextPrompt', content: contextPrompt }
   ].filter(Boolean)
 
   const tokenEst = messages.map(m => ({ name: m.name, tokens: H.estTokensFromText(m.content) }))
@@ -362,6 +386,10 @@ async function main () {
         profiles: peopleProfilesCtx || '',
         commitments: peopleCommitmentsCtx || ''
       },
+      promptCache: {
+        stablePrefixSig: stablePrefixSig || null,
+        tools: Array.isArray(toolSchemas) ? toolSchemas.length : 0
+      },
       messages,
       tokenEstimate: { total: totalTokens, perMessage: tokenEst }
     }
@@ -375,26 +403,27 @@ async function main () {
     `injected.query: ${injectQuery && query ? 'yes' : 'no'}`,
     memoryQuery ? `memory.query: ${memoryQuery}` : null,
     `memory.limit: ${Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : (state.ai?.context?.memory?.max || 6)}`,
+    stablePrefixSig ? `stablePrefix.sig: ${stablePrefixSig}` : null,
     `token_est.total: ${totalTokens}`,
     tokenEst.length ? `token_est.by_message: ${tokenEst.map(it => `${it.name}=${it.tokens}`).join(', ')}` : null,
     '',
-    '--- injected: systemPrompt (system) ---',
+    '--- stable: systemPrompt (system) ---',
     systemPrompt || '(empty)',
     '',
-    '--- injected: metaCtx (system) ---',
+    '--- dynamic: metaCtx (user) ---',
     metaCtx || '(empty)',
     '',
-    '--- injected: peopleProfilesCtx (system) ---',
+    '--- dynamic: peopleProfilesCtx (user) ---',
     peopleProfilesCtx || '(empty)',
     '',
-    '--- injected: peopleCommitmentsCtx (system) ---',
+    '--- dynamic: peopleCommitmentsCtx (user) ---',
     peopleCommitmentsCtx || '(empty)',
     '',
-    '--- injected: memoryCtx (system) ---',
+    '--- dynamic: memoryCtx (user) ---',
     memoryCtx || '(empty)',
     memoryRefs.length ? `refs: ${memoryRefs.join(', ')}` : null,
     '',
-    '--- injected: contextPrompt (system) ---',
+    '--- dynamic: contextPrompt (user) ---',
     contextPrompt || '(empty)'
   ].filter(v => v != null)
 
