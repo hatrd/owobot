@@ -37,9 +37,10 @@ function createContextBus ({ state, now = () => Date.now() }) {
     const max = Number.isFinite(parsed)
       ? Math.max(1, Math.min(5000, Math.floor(parsed)))
       : DEFAULT_MAX_ENTRIES
-    if (store.length > max) {
-      store.splice(0, store.length - max)
-    }
+    if (store.length <= max) return
+    const active = state.aiPulse?.activeUsers
+    if (active instanceof Map && active.size > 0) return
+    state.aiContextBus = store.slice(-1)
   }
 
   function pushPlayer (name, content) {

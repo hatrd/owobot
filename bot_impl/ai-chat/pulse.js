@@ -333,7 +333,7 @@ function createPulseService ({
     state.aiRecentSeq += 1
     const entry = { t: now(), user: username || '??', text: trimmed.slice(0, 160), kind, seq: state.aiRecentSeq }
     state.aiRecent.push(entry)
-    enforceRecentLimit()
+    rotateRecentIfNeeded(entry)
     if (contextBus) {
       if (kind === 'player') contextBus.pushPlayer(username, trimmed)
       else if (kind === 'bot') {
@@ -345,39 +345,13 @@ function createPulseService ({
     return entry
   }
 
-  function enforceRecentLimit () {
+  function rotateRecentIfNeeded (lastEntry) {
     const cs = state.ai.context || {}
     const recentMax = Math.max(20, cs.recentStoreMax || 200)
-    if (state.aiRecent.length <= recentMax) return
-    const overflow = state.aiRecent.splice(0, state.aiRecent.length - recentMax)
-    scheduleOverflowSummary(overflow)
-  }
-
-  function scheduleOverflowSummary (overflow) {
-    if (!overflow || overflow.length < 20) return
-    ;(async () => {
-      try {
-        if (!state.ai?.key) return
-        if (typeof H?.buildAiUrl !== 'function' || typeof H?.extractAssistantText !== 'function') return
-        const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
-        const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
-        const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
-        const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-        const body = { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 60, stream: false }
-        try {
-          const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
-          if (!res.ok) return
-          const data = await res.json()
-          const sum = H.extractAssistantText(data?.choices?.[0]?.message).trim()
-          if (!sum) return
-          if (!Array.isArray(state.aiLong)) state.aiLong = []
-          state.aiLong.push({ t: Date.now(), summary: sum })
-          if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
-          try { memory?.longTerm?.persistState?.() } catch {}
-          if (state.ai.trace && log?.info) log.info('long summary ->', sum)
-        } catch {}
-      } catch {}
-    })()
+    if (!Array.isArray(state.aiRecent) || state.aiRecent.length <= recentMax) return
+    const active = state.aiPulse?.activeUsers
+    if (active instanceof Map && active.size > 0) return
+    state.aiRecent = lastEntry ? [lastEntry] : []
   }
 
   function recordBotChat (text, meta = {}) {

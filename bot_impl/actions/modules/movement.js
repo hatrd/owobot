@@ -148,7 +148,6 @@ module.exports = function registerMovement (ctx) {
         try {
           if (Array.isArray(bot.state.aiRecent)) {
             bot.state.aiRecent.push({ kind: 'bot', content: cmd, t: now })
-            if (bot.state.aiRecent.length > 200) bot.state.aiRecent.splice(0, bot.state.aiRecent.length - 200)
           }
         } catch {}
       }

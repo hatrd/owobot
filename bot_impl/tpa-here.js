@@ -46,7 +46,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try {
         if (Array.isArray(state.aiRecent)) {
           state.aiRecent.push({ kind: 'bot', content: cmd, t: now() })
-          if (state.aiRecent.length > 200) state.aiRecent.splice(0, state.aiRecent.length - 200)
         }
       } catch {}
     } catch {}
@@ -77,7 +76,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         try {
           if (Array.isArray(state.aiRecent)) {
             state.aiRecent.push({ kind: 'bot', content: '/tpaccept', t: now() })
-            if (state.aiRecent.length > 200) state.aiRecent.splice(0, state.aiRecent.length - 200)
           }
         } catch {}
         recordTeleportAchievement('tpaccept', lastReqUser || null)
