@@ -8,6 +8,9 @@
 - `bot_impl/agent/observer.js`：游戏快照（`游戏: ...`）
 - `bot_impl/prompts/ai-system.txt`：系统 Prompt（强制存在）
 
+相关阅读：
+- `docs/上下文缓存经济学.md`（Prompt cache / 前缀缓存：为什么“只追加”很重要）
+
 ## 1. 状态结构
 
 | 字段 | 说明 |
