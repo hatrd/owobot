@@ -6,7 +6,7 @@ import peopleMod from '../bot_impl/ai-chat/people.js'
 const { createMemoryService } = memoryMod
 const { createPeopleService } = peopleMod
 
-test('dialogue summary triggers rule-based people profile overwrite', async () => {
+test('dialogue summary does not update people profile without LLM', async () => {
   const state = {
     ai: { key: null },
     aiLong: [],
@@ -48,7 +48,6 @@ test('dialogue summary triggers rule-based people profile overwrite', async () =
 
   await memory.dialogue.queueSummary('Alice', sessionEntry, 'test')
 
-  assert.ok(state.aiPeople?.profiles?.Alice?.profile)
-  assert.match(state.aiPeople.profiles.Alice.profile, /阿猫/)
-  assert.ok(savedPeople?.profiles?.Alice?.profile)
+  assert.equal(state.aiPeople?.profiles?.Alice?.profile, undefined)
+  assert.equal(savedPeople, null)
 })

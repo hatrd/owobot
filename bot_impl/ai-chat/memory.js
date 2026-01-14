@@ -2212,61 +2212,6 @@ function createMemoryService ({
     return out
   }
 
-  function extractPeoplePatchByRules (lines, owner) {
-    const out = { profiles: [], commitments: [] }
-    if (!Array.isArray(lines) || !lines.length) return out
-
-    const existingProfiles = new Map()
-    try {
-      const list = people?.listProfiles?.() || []
-      for (const p of list) {
-        const name = normalizeActorName(p?.name || p?.player || p?.key || '')
-        if (!name) continue
-        const profile = typeof p.profile === 'string' ? p.profile.trim() : ''
-        if (profile) existingProfiles.set(name.toLowerCase(), profile)
-      }
-    } catch {}
-
-    const updates = new Map()
-    const setProfile = (player, patchText) => {
-      const name = normalizeActorName(player)
-      if (!name) return
-      const key = name.toLowerCase()
-      const base = existingProfiles.get(key) || ''
-      const merged = base ? `${base}；${patchText}` : patchText
-      updates.set(key, { player: name, profile: merged })
-    }
-
-    for (const line of lines) {
-      const who = normalizeActorName(line?.user || '')
-      const text = normalizeMemoryText(line?.text || '')
-      if (!who || !text) continue
-      const isBot = BOT_USERNAME && who.toLowerCase() === BOT_USERNAME.toLowerCase()
-      if (!isBot) {
-        const mNick = text.match(/(?:^|[，。！？,.!?\s])(叫我|喊我|称呼我|以后叫我|请叫我)\s*([^\s，。！？,.!?]{1,20})/)
-        if (mNick && mNick[2]) {
-          setProfile(who, `称呼偏好：${mNick[2].trim()}`)
-        }
-        const mAvoid = text.match(/(?:^|[，。！？,.!?\s])(别叫我|不要叫我|别喊我)\s*([^\s，。！？,.!?]{1,20})/)
-        if (mAvoid && mAvoid[2]) {
-          setProfile(who, `禁忌称呼：${mAvoid[2].trim()}`)
-        }
-      } else {
-        const ownerName = normalizeActorName(owner || '')
-        if (!ownerName) continue
-        const m = text.match(/(?:记下了承诺|承诺)[:：]\s*(.+)$/)
-        if (m && m[1] && m[1].trim()) {
-          out.commitments.push({ player: ownerName, action: m[1].trim(), status: 'pending' })
-        }
-      }
-    }
-
-    if (updates.size) {
-      out.profiles = [...updates.values()]
-    }
-    return out
-  }
-
   async function extractPeoplePatchByLLM (lines, participants, owner) {
     if (!state.ai?.key) return null
     if (!people || typeof people.applyPatch !== 'function') return null
@@ -2325,17 +2270,6 @@ function createMemoryService ({
   async function maybeWritePeopleMemoryFromConversation (lines, participants, owner, reason) {
     if (!people || typeof people.applyPatch !== 'function') return false
     let changed = false
-
-    try {
-      const rules = extractPeoplePatchByRules(lines, owner)
-      const hasRules = (rules.profiles && rules.profiles.length) || (rules.commitments && rules.commitments.length)
-      if (hasRules) {
-        const res = people.applyPatch({ ...rules, source: `rules:${reason || 'dialogue'}` })
-        if (res?.changed) changed = true
-      }
-    } catch (e) {
-      traceChat('[chat] people rules error', e?.message || e)
-    }
 
     try {
       const llm = await extractPeoplePatchByLLM(lines, participants, owner)
