@@ -6,9 +6,13 @@ import H from '../bot_impl/ai-chat-helpers.js'
 
 /**
  * Quick connectivity check to verify the AI chat env vars point to a working endpoint.
- * Skips itself if no API key is present.
+ * Opt-in via RUN_AI_CONNECTIVITY_TEST=1; also skips if no API key is present.
  */
 test('ai chat endpoint responds with text', async (t) => {
+  if (process.env.RUN_AI_CONNECTIVITY_TEST !== '1') {
+    t.skip('RUN_AI_CONNECTIVITY_TEST!=1; skipping connectivity check')
+    return
+  }
   const key = process.env.DEEPSEEK_API_KEY
   if (!key) {
     t.skip('DEEPSEEK_API_KEY not set; skipping connectivity check')
