@@ -5,6 +5,7 @@ const { buildMemoryQuery } = require('./memory-query')
 const cacheStats = require('./cache-stats')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
+const TOOL_NAME_SET = new Set(TOOL_FUNCTIONS.map(t => t?.function?.name).filter(Boolean))
 const LONG_TASK_TOOLS = new Set([
   'goto', 'goto_block', 'hunt_player', 'defend_area', 'defend_player',
   'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest',
@@ -423,7 +424,7 @@ function createChatExecutor ({
       `计划模式：第${stepNo}/${plan.steps.length}步`,
       plan.goal ? `目标：${plan.goal}` : '',
       `步骤：${stepText}`,
-      '请直接调用工具完成；若暂时无需行动请使用 skip{} 工具。'
+      '请直接调用工具完成；若暂时无需行动请调用 skip 工具。'
     ].filter(Boolean).join('\n')
     let reply = ''
     let memoryRefs = []
@@ -571,11 +572,66 @@ function createChatExecutor ({
         }
         return { reply: finalText, memoryRefs }
       }
+      const inlinePayload = extractInlineToolPayload(reply)
+      if (inlinePayload) {
+        const handled = await handleToolReply({ payload: inlinePayload, speech: '', username, content, intent, maxReplyLen, memoryRefs })
+        return { reply: handled || '', memoryRefs }
+      }
       return { reply: H.trimReply(reply, maxReplyLen || 120), memoryRefs }
     } finally {
       clearTimeout(timeout)
       ctrl.abort = null
     }
+  }
+
+  function extractInlineToolPayload (text) {
+    const trimmed = String(text || '').trim()
+    if (!trimmed) return null
+    const m = trimmed.match(/^([a-z_][a-z0-9_]*)\s*\{([\s\S]*)\}\s*$/i)
+    if (!m) return null
+    const tool = m[1]
+    if (!TOOL_NAME_SET.has(tool)) return null
+    const inner = String(m[2] || '').trim()
+    if (!inner) return { tool, args: {} }
+    const rawObject = `{${inner}}`
+    const parsed = parseLooseJsonObject(rawObject)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      if (tool === 'say') {
+        const looseText = extractLooseStringField(inner, 'text')
+        if (looseText) return { tool, args: { text: looseText } }
+      }
+      return null
+    }
+    return { tool, args: parsed }
+  }
+
+  function parseLooseJsonObject (raw) {
+    if (typeof raw !== 'string' || !raw.trim()) return null
+    try { return JSON.parse(raw) } catch {}
+    let s = raw
+    s = s.replace(/,(\s*[}\]])/g, '$1')
+    s = s.replace(/([,{]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
+    s = s.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, inner) => `"${String(inner).replace(/"/g, '\\"')}"`)
+    try { return JSON.parse(s) } catch { return null }
+  }
+
+  function extractLooseStringField (raw, key) {
+    try {
+      const k = String(key || '').trim()
+      if (!k) return ''
+      const re = new RegExp(`\\b${k}\\s*:\\s*(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')`)
+      const m = String(raw || '').match(re)
+      if (!m || !m[1]) return ''
+      const lit = String(m[1])
+      if (lit.startsWith('\"')) {
+        try { return JSON.parse(lit) } catch { return lit.slice(1, -1) }
+      }
+      if (lit.startsWith('\'')) {
+        const inner = lit.slice(1, -1).replace(/\"/g, '\\"')
+        try { return JSON.parse(`\"${inner}\"`) } catch { return inner }
+      }
+      return ''
+    } catch { return '' }
   }
 
   function extractToolCalls (message) {
