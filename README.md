@@ -126,6 +126,7 @@ Default digging policy (simplified)
 - Save atomically under `bot_impl/` to avoid partial reloads.
 
 ### Developer References
+  - `bot_impl/AGENTS.md` and `bot_impl/**/AGENTS.md` explain module boundaries + shared state rules (kept close to code for maintainability).
   - `docs/runtime-map.md` explains the long-lived shared state layout and key event hooks.
   - `bot_impl/module-registry.js` lists every hot-reloadable module; edit it to add/remove behaviour safely.
   - `docs/git-worktree-parallel.md` describes a git-worktree-based parallel Codex workflow (spawn/merge sub-tasks cleanly).

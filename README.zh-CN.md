@@ -124,6 +124,7 @@
 - 在 `bot_impl/` 下保存需原子性，避免不完整热重载。
 
 ### 开发参考
+- `bot_impl/AGENTS.md` 与 `bot_impl/**/AGENTS.md` 就近说明模块边界与共享状态约定（避免把约定堆进 docs 失去维护）。
 - `docs/runtime-map.md` 总结了共享状态结构与关键事件。
 - `bot_impl/module-registry.js` 统一登记所有热重载模块，新增/移除功能时只需修改这里。
 - `docs/git-worktree-parallel.md` 总结了基于 git worktree 的并行 Codex 流程（分配/验收/合入子任务）。

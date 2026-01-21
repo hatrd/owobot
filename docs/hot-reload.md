@@ -16,5 +16,5 @@
 - 如果需要一次性的 post-spawn 初始化逻辑，抽成 `initAfterSpawn()` 并在 `spawn` + 热重载分支都调用。
 
 ## AI 工具
-- 需要定位代码上下文时优先使用 `acemcp` 搜索，避免盲扫全库。
+- 需要定位代码上下文时优先使用 `auggie`（codebase-retrieval）搜索，避免盲扫全库。
 - 搜索提示词尽量具体到模块/行为，以减少 LLM 的上下文需求。
