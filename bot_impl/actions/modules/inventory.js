@@ -223,22 +223,36 @@ module.exports = function registerInventory (ctx) {
     try { bot.pathfinder?.setGoal(null) } catch {}
 
     const edible = isEdible(item)
+    const alwaysConsumable = item.name === 'potion' || item.name === 'milk_bucket'
+    const consumable = edible || alwaysConsumable
     const holdMsParsed = parseInt(args.holdMs, 10)
     const holdMs = Number.isFinite(holdMsParsed) && holdMsParsed > 0
       ? holdMsParsed
-      : (edible ? 1600 : 120)
-    const beforeCount = edible ? countItemByName(item.name) : null
+      : (consumable ? 1700 : 120)
+    const beforeCount = consumable ? countItemByName(item.name) : null
     const activateWithHold = async () => {
       await bot.activateItem(offhand)
       if (holdMs > 0) await wait(holdMs)
       try { bot.deactivateItem() } catch {}
     }
     try {
-      if (edible) {
+      if (consumable && !offhand) {
         await bot.consume()
-        return ok(`已使用（食用）${item.name}`)
+        return ok(edible ? `已使用（食用）${item.name}` : `已使用（饮用）${item.name}`)
       }
       await activateWithHold()
+      if (consumable) {
+        await wait(250)
+        const afterCount = countItemByName(item.name)
+        if (afterCount < beforeCount) {
+          return ok(edible ? `已使用（食用）${item.name}` : `已使用（饮用）${item.name}`)
+        }
+        if (bot.game?.gameMode === 'creative') {
+          return ok(edible ? `已使用（食用）${item.name}` : `已使用（饮用）${item.name}`)
+        }
+        if (edible && bot.food === 20) return ok(`已尝试食用 ${item.name}`)
+        return fail(edible ? `未能食用 ${item.name}` : `未能饮用 ${item.name}`)
+      }
       return ok(`已使用 ${item.name}`)
     } catch (e) {
       const msg = String(e?.message || e || '')

@@ -110,13 +110,13 @@ const ACTION_TOOL_DEFINITIONS = [
   },
   {
     name: 'use_item',
-    description: 'Equip (main/offhand) and right-click use an item, including consumables like chorus_fruit or throwables like ender_pearl.',
+    description: 'Equip (main/offhand) and right-click use an item. For consumables (food/potion/milk_bucket) it will try to fully eat/drink; for throwables like ender_pearl it will tap-use.',
     parameters: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Item name to use.' },
         hand: { type: 'string', description: 'hand|offhand; defaults to hand.' },
-        holdMs: { type: 'number', description: 'Optional hold duration before release, ms.' }
+        holdMs: { type: 'number', description: 'Optional hold duration before release, ms. Defaults ~1700ms for consumables, ~120ms otherwise.' }
       },
       required: ['name'],
       additionalProperties: true
