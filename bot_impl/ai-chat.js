@@ -261,7 +261,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try {
         const prompt = `玩家 ${usernameRaw} 正在你身边并被你注意到，请用一句温暖、自然的中文主动打招呼，鼓励对方继续聊天，控制在20字以内。`
         const intent = { topic: 'greet', kind: 'chat', nearby: true }
-        const { reply } = await executor.callAI(usernameRaw, prompt, intent, { inlineUserContent: true })
+        const { reply } = await executor.callAI(usernameRaw, prompt, intent)
         const text = String(reply || '').trim()
         if (!text) {
           cooldowned = true

@@ -429,7 +429,7 @@ function createChatExecutor ({
     let reply = ''
     let memoryRefs = []
     try {
-      const res = await callAI(plan.owner, content, { topic: 'plan', kind: 'chat' }, { inlineUserContent: true })
+      const res = await callAI(plan.owner, content, { topic: 'plan', kind: 'chat' })
       reply = res.reply
       memoryRefs = res.memoryRefs
     } catch (e) {
@@ -471,7 +471,23 @@ function createChatExecutor ({
     return !startRe.test(trimmed)
   }
 
-  async function callAI (username, content, intent, options = {}) {
+  function buildUserPromptWithContext ({ userPrompt, metaCtx, gameCtx, peopleProfilesCtx, peopleCommitmentsCtx, memoryCtx, contextPrompt }) {
+    const blocks = [
+      metaCtx,
+      gameCtx,
+      peopleProfilesCtx,
+      peopleCommitmentsCtx,
+      memoryCtx,
+      contextPrompt
+    ].map(s => String(s || '').trim()).filter(Boolean)
+    const ctx = blocks.join('\n\n')
+    const question = String(userPrompt || '').trim()
+    if (!ctx) return question
+    if (!question) return ctx
+    return `${ctx}\n\n${question}`
+  }
+
+  async function callAI (username, content, intent) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
     const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
@@ -495,17 +511,19 @@ function createChatExecutor ({
       try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
     })()
     const metaCtx = buildMetaContext()
-    const inlineUserContent = options?.inlineUserContent === true
-    const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
+    const userPrompt = String(content || '').trim()
+    const userInput = buildUserPromptWithContext({
+      userPrompt,
+      metaCtx,
+      gameCtx,
+      peopleProfilesCtx,
+      peopleCommitmentsCtx,
+      memoryCtx,
+      contextPrompt
+    })
     const messages = [
       { role: 'system', content: systemPrompt() },
-      metaCtx ? { role: 'system', content: metaCtx } : null,
-      gameCtx ? { role: 'system', content: gameCtx } : null,
-      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx } : null,
-      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx } : null,
-      memoryCtx ? { role: 'system', content: memoryCtx } : null,
-      { role: 'system', content: contextPrompt },
-      inlinePrompt ? { role: 'system', content: inlinePrompt } : null
+      userInput ? { role: 'user', content: userInput } : null
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
