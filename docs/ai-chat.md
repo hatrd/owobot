@@ -2,7 +2,7 @@
 
 `bot_impl/ai-chat.js` 负责装配 AI 聊天模块；真正的「上下文注入/Prompt 拼装」主要发生在：
 
-- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（以 system 注入为主；玩家原始消息来自 `xmlCtx`，不再额外注入 `user`）
+- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（仅 `systemPrompt()` 保持为 system；其余动态上下文 + 玩家输入统一拼到单个 `user` message，便于复用 prompt cache）
 - `bot_impl/ai-chat/context-bus.js`：把时序事件序列化成紧凑 XML（`<ctx>...</ctx>`）
 - `bot_impl/ai-chat/memory.js`：长期记忆检索（`长期记忆: ...`）+ 对话摘要（`对话记忆：...`）
 - `bot_impl/agent/observer.js`：游戏快照（`游戏: ...`）
@@ -41,16 +41,17 @@
 
 > 注意：这里说的是“LLM 看到的 messages[]”。工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接。
 
-顺序（全部为 system message）：
+顺序（1 条 system + 1 条 user；目标是让 system prompt 尽可能稳定以命中 provider 的 prompt cache）：
 
 1. `systemPrompt()`（必有）：来自 `bot_impl/prompts/ai-system.txt`，并替换 `{{BOT_NAME}}`
-2. `metaCtx`（几乎必有）：`现在是北京时间 ...，你在 ShikiMC 服务器中。服主为 Shiki。`
-3. `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
+2. `user` message：把以下片段按顺序拼接（中间用空行分隔），最后再拼上本轮 `userPrompt`：
+   1) `metaCtx`（几乎必有）：`现在是北京时间 ...，你在 ShikiMC 服务器中。服主为 Shiki。`
+   2) `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
    - 开关：`state.ai.context.game.include=false`
    - 参数：`invTop/nearPlayerRange/nearPlayerMax/dropsRange/dropsMax`（hostileRange 固定 24）
-4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext()` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，会注入**全部**已录入画像的玩家）
-5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext()` 输出（`承诺（未完成）：...`，会注入全部 pending 承诺）
-6. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
+   3) `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext()` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，会注入**全部**已录入画像的玩家）
+   4) `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext()` 输出（`承诺（未完成）：...`，会注入全部 pending 承诺）
+   5) `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
    - Query：`executor.callAI()` 先用 `buildMemoryQuery({ username, message, recentChat, worldHint })` 构造会话语境查询，再传给 `buildContext({ query: memoryQuery, actor: username })`
@@ -67,11 +68,11 @@
    - Feedback：`refs` 由反馈链路使用，显式正/负反馈会影响 `count/effectiveness`，并更新 `lastPositiveFeedback` 参与 recency/decay
    - 格式：`长期记忆: 1. ... | 2. ...`
    - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
-7. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
+   6) `contextPrompt`（user）：`executor.buildContextPrompt(username)`，由三段拼接：
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
-8. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
+   7) `userPrompt`：本轮玩家输入（或内部调用的临时指令，例如 plan mode、auto-look greet）
 
 ### 4.2 如何对齐“真实注入内容”
 
