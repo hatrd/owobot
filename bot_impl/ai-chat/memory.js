@@ -22,6 +22,7 @@ const PEOPLE_INSPECTOR_SYSTEM_PROMPT = [
   '- 只记录“确定无疑”的信息，不要编造。',
   '- 你会收到“当前已知画像/承诺”。profile 是覆盖写入：若本段聊天出现该玩家画像信息更新，请在旧画像基础上更新并输出“完整新画像”字符串，默认保留旧画像中的要点，除非本段聊天明确否定/修改；否则不要输出该玩家。',
   '- commitments 只记录 bot 自己对玩家的承诺/答应（不是工具调用即时完成的动作）；默认 status=pending；deadlineMs 可省略。',
+  '- 当且仅当本段聊天中出现“明确完成/明确取消”的证据时，才更新 commitments.status：\n  - 玩家明确表示不需要/不用了/算了/取消该承诺 -> status=failed\n  - bot 明确表示已完成承诺 -> status=done\n  - 如需更新已有承诺的状态，必须复用“当前已知 bot 承诺”或 JSON 快照里出现的完全一致的 action 文本（不要改写/同义改写），否则会被当作新承诺。',
   '- 如果没有任何更新，输出 {"profiles":[],"commitments":[]}。',
   '- 只输出 JSON，不要输出 Markdown，不要输出解释。'
 ].join('\n')

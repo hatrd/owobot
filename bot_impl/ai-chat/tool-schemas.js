@@ -518,6 +518,21 @@ const SPECIAL_TOOLS = [
     }
   },
   {
+    name: 'resolve_commitment',
+    description: 'Mark an existing commitment as done or failed (canceled) when it has been fulfilled or the player no longer needs it. Prefer referencing the exact original action text.',
+    parameters: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'New status: done|failed (failed includes canceled/abandoned).' },
+        action: { type: 'string', description: 'Exact commitment action text to resolve (recommended). If omitted, resolves the most recent pending commitment for that player.' },
+        player: { type: 'string', description: 'Player name for the commitment (defaults to current user).' },
+        id: { type: 'string', description: 'Optional commitment id (preferred when available).' }
+      },
+      required: ['status'],
+      additionalProperties: false
+    }
+  },
+  {
     name: 'say',
     description: 'Send multiple chat messages in order, optionally inserting pauses to simulate human typing delay. Use this when you want to deliver a reply in several short parts with timing.',
     parameters: {

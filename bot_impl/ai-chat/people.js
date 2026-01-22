@@ -359,6 +359,81 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     return { ok: true, id: existing.id || null }
   }
 
+  function resolveCommitment ({ id, player, action, status, source, persist: shouldPersist = true } = {}) {
+    load()
+    const slice = ensureState()
+    if (!slice) return { ok: false, reason: 'no_state' }
+
+    const st = normalizeCommitmentStatus(status)
+    if (st === 'pending') return { ok: false, reason: 'invalid_status' }
+
+    const list = safeArray(slice.commitments)
+    const nowTs = now()
+
+    const findById = (needleId) => {
+      if (!needleId) return null
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue
+        if (String(c.id || '') === String(needleId)) return c
+      }
+      return null
+    }
+
+    const findByPlayerAction = (playerKey, act) => {
+      const foldPlayer = foldKey(playerKey)
+      const foldAction = act ? String(act).trim().toLowerCase() : ''
+      if (!foldPlayer || !foldAction) return null
+      const needle = `${foldPlayer}::${foldAction}`
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue
+        const k = foldKey(c.playerKey || c.player || c.name || '')
+        const a = typeof c.action === 'string' ? c.action.trim().toLowerCase() : ''
+        if (!k || !a) continue
+        if (`${k}::${a}` === needle) return c
+      }
+      return null
+    }
+
+    const findLatestPendingForPlayer = (playerKey) => {
+      const foldPlayer = foldKey(playerKey)
+      if (!foldPlayer) return null
+      let best = null
+      let bestTs = -1
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue
+        const k = foldKey(c.playerKey || c.player || c.name || '')
+        if (!k || k !== foldPlayer) continue
+        const s = normalizeCommitmentStatus(c.status)
+        if (s !== 'pending') continue
+        const ts = Number.isFinite(c.updatedAt) ? c.updatedAt : (Number.isFinite(c.createdAt) ? c.createdAt : 0)
+        if (ts >= bestTs) { best = c; bestTs = ts }
+      }
+      return best
+    }
+
+    let existing = findById(id)
+    if (!existing) {
+      const name = normalizeName(player)
+      const playerKey = resolveKey(slice.profiles, name) || normalizeKey(name)
+      const act = typeof action === 'string' ? action.replace(/\s+/g, ' ').trim() : ''
+
+      if (playerKey && act) {
+        existing = findByPlayerAction(playerKey, act)
+      } else if (playerKey) {
+        existing = findLatestPendingForPlayer(playerKey)
+      }
+    }
+
+    if (!existing) return { ok: false, reason: 'not_found' }
+
+    existing.status = st
+    if (!Number.isFinite(existing.createdAt)) existing.createdAt = nowTs
+    existing.updatedAt = nowTs
+    existing.source = typeof source === 'string' ? source.slice(0, 40) : (existing.source || null)
+    if (shouldPersist) persist()
+    return { ok: true, id: existing.id || null }
+  }
+
   function applyPatch ({ profiles, commitments, source } = {}) {
     load()
     const slice = ensureState()
@@ -415,6 +490,7 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     buildAllCommitmentsContext,
     setProfile,
     upsertCommitment,
+    resolveCommitment,
     applyPatch,
     dumpForLLM,
     debugTrace

@@ -788,6 +788,62 @@ function createChatExecutor ({
       if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:add', memoryRefs })
       return ''
     }
+    if (toolName === 'resolve_commitment') {
+      const statusRaw = payload.args?.status
+      const status = typeof statusRaw === 'string' ? statusRaw.trim().toLowerCase() : ''
+      const normalizedStatus = (status === 'done' || status === 'fulfilled' || status === 'complete' || status === 'completed')
+        ? 'done'
+        : (status === 'failed' || status === 'fail' || status === 'canceled' || status === 'cancelled' || status === 'abandoned')
+            ? 'failed'
+            : ''
+      if (!normalizedStatus) return H.trimReply('没听懂要把承诺标记成 done 还是 failed 呢~', maxReplyLen || 120)
+
+      const player = payload.args?.player ? String(payload.args.player) : username
+      const actionRaw = payload.args?.action
+      const action = typeof actionRaw === 'string' ? actionRaw.trim() : ''
+      const id = payload.args?.id ? String(payload.args.id) : ''
+
+      const storedInPeople = (() => {
+        try {
+          if (!people?.resolveCommitment) return false
+          return Boolean(people.resolveCommitment({
+            id: id || null,
+            player,
+            action: action || null,
+            status: normalizedStatus,
+            source: 'tool:resolve_commitment'
+          })?.ok)
+        } catch { return false }
+      })()
+
+      // Best-effort sync to minimal-self commitments when possible.
+      try {
+        const ms = getMinimalSelfInstance()
+        const identity = ms?.getIdentity?.()
+        if (identity && typeof identity.getPendingCommitments === 'function') {
+          const pending = identity.getPendingCommitments(player)
+          let target = null
+          if (action) {
+            const needle = action.toLowerCase()
+            target = pending.find(c => String(c?.action || '').trim().toLowerCase() === needle) || null
+          } else if (pending && pending.length) {
+            target = pending[pending.length - 1]
+          }
+          if (target && target.id) {
+            if (normalizedStatus === 'done' && typeof identity.fulfillCommitment === 'function') identity.fulfillCommitment(target.id)
+            if (normalizedStatus === 'failed' && typeof identity.failCommitment === 'function') identity.failCommitment(target.id, 'resolved_by_tool')
+          }
+        }
+      } catch {}
+
+      if (!storedInPeople) return H.trimReply('我没找到对应的承诺可以更新…你把承诺原文再贴一下？', maxReplyLen || 120)
+      if (contextBus) {
+        try { contextBus.pushEvent('commitment.resolve', `${player}:${normalizedStatus}:${action || id || ''}`) } catch {}
+      }
+      const reply = speech || H.trimReply(`好，我把这个承诺标记为${normalizedStatus === 'done' ? '已完成' : '已取消'}了。`, maxReplyLen || 120)
+      if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:resolve', memoryRefs })
+      return ''
+    }
     if (toolLower === 'say') {
       const ok = pulse.say(username, payload.args || {}, {
         reason: 'tool_say',
