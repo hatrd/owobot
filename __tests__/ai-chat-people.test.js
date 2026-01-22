@@ -80,3 +80,34 @@ test('people.buildAllProfilesContext only includes non-empty profiles', async ()
   assert.doesNotMatch(ctx, /Alice/)
   assert.match(ctx, /<profile n="Bob">喜欢被叫鲍勃<\/profile>/)
 })
+
+test('people.resolveCommitment updates status and hides from pending context', async () => {
+  const state = {}
+  const { store } = makeStore({ profiles: {}, commitments: [] })
+  const people = createPeopleService({ state, peopleStore: store, now: () => 1 })
+
+  people.upsertCommitment({ player: 'Alice', action: '帮我建房子', status: 'pending', source: 'test' })
+  assert.match(people.buildAllCommitmentsContext(), /Alice：帮我建房子/)
+
+  const res = people.resolveCommitment({ player: 'Alice', action: '帮我建房子', status: 'done', source: 'test2' })
+  assert.equal(res.ok, true)
+  assert.doesNotMatch(people.buildAllCommitmentsContext(), /帮我建房子/)
+})
+
+test('people.resolveCommitment can resolve latest pending when action omitted', async () => {
+  const state = {}
+  const { store } = makeStore({ profiles: {}, commitments: [] })
+  let t = 1000
+  const now = () => { t += 1; return t }
+  const people = createPeopleService({ state, peopleStore: store, now })
+
+  people.upsertCommitment({ player: 'Bob', action: '第一件事', status: 'pending', source: 'test' })
+  people.upsertCommitment({ player: 'Bob', action: '第二件事', status: 'pending', source: 'test' })
+
+  const res = people.resolveCommitment({ player: 'Bob', status: 'failed', source: 'test2' })
+  assert.equal(res.ok, true)
+
+  const ctx = people.buildAllCommitmentsContext()
+  assert.match(ctx, /Bob：第一件事/)
+  assert.doesNotMatch(ctx, /Bob：第二件事/)
+})
