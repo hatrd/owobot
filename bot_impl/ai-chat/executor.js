@@ -545,7 +545,7 @@ function createChatExecutor ({
       model: model || defaults.DEFAULT_MODEL,
       messages,
       temperature: 0.2,
-      max_tokens: Math.max(120, Math.min(512, state.ai.maxTokensPerCall || 256)),
+      max_tokens: Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 256)),
       stream: false,
       tools: TOOL_FUNCTIONS
     }
@@ -659,17 +659,77 @@ function createChatExecutor ({
     return []
   }
 
+  function autoCloseJson (raw) {
+    const s = String(raw || '')
+    if (!s.trim()) return ''
+    const stack = []
+    let inStr = false
+    let esc = false
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i]
+      if (inStr) {
+        if (esc) { esc = false; continue }
+        if (ch === '\\') { esc = true; continue }
+        if (ch === '"') inStr = false
+        continue
+      }
+      if (ch === '"') { inStr = true; continue }
+      if (ch === '{' || ch === '[') stack.push(ch)
+      else if (ch === '}') {
+        if (stack[stack.length - 1] !== '{') return ''
+        stack.pop()
+      } else if (ch === ']') {
+        if (stack[stack.length - 1] !== '[') return ''
+        stack.pop()
+      }
+    }
+    if (!stack.length) return s
+    let out = s
+    while (stack.length) {
+      const open = stack.pop()
+      out += open === '{' ? '}' : ']'
+    }
+    return out
+  }
+
+  function parseToolArguments (rawArgs) {
+    if (!rawArgs) return { args: {}, ok: true }
+    if (typeof rawArgs === 'object') return { args: Array.isArray(rawArgs) ? {} : rawArgs, ok: !Array.isArray(rawArgs) }
+    const raw = String(rawArgs || '').trim()
+    if (!raw) return { args: {}, ok: true }
+
+    try {
+      const parsed = JSON.parse(raw)
+      const ok = !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+      return { args: ok ? parsed : {}, ok }
+    } catch {}
+
+    const closed = autoCloseJson(raw) || raw
+    if (closed !== raw) {
+      try {
+        const parsed = JSON.parse(closed)
+        const ok = !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        return { args: ok ? parsed : {}, ok }
+      } catch {}
+    }
+
+    const loose = parseLooseJsonObject(closed)
+    const ok = !!(loose && typeof loose === 'object' && !Array.isArray(loose))
+    return { args: ok ? loose : {}, ok }
+  }
+
   function normalizeToolPayload (toolCall) {
     if (!toolCall || typeof toolCall !== 'object') return null
     const fn = toolCall.function || toolCall
     if (!fn || !fn.name) return null
     let args = {}
+    let parseOk = true
     if (fn.arguments) {
-      try { args = JSON.parse(fn.arguments) } catch (err) {
-        log?.warn && log.warn('tool args parse error', err?.message || err, fn.arguments)
-        args = {}
-      }
+      const parsed = parseToolArguments(fn.arguments)
+      args = parsed?.args || {}
+      parseOk = parsed?.ok !== false
     }
+    if (!parseOk) log?.warn && log.warn('tool args parse error', 'invalid_json', fn.arguments)
     return { tool: fn.name, args }
   }
 
