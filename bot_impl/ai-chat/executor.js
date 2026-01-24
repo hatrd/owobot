@@ -343,9 +343,6 @@ function createChatExecutor ({
       if (!ms || typeof ms.scoreAction !== 'function') return null
       const res = ms.scoreAction(toolName)
       if (!res || !Number.isFinite(res.score)) return null
-      if (contextBus) {
-        try { contextBus.pushEvent('minimalSelf.score', `${toolName}:${res.score.toFixed(2)}`) } catch {}
-      }
       return res
     } catch { return null }
   }
