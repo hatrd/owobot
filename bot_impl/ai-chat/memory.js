@@ -1583,74 +1583,11 @@ function createMemoryService ({
   }
 
   function extractMemoryCommand (content) {
-    if (!content) return null
-    const text = String(content).trim()
-    if (!text) return null
-    const patterns = [
-      /^记住(?:一下)?[:：,，\s]*(.+)$/i,
-      /^(?:帮我|请|要)记住[:：,，\s]*(.+)$/i,
-      /^记得[:：,，\s]*(.+)$/i,
-      /^记一下[:：,，\s]*(.+)$/i,
-      /^帮我记[:：,，\s]*(.+)$/i
-    ]
-    for (const re of patterns) {
-      const m = text.match(re)
-      if (m && m[1]) {
-        const payload = normalizeMemoryText(m[1])
-        if (payload) return payload
-      }
-    }
     return null
   }
 
   function extractForgetCommand (content) {
-    if (!content) return null
-    const text = String(content).trim()
-    if (!text) return null
-
-    function normalizeForgetQuery (value) {
-      const t = normalizeMemoryText(value)
-      if (!t) return ''
-      return t.replace(/[。.!！?？]+$/g, '').replace(/[了啊呀呢嘛吧]+$/g, '').trim()
-    }
-
-    const direct = [
-      /^(?:忘记|忘掉)(?:一下)?[:：,，\s]*(.+)$/i,
-      /^(?:删掉|删除)(?:这?条)?记忆[:：,，\s]*(.+)$/i,
-      /^(?:别|不要)再?记[:：,，\s]*(.+)$/i
-    ]
-    for (const re of direct) {
-      const m = text.match(re)
-      if (m && m[1]) {
-        const payload = normalizeForgetQuery(m[1])
-        if (payload) return { query: payload, kind: 'forget' }
-      }
-    }
-
-    // Implicit revoke: player asks to stop calling them something (nickname/suffix).
-    const revokeHint = /(不要|别)(再)?(?:叫|喊|称呼)/.test(text) || /(不要|别)(再)?在.{0,6}名字/.test(text) || /名字后面?加/.test(text)
-    if (!revokeHint) return null
-
-    const quoted = text.match(/[“"「『](.+?)[”"」』]/)
-    if (quoted && quoted[1]) {
-      const payload = normalizeForgetQuery(quoted[1])
-      if (payload) return { query: payload, kind: 'revoke' }
-    }
-
-    const m1 = text.match(/(?:叫|喊|称呼)我?([^\s，。,。!！?？]{1,12})/)
-    if (m1 && m1[1]) {
-      const payload = normalizeForgetQuery(m1[1])
-      if (payload) return { query: payload, kind: 'revoke' }
-    }
-    const m2 = text.match(/名字后面?加([^\s，。,。!！?？]{1,12})/)
-    if (m2 && m2[1]) {
-      const payload = normalizeForgetQuery(m2[1])
-      if (payload) return { query: payload, kind: 'revoke' }
-    }
-
-    // Fallback: common slur keyword.
-    if (/(变态|変態|變態)/.test(text)) return { query: '变态', kind: 'revoke' }
-    return { kind: 'revoke', mode: 'self_nickname' }
+    return null
   }
 
   // --- Dialogue memory & summaries ---
