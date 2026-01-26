@@ -620,10 +620,7 @@ function createChatExecutor ({
     if (lines.length) log.info('ctx slices ->', lines.join(' | '))
   }
 
-  async function callAI (username, content, intent) {
-    const { key, baseUrl, path, model, maxReplyLen } = state.ai
-    if (!key) throw new Error('AI key not configured')
-    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+  async function buildContextSelection ({ username, content }) {
     const contextBusCtx = buildContextBusPrompt()
     const recentDialogueCtx = buildRecentDialoguePrompt(username)
     const gameCtx = buildGameContext()
@@ -689,12 +686,38 @@ function createChatExecutor ({
       slice.score = scoreInfo.scoreMap.get(slice.name)
       slice.selected = selectedSet.has(slice.name)
     }
-    logContextSlices([...fixedSlices, ...candidateSlices])
-    logContextSelection({ query: selectionQuery, candidates: candidateSlices, selected: selectedInfo.selected, selectionCfg })
     const contextSlices = [...fixedSlices, ...selectedInfo.selected].map(s => s.text)
-    const userInput = buildUserPromptWithContext({
+
+    return {
       userPrompt,
+      selectionQuery,
+      selectionCfg,
+      memoryQuery,
+      memoryRefs,
+      fixedSlices,
+      candidateSlices,
+      selectedSlices: selectedInfo.selected,
       contextSlices
+    }
+  }
+
+  async function callAI (username, content, intent) {
+    const { key, baseUrl, path, model, maxReplyLen } = state.ai
+    if (!key) throw new Error('AI key not configured')
+    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+    const selection = await buildContextSelection({ username, content })
+    logContextSlices([...selection.fixedSlices, ...selection.candidateSlices])
+    logContextSelection({
+      query: selection.selectionQuery,
+      candidates: selection.candidateSlices,
+      selected: selection.selectedSlices,
+      selectionCfg: selection.selectionCfg
+    })
+    const sliceMap = new Map([...selection.fixedSlices, ...selection.candidateSlices].map(s => [s.name, s]))
+    const memoryRefs = selection.memoryRefs || []
+    const userInput = buildUserPromptWithContext({
+      userPrompt: selection.userPrompt,
+      contextSlices: selection.contextSlices
     })
     const messages = [
       { role: 'system', content: systemPrompt() },
@@ -702,16 +725,16 @@ function createChatExecutor ({
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
-        log.info('metaCtx ->', metaSlice.text)
-        log.info('targetCtx ->', targetSlice.text)
-        log.info('taskCtx ->', taskSlice.text)
-        log.info('gameCtx ->', gameSlice.text)
-        log.info('contextBusCtx ->', contextBusSlice.text)
-        log.info('recentDialogueCtx ->', recentDialogueSlice.text)
-        log.info('peopleProfilesCtx ->', profilesSlice.text)
-        log.info('peopleCommitmentsCtx ->', commitmentsSlice.text)
-        log.info('memoryCtx ->', memorySlice.text)
-        log.info('affordancesCtx ->', affordancesSlice.text)
+        log.info('metaCtx ->', sliceMap.get('meta')?.text || '')
+        log.info('targetCtx ->', sliceMap.get('target')?.text || '')
+        log.info('taskCtx ->', sliceMap.get('task')?.text || '')
+        log.info('gameCtx ->', sliceMap.get('game')?.text || '')
+        log.info('contextBusCtx ->', sliceMap.get('contextBus')?.text || '')
+        log.info('recentDialogueCtx ->', sliceMap.get('recentDialogue')?.text || '')
+        log.info('peopleProfilesCtx ->', sliceMap.get('peopleProfiles')?.text || '')
+        log.info('peopleCommitmentsCtx ->', sliceMap.get('peopleCommitments')?.text || '')
+        log.info('memoryCtx ->', sliceMap.get('memory')?.text || '')
+        log.info('affordancesCtx ->', sliceMap.get('affordances')?.text || '')
       } catch {}
     }
     const estIn = estTokensFromText(messages.map(m => m.content).join(' '))
@@ -1358,6 +1381,7 @@ function createChatExecutor ({
     handleChat,
     buildContextPrompt,
     buildMetaContext,
+    buildContextSelection,
     triggerWord,
     callAI,
     processChatContent,

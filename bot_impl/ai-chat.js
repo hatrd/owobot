@@ -597,6 +597,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     buildGameContext,
     buildContextPrompt: executor.buildContextPrompt,
     buildMetaContext: executor.buildMetaContext,
+    buildContextSelection: executor.buildContextSelection,
     persistMemoryState: memory.longTerm.persistState,
     selectDialoguesForContext: memory.dialogue.selectForContext,
     formatDialogueEntriesForDisplay: memory.dialogue.formatEntriesForDisplay,

@@ -5,6 +5,7 @@ function createAiCliHandler (options = {}) {
     buildGameContext,
     buildContextPrompt,
     buildMetaContext,
+    buildContextSelection,
     persistMemoryState,
     selectDialoguesForContext,
     formatDialogueEntriesForDisplay,
@@ -43,12 +44,40 @@ function createAiCliHandler (options = {}) {
         }
         case 'ctx': {
           try {
+            const targetPlayer = rest[0] || ''
+            const query = rest.slice(targetPlayer ? 1 : 0).join(' ').trim()
+            if (typeof buildContextSelection === 'function') {
+              const selection = await buildContextSelection({ username: targetPlayer, content: query })
+              const fixed = Array.isArray(selection.fixedSlices) ? selection.fixedSlices : []
+              const candidates = Array.isArray(selection.candidateSlices) ? selection.candidateSlices : []
+              const selected = Array.isArray(selection.selectedSlices) ? selection.selectedSlices : []
+              const cfg = selection.selectionCfg || {}
+              print('ctxSelect ->', `topK=${cfg.topK ?? 'na'}`, `minScore=${cfg.minScore ?? 'na'}`, `q="${selection.selectionQuery || ''}"`)
+              if (fixed.length) {
+                print('fixed ->', fixed.map(s => s.name).join(' | '))
+                for (const slice of fixed) {
+                  print(`${slice.name} ->`, slice.text || '(empty)')
+                }
+              }
+              if (candidates.length) {
+                for (const slice of candidates) {
+                  const score = Number.isFinite(slice.score) ? slice.score.toFixed(4) : 'na'
+                  const maxChars = Number.isFinite(slice.maxChars) ? slice.maxChars : 'none'
+                  const picked = slice.selected ? 'yes' : 'no'
+                  print(`${slice.name} score=${score} chars=${slice.chars} max=${maxChars} selected=${picked}`)
+                  if (slice.text) print(`${slice.name} ->`, slice.text)
+                }
+              }
+              print('selected ->', selected.map(s => s.name).join(' | ') || '(none)')
+              if (Array.isArray(selection.memoryRefs)) {
+                print('memoryRefs ->', selection.memoryRefs.length ? selection.memoryRefs.join(' ') : '(none)')
+              }
+              break
+            }
             if (typeof buildMetaContext === 'function') {
               print('metaCtx ->', buildMetaContext())
             }
             print('gameCtx ->', buildGameContext())
-            const targetPlayer = rest[0] || ''
-            const query = rest.slice(targetPlayer ? 1 : 0).join(' ').trim()
             const peopleProfilesCtx = (() => {
               try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
             })()
