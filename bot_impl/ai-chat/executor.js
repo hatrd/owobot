@@ -475,6 +475,58 @@ function createChatExecutor ({
     return `${ctx}\n\n${question}`
   }
 
+  function resolveSliceConfig (key) {
+    const ctx = state.ai?.context || {}
+    const cfg = ctx[key]
+    return (cfg && typeof cfg === 'object') ? cfg : {}
+  }
+
+  function resolveMaxChars (cfg) {
+    const rawChars = Number(cfg?.maxChars)
+    const rawTokens = Number(cfg?.budgetTokens)
+    let limit = Number.isFinite(rawChars) ? Math.max(0, Math.floor(rawChars)) : null
+    if (Number.isFinite(rawTokens)) {
+      const tokenChars = Math.max(0, Math.floor(rawTokens * 4))
+      limit = limit == null ? tokenChars : Math.min(limit, tokenChars)
+    }
+    return Number.isFinite(limit) ? limit : null
+  }
+
+  function applySliceBudget (name, text, cfg) {
+    const include = cfg?.include !== false
+    const raw = String(text || '').trim()
+    const maxChars = resolveMaxChars(cfg)
+    let final = raw
+    let trimmed = false
+    if (!include || !raw) {
+      final = ''
+    } else if (Number.isFinite(maxChars) && maxChars >= 0 && raw.length > maxChars) {
+      final = raw.slice(0, maxChars)
+      trimmed = true
+    }
+    return {
+      name,
+      include,
+      maxChars,
+      rawChars: raw.length,
+      chars: final.length,
+      tokens: estTokensFromText(final),
+      trimmed,
+      text: final
+    }
+  }
+
+  function logContextSlices (slices) {
+    if (!log?.info) return
+    const lines = slices.map(s => {
+      if (!s) return ''
+      const maxLabel = Number.isFinite(s.maxChars) ? s.maxChars : 'none'
+      const trimNote = s.trimmed ? ` (trim ${s.rawChars}->${s.chars})` : ''
+      return `${s.name}: chars=${s.chars}${trimNote} tok~=${s.tokens} max=${maxLabel} include=${s.include !== false}`
+    }).filter(Boolean)
+    if (lines.length) log.info('ctx slices ->', lines.join(' | '))
+  }
+
   async function callAI (username, content, intent) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
@@ -499,15 +551,24 @@ function createChatExecutor ({
       try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
     })()
     const metaCtx = buildMetaContext()
+    const metaSlice = applySliceBudget('meta', metaCtx, resolveSliceConfig('meta'))
+    const gameSlice = applySliceBudget('game', gameCtx, resolveSliceConfig('game'))
+    const profilesSlice = applySliceBudget('peopleProfiles', peopleProfilesCtx, resolveSliceConfig('peopleProfiles'))
+    const commitmentsSlice = applySliceBudget('peopleCommitments', peopleCommitmentsCtx, resolveSliceConfig('peopleCommitments'))
+    const memorySlice = applySliceBudget('memory', memoryCtx, resolveSliceConfig('memory'))
+    const chatCfg = resolveSliceConfig('chat')
+    const chatInclude = (state.ai?.context?.include !== false) && (chatCfg?.include !== false)
+    const chatSlice = applySliceBudget('chat', contextPrompt, { ...chatCfg, include: chatInclude })
     const userPrompt = String(content || '').trim()
+    logContextSlices([metaSlice, gameSlice, profilesSlice, commitmentsSlice, memorySlice, chatSlice])
     const userInput = buildUserPromptWithContext({
       userPrompt,
-      metaCtx,
-      gameCtx,
-      peopleProfilesCtx,
-      peopleCommitmentsCtx,
-      memoryCtx,
-      contextPrompt
+      metaCtx: metaSlice.text,
+      gameCtx: gameSlice.text,
+      peopleProfilesCtx: profilesSlice.text,
+      peopleCommitmentsCtx: commitmentsSlice.text,
+      memoryCtx: memorySlice.text,
+      contextPrompt: chatSlice.text
     })
     const messages = [
       { role: 'system', content: systemPrompt() },
@@ -515,11 +576,11 @@ function createChatExecutor ({
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
-        log.info('gameCtx ->', gameCtx)
-        log.info('chatCtx ->', buildContextPrompt(username))
-        log.info('peopleProfilesCtx ->', peopleProfilesCtx)
-        log.info('peopleCommitmentsCtx ->', peopleCommitmentsCtx)
-        log.info('memoryCtx ->', memoryCtx)
+        log.info('gameCtx ->', gameSlice.text)
+        log.info('chatCtx ->', chatSlice.text)
+        log.info('peopleProfilesCtx ->', profilesSlice.text)
+        log.info('peopleCommitmentsCtx ->', commitmentsSlice.text)
+        log.info('memoryCtx ->', memorySlice.text)
       } catch {}
     }
     const estIn = estTokensFromText(messages.map(m => m.content).join(' '))

@@ -1,0 +1,7 @@
+id,task,acceptance,status
+1,"现状基线与预算开关","日志输出上下文片段清单与预算；state.ai.context.<slice>.include 可移除；超预算裁剪可见","done"
+2,"游戏快照分级（lite/detail）","默认不含 blocks/drops/详细 inv；lite 字符数低于 detail；可切换到 detail","todo"
+3,"轻量检索模块（字符 n-gram + BM25/TF-IDF）","样本文本检索相关；topK <= K 且排序；minScore 生效","todo"
+4,"记忆检索改造（长期记忆 + 对话记忆）","不相关为空；相关返回 top-K 且可解释；段落含 标签","todo"
+5,"上下文候选块选择（非意图分类）","候选块选择可复现；预算紧低分剔除高分保留；系统规则/任务状态保留","todo"
+6,"可观测性与调试入口","CLI 命令可做离线选择模拟；文档写清参数/默认值/范围","todo"

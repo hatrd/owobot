@@ -25,19 +25,41 @@ function buildDefaultContext () {
     recentCount: DEFAULT_RECENT_COUNT,
     recentWindowSec: DEFAULT_RECENT_WINDOW_SEC,
     recentStoreMax: 200,
+    meta: {
+      include: true,
+      maxChars: 200
+    },
+    chat: {
+      include: true,
+      maxChars: 1000
+    },
+    peopleProfiles: {
+      include: true,
+      maxChars: 600
+    },
+    peopleCommitments: {
+      include: true,
+      maxChars: 400
+    },
+    affordances: {
+      include: true,
+      maxChars: 240
+    },
     game: {
       include: true,
       nearPlayerRange: 16,
       nearPlayerMax: 5,
       dropsRange: 8,
       dropsMax: 6,
-      invTop: 20
+      invTop: 20,
+      maxChars: 400
     },
     memory: {
       include: true,
       max: 6,
       storeMax: DEFAULT_MEMORY_STORE_MAX,
       mode: 'keyword',
+      maxChars: 500,
       // Location context injection (long-term memory is primarily places now)
       location: {
         include: true,
