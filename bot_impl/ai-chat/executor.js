@@ -275,10 +275,13 @@ function createChatExecutor ({
       const windowSec = Number.isFinite(ctx.recentWindowSec)
         ? Math.max(0, ctx.recentWindowSec)
         : defaults.DEFAULT_RECENT_WINDOW_SEC
+      const busMaxRaw = state.ai?.context?.contextBus?.maxChars
+      const busMaxChars = Number.isFinite(Number(busMaxRaw)) ? Math.max(0, Math.floor(Number(busMaxRaw))) : null
       const xmlCtx = contextBus.buildXml({
         maxEntries,
         windowSec,
-        includeGaps: true
+        includeGaps: true,
+        maxChars: busMaxChars
       })
       const parts = [`当前对话玩家: ${username}`, xmlCtx].filter(Boolean)
       return parts.join('\n\n')
@@ -294,7 +297,9 @@ function createChatExecutor ({
     const windowSec = Number.isFinite(ctx.recentWindowSec)
       ? Math.max(0, ctx.recentWindowSec)
       : defaults.DEFAULT_RECENT_WINDOW_SEC
-    return contextBus.buildXml({ maxEntries, windowSec, includeGaps: true })
+    const busMaxRaw = state.ai?.context?.contextBus?.maxChars
+    const busMaxChars = Number.isFinite(Number(busMaxRaw)) ? Math.max(0, Math.floor(Number(busMaxRaw))) : null
+    return contextBus.buildXml({ maxEntries, windowSec, includeGaps: true, maxChars: busMaxChars })
   }
 
   function buildRecentDialoguePrompt (username) {
@@ -594,7 +599,7 @@ function createChatExecutor ({
     if (!include || !raw) {
       final = ''
     } else if (Number.isFinite(maxChars) && maxChars >= 0 && raw.length > maxChars) {
-      final = raw.slice(0, maxChars)
+      final = maxChars === 0 ? '' : raw.slice(-maxChars)
       trimmed = true
     }
     return {
@@ -662,7 +667,12 @@ function createChatExecutor ({
     const memorySlice = applySliceBudget('memory', memoryCtx, resolveSliceConfig('memory'))
     const contextInclude = state.ai?.context?.include !== false
     const contextBusCfg = resolveSliceConfig('contextBus')
-    const contextBusSlice = applySliceBudget('contextBus', contextBusCtx, { ...contextBusCfg, include: contextInclude && (contextBusCfg.include !== false) })
+    const contextBusSlice = applySliceBudget('contextBus', contextBusCtx, {
+      ...contextBusCfg,
+      maxChars: null,
+      budgetTokens: null,
+      include: contextInclude && (contextBusCfg.include !== false)
+    })
     const recentDialogueCfg = resolveSliceConfig('recentDialogue')
     const recentDialogueSlice = applySliceBudget('recentDialogue', recentDialogueCtx, { ...recentDialogueCfg, include: contextInclude && (recentDialogueCfg.include !== false) })
     const affordancesSlice = applySliceBudget('affordances', affordancesCtx, resolveSliceConfig('affordances'))
@@ -748,7 +758,7 @@ function createChatExecutor ({
       model: model || defaults.DEFAULT_MODEL,
       messages,
       temperature: 0.2,
-      max_tokens: Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 256)),
+      max_tokens: Math.max(120, Math.floor(Number(state.ai.maxTokensPerCall) || 256)),
       stream: false,
       tools: TOOL_FUNCTIONS
     }

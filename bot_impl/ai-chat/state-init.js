@@ -61,18 +61,18 @@ function prepareAiState (state, opts = {}) {
         recentCount: DEFAULT_RECENT_COUNT,
         recentWindowSec: DEFAULT_RECENT_WINDOW_SEC,
         recentStoreMax: 200,
-        meta: { include: true, maxChars: 200 },
-        target: { include: true, maxChars: 80 },
-        task: { include: true, maxChars: 120 },
-        contextBus: { include: true, maxChars: 800 },
-        recentDialogue: { include: true, maxChars: 600 },
-        chat: { include: true, maxChars: 1000 },
-        peopleProfiles: { include: true, maxChars: 600 },
-        peopleCommitments: { include: true, maxChars: 400 },
-        affordances: { include: true, maxChars: 240 },
+        meta: { include: true, maxChars: 2048 },
+        target: { include: true, maxChars: 2048 },
+        task: { include: true, maxChars: 2048 },
+        contextBus: { include: true, maxChars: 2048 },
+        recentDialogue: { include: true, maxChars: 2048 },
+        chat: { include: true, maxChars: 2048 },
+        peopleProfiles: { include: true, maxChars: 2048 },
+        peopleCommitments: { include: true, maxChars: 2048 },
+        affordances: { include: true, maxChars: 2048 },
         selection: { topK: 4, minScore: 0.05, nGram: 2 },
-        game: { include: true, mode: 'lite', nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20, liteMaxChars: 150, detailMaxChars: 400, maxChars: 400 },
-        memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200, maxChars: 500, mode: 'bm25', nGram: 2, bm25MinScore: 0.08, dialogueMax: 6, dialogueMinScore: 0.08 }
+        game: { include: true, mode: 'lite', nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20, liteMaxChars: 2048, detailMaxChars: 2048, maxChars: 2048 },
+        memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200, maxChars: 2048, mode: 'bm25', nGram: 2, bm25MinScore: 0.08, dialogueMax: 6, dialogueMinScore: 0.08 }
       })
   const DEF_CTX = resolveContext()
   state.ai = state.ai || {
@@ -81,7 +81,7 @@ function prepareAiState (state, opts = {}) {
     baseUrl: DEFAULT_BASE,
     path: DEFAULT_PATH,
     model: DEFAULT_MODEL,
-    maxReplyLen: 240,
+    maxReplyLen: 256,
     limits: null,
     currency: (process.env.AI_CURRENCY || 'USD'),
     priceInPerKT: parseFloat(process.env.AI_PRICE_IN_PER_KT || '0'),
@@ -89,13 +89,15 @@ function prepareAiState (state, opts = {}) {
     budgetDay: null,
     budgetMonth: null,
     budgetTotal: null,
-    maxTokensPerCall: 1024,
+    maxTokensPerCall: 4096,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     notifyOnBudget: true,
     trace: false
   }
   if (typeof state.ai.listenEnabled !== 'boolean') state.ai.listenEnabled = true
   if (!Number.isFinite(state.ai.timeoutMs) || state.ai.timeoutMs <= 0) state.ai.timeoutMs = DEFAULT_TIMEOUT_MS
+  if (!Number.isFinite(state.ai.maxReplyLen) || state.ai.maxReplyLen < 256) state.ai.maxReplyLen = 256
+  if (!Number.isFinite(state.ai.maxTokensPerCall) || state.ai.maxTokensPerCall < 4096) state.ai.maxTokensPerCall = 4096
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
     ...DEF_CTX,
@@ -112,6 +114,22 @@ function prepareAiState (state, opts = {}) {
     selection: { ...DEF_CTX.selection, ...(state.ai.context.selection || {}) },
     game: { ...DEF_CTX.game, ...(state.ai.context.game || {}) },
     memory: { ...DEF_CTX.memory, ...(state.ai.context.memory || {}) }
+  }
+  const SLICE_MIN_CHARS = 2048
+  const enforceMinChars = (cfg, key = 'maxChars') => {
+    if (!cfg || typeof cfg !== 'object') return
+    const raw = Number(cfg[key])
+    if (!Number.isFinite(raw) || raw < SLICE_MIN_CHARS) cfg[key] = SLICE_MIN_CHARS
+  }
+  const ctx = state.ai.context
+  if (ctx?.contextBus) ctx.contextBus.maxChars = 2048
+  for (const key of ['meta', 'target', 'task', 'recentDialogue', 'chat', 'peopleProfiles', 'peopleCommitments', 'affordances', 'memory']) {
+    enforceMinChars(ctx?.[key])
+  }
+  if (ctx?.game) {
+    enforceMinChars(ctx.game)
+    enforceMinChars(ctx.game, 'liteMaxChars')
+    enforceMinChars(ctx.game, 'detailMaxChars')
   }
   if (!state.ai.context.userRecentOverride && (!Number.isFinite(state.ai.context.recentCount) || state.ai.context.recentCount < DEFAULT_RECENT_COUNT)) {
     state.ai.context.recentCount = DEFAULT_RECENT_COUNT

@@ -55,10 +55,12 @@ function collectContext ({ contextBus, state, username, userMessage, capturedAt 
     return []
   })()
   const lines = Array.isArray(store) ? store.map(formatContextBusEntry).filter(Boolean) : []
+  const msg = userMessage ? String(userMessage).replace(/\s+/g, ' ').trim() : ''
+  const msgTrimmed = msg && msg.length > 2048 ? msg.slice(-2048) : msg
   const header = [
     `捕获时间: ${formatIso(capturedAt) || String(capturedAt || '')}`,
     username ? `玩家: ${username}` : null,
-    userMessage ? `触发消息: ${String(userMessage).replace(/\s+/g, ' ').trim().slice(0, 400)}` : null
+    msgTrimmed ? `触发消息: ${msgTrimmed}` : null
   ].filter(Boolean).join('\n')
   const transcript = lines.length ? lines.join('\n') : '(empty)'
   const raw = safeJson(store)

@@ -173,13 +173,13 @@ function createAiCliHandler (options = {}) {
             case 'day': state.ai.budgetDay = v == null ? null : Math.max(0, parseFloat(v || '0') || 0); print('budgetDay=', state.ai.budgetDay); break
             case 'month': state.ai.budgetMonth = v == null ? null : Math.max(0, parseFloat(v || '0') || 0); print('budgetMonth=', state.ai.budgetMonth); break
             case 'total': state.ai.budgetTotal = v == null ? null : Math.max(0, parseFloat(v || '0') || 0); print('budgetTotal=', state.ai.budgetTotal); break
-            case 'maxtokens': state.ai.maxTokensPerCall = Math.max(64, parseInt(v || '1024', 10)); print('maxTokensPerCall=', state.ai.maxTokensPerCall); break
+            case 'maxtokens': state.ai.maxTokensPerCall = Math.max(64, parseInt(v || '4096', 10)); print('maxTokensPerCall=', state.ai.maxTokensPerCall); break
             case 'notify': state.ai.notifyOnBudget = ['1', 'true', 'on', 'yes'].includes(String(v).toLowerCase()); print('notifyOnBudget=', state.ai.notifyOnBudget); break
             case 'resetday': state.aiSpend.day = { start: dayStart(), inTok: 0, outTok: 0, cost: 0 }; print('day spend reset'); break
             case 'resetmonth': state.aiSpend.month = { start: monthStart(), inTok: 0, outTok: 0, cost: 0 }; print('month spend reset'); break
             case 'resettotal': state.aiSpend.total = { inTok: 0, outTok: 0, cost: 0 }; print('total spend reset'); break
             default:
-              print('budget usage: .ai budget show|currency USD|pricein 0.002|priceout 0.002|day 1.5|month 10|maxtokens 1024|notify on|resetday|resetmonth')
+              print('budget usage: .ai budget show|currency USD|pricein 0.002|priceout 0.002|day 1.5|month 10|maxtokens 4096|notify on|resetday|resetmonth')
           }
           break
         }
@@ -188,7 +188,7 @@ function createAiCliHandler (options = {}) {
           switch (k) {
             case 'maxlen':
             case 'len':
-              state.ai.maxReplyLen = Math.max(60, parseInt(v || '240', 10))
+              state.ai.maxReplyLen = Math.max(60, parseInt(v || '256', 10))
               print('maxReplyLen =', state.ai.maxReplyLen)
               break
             case 'show':

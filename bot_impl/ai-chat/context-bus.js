@@ -2,8 +2,19 @@ const GAP_THRESHOLD_MS = 5 * 60 * 1000
 const DEFAULT_MAX_ENTRIES = 200
 const DEFAULT_WINDOW_SEC = 24 * 60 * 60
 const STACK_WINDOW_MS = 5000
-const EVENT_DATA_MAX = 100
+const ENTRY_TEXT_MAX = 2048
+const EVENT_DATA_MAX = 2048
+const FROM_TEXT_MAX = 64
 const NUMERIC_STACK_EVENTS = ['heal']
+
+function keepTail (value, maxLen) {
+  const str = String(value ?? '')
+  const limit = Number.isFinite(maxLen) ? Math.floor(maxLen) : null
+  if (!Number.isFinite(limit)) return str
+  if (limit <= 0) return ''
+  if (str.length <= limit) return str
+  return str.slice(-limit)
+}
 
 function createContextBus ({ state, now = () => Date.now() }) {
   function ensureStore () {
@@ -43,34 +54,34 @@ function createContextBus ({ state, now = () => Date.now() }) {
   }
 
   function pushPlayer (name, content) {
-    return push('player', { name, content: String(content || '').slice(0, 200) })
+    return push('player', { name, content: keepTail(content, ENTRY_TEXT_MAX) })
   }
 
   function pushServer (content) {
-    const text = String(content || '').slice(0, 200)
+    const text = keepTail(content, ENTRY_TEXT_MAX)
     const stacked = tryStackServer(text)
     if (stacked) return stacked
     return push('server', { content: text })
   }
 
   function pushBot (content) {
-    return push('bot', { content: String(content || '').slice(0, 200) })
+    return push('bot', { content: keepTail(content, ENTRY_TEXT_MAX) })
   }
 
   function pushBotFrom (content, from) {
     const f = String(from || '').trim()
     return push('bot', {
-      content: String(content || '').slice(0, 200),
-      from: f ? f.slice(0, 32) : null
+      content: keepTail(content, ENTRY_TEXT_MAX),
+      from: f ? keepTail(f, FROM_TEXT_MAX) : null
     })
   }
 
   function pushTool (content) {
-    return push('tool', { content: String(content || '').slice(0, 200) })
+    return push('tool', { content: keepTail(content, ENTRY_TEXT_MAX) })
   }
 
   function parseStackKey (eventType, data) {
-    const str = String(data ?? '').slice(0, EVENT_DATA_MAX)
+    const str = keepTail(data, EVENT_DATA_MAX)
     const m = str.match(/^(.+?)(?:\s*x(\d+))?$/)
     if (!m) return { base: str, count: 1 }
     const base = String(m[1] ?? '').trim()
@@ -82,7 +93,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
     const n = Number.isFinite(count) && count >= 1 ? Math.floor(count) : 1
     const suffix = n > 1 ? `x${n}` : ''
     const maxBaseLen = EVENT_DATA_MAX - suffix.length
-    const b = String(base ?? '').slice(0, Math.max(0, maxBaseLen))
+    const b = keepTail(base, Math.max(0, maxBaseLen))
     return `${b}${suffix}`
   }
 
@@ -92,7 +103,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
   }
 
   function parseNumericEvent (data) {
-    const str = String(data ?? '').slice(0, EVENT_DATA_MAX)
+    const str = keepTail(data, EVENT_DATA_MAX)
     const m = str.match(/^(.+?):([+-]?\d+(?:\.\d+)?)(?:x(\d+))?$/)
     if (!m) return null
     const subject = String(m[1] ?? '').trim()
@@ -111,7 +122,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
       : Math.abs(safe).toFixed(1)
     const signed = safe > 0 ? `+${body}` : safe < 0 ? `-${body}` : '0'
     const maxSubjectLen = Math.max(0, EVENT_DATA_MAX - signed.length - 1)
-    const trimmedSubject = String(subject ?? '').slice(0, maxSubjectLen)
+    const trimmedSubject = keepTail(subject, maxSubjectLen)
     return `${trimmedSubject}:${signed}`
   }
 
@@ -175,7 +186,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
   function pushEvent (eventType, data) {
     const stacked = tryStackEvent(eventType, data)
     if (stacked) return stacked
-    return push('event', { eventType, data: String(data ?? '').slice(0, EVENT_DATA_MAX) })
+    return push('event', { eventType, data: keepTail(data, EVENT_DATA_MAX) })
   }
 
   function escapeXml (value) {
@@ -234,6 +245,9 @@ function createContextBus ({ state, now = () => Date.now() }) {
       ? Math.max(0, Math.floor(Number(options.gapThresholdMs)))
       : GAP_THRESHOLD_MS
     const includeGaps = options.includeGaps !== false
+    const maxChars = Number.isFinite(Number(options.maxChars))
+      ? Math.max(0, Math.floor(Number(options.maxChars)))
+      : null
 
     const nowTs = now()
     const windowSec = Number.isFinite(Number(options.windowSec))
@@ -252,26 +266,38 @@ function createContextBus ({ state, now = () => Date.now() }) {
     if (!filtered.length) return ''
     filtered.reverse()
 
-    const lines = [
-      '<ctx>',
-      '<!-- p=player s=server e=event b=bot t=tool g=gap -->'
-    ]
-
-    let prevTs = null
-    for (const entry of filtered) {
-      if (includeGaps && prevTs !== null) {
-        const gap = entry.t - prevTs
-        if (gap >= gapThreshold) {
-          lines.push(`<g d="${formatDuration(gap)}"/>`)
+    const buildLines = (entries) => {
+      const lines = [
+        '<ctx>',
+        '<!-- p=player s=server e=event b=bot t=tool g=gap -->'
+      ]
+      let prevTs = null
+      for (const entry of entries) {
+        if (includeGaps && prevTs !== null) {
+          const gap = entry.t - prevTs
+          if (gap >= gapThreshold) {
+            lines.push(`<g d="${formatDuration(gap)}"/>`)
+          }
         }
+        const xml = serializeEntry(entry)
+        if (xml) lines.push(xml)
+        prevTs = entry.t
       }
-      const xml = serializeEntry(entry)
-      if (xml) lines.push(xml)
-      prevTs = entry.t
+      lines.push('</ctx>')
+      return lines
     }
 
-    lines.push('</ctx>')
-    return lines.join('\n')
+    let entries = filtered
+    let lines = buildLines(entries)
+    let xml = lines.join('\n')
+    if (Number.isFinite(maxChars)) {
+      while (entries.length > 1 && xml.length > maxChars) {
+        entries = entries.slice(1)
+        lines = buildLines(entries)
+        xml = lines.join('\n')
+      }
+    }
+    return xml
   }
 
   function getStore () {

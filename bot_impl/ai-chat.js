@@ -348,8 +348,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
 
     const reqMax = Number(maxTokens)
-    const maxOut = Number.isFinite(reqMax) && reqMax > 0 ? Math.floor(reqMax) : 256
-    const cappedOut = Math.max(60, Math.min(maxOut, state.ai.maxTokensPerCall || 512))
+    const fallbackMax = Number(state.ai?.maxTokensPerCall) || 256
+    const maxOut = Number.isFinite(reqMax) && reqMax > 0 ? Math.floor(reqMax) : fallbackMax
+    const cap = Number(state.ai?.maxTokensPerCall)
+    const cappedOut = Math.max(60, Number.isFinite(cap) ? Math.min(maxOut, cap) : maxOut)
     const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.2
 
     const body = {

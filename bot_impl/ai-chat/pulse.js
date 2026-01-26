@@ -20,7 +20,7 @@ function createPulseService ({
   const SAY_LIMITS = {
     maxSteps: 24,
     maxTotalMs: 45000,
-    maxReplyLen: 120
+    maxReplyLen: 256
   }
 
   const SAY_TYPING_DEFAULTS = {
@@ -110,7 +110,7 @@ function createPulseService ({
     const gapMsRaw = Number(args?.gapMs)
     const gapMs = Number.isFinite(gapMsRaw) ? Math.max(0, Math.floor(gapMsRaw)) : 300
     const cancelPrevious = args?.cancelPrevious !== false
-    const maxLen = Math.max(40, Math.min(240, Number(state.ai?.maxReplyLen) || SAY_LIMITS.maxReplyLen))
+    const maxLen = Math.max(40, Math.min(SAY_LIMITS.maxReplyLen, Number(state.ai?.maxReplyLen) || SAY_LIMITS.maxReplyLen))
 
     const rawSteps = Array.isArray(args?.steps) ? args.steps
       : Array.isArray(args?.messages) ? args.messages.map((t, idx) => ({ text: t, pauseMs: idx === args.messages.length - 1 ? 0 : gapMs }))

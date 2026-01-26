@@ -10,7 +10,8 @@ function trimReply (text, maxLen) {
   const t = text.replace(/\s+/g, ' ').trim()
   if (!Number.isFinite(maxLen) || maxLen <= 0) return t
   if (t.length <= maxLen) return t
-  return t.slice(0, Math.max(0, maxLen - 1)) + '…'
+  if (maxLen <= 1) return t.slice(-maxLen)
+  return '…' + t.slice(-(maxLen - 1))
 }
 
 function buildContextPrompt (username, recent, options = {}) {

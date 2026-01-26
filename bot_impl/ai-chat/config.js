@@ -27,39 +27,39 @@ function buildDefaultContext () {
     recentStoreMax: 200,
     meta: {
       include: true,
-      maxChars: 200
+      maxChars: 2048
     },
     target: {
       include: true,
-      maxChars: 80
+      maxChars: 2048
     },
     task: {
       include: true,
-      maxChars: 120
+      maxChars: 2048
     },
     contextBus: {
       include: true,
-      maxChars: 800
+      maxChars: 2048
     },
     recentDialogue: {
       include: true,
-      maxChars: 600
+      maxChars: 2048
     },
     chat: {
       include: true,
-      maxChars: 1000
+      maxChars: 2048
     },
     peopleProfiles: {
       include: true,
-      maxChars: 600
+      maxChars: 2048
     },
     peopleCommitments: {
       include: true,
-      maxChars: 400
+      maxChars: 2048
     },
     affordances: {
       include: true,
-      maxChars: 240
+      maxChars: 2048
     },
     selection: {
       topK: 4,
@@ -74,16 +74,16 @@ function buildDefaultContext () {
       dropsRange: 8,
       dropsMax: 6,
       invTop: 20,
-      liteMaxChars: 150,
-      detailMaxChars: 400,
-      maxChars: 400
+      liteMaxChars: 2048,
+      detailMaxChars: 2048,
+      maxChars: 2048
     },
     memory: {
       include: true,
       max: 6,
       storeMax: DEFAULT_MEMORY_STORE_MAX,
       mode: 'bm25',
-      maxChars: 500,
+      maxChars: 2048,
       nGram: 2,
       bm25MinScore: 0.08,
       dialogueMax: 6,
