@@ -1,8 +1,10 @@
 const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const timeUtils = require('../time-utils')
+const observer = require('../agent/observer')
 const feedbackPool = require('./feedback-pool')
 const { buildMemoryQuery } = require('./memory-query')
 const cacheStats = require('./cache-stats')
+const bm25 = require('./retrieval/bm25')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const TOOL_NAME_SET = new Set(TOOL_FUNCTIONS.map(t => t?.function?.name).filter(Boolean))
@@ -285,6 +287,96 @@ function createChatExecutor ({
     return [base].filter(Boolean).join('\n\n')
   }
 
+  function buildContextBusPrompt () {
+    if (!contextBus) return ''
+    const ctx = state.ai.context || {}
+    const maxEntries = Number.isFinite(ctx.recentCount) ? Math.max(1, ctx.recentCount) : defaults.DEFAULT_RECENT_COUNT
+    const windowSec = Number.isFinite(ctx.recentWindowSec)
+      ? Math.max(0, ctx.recentWindowSec)
+      : defaults.DEFAULT_RECENT_WINDOW_SEC
+    return contextBus.buildXml({ maxEntries, windowSec, includeGaps: true })
+  }
+
+  function buildRecentDialoguePrompt (username) {
+    const ctx = state.ai.context || {}
+    const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
+    if (!base) return ''
+    const lines = base.split('\n')
+    if (lines.length && /^当前对话玩家/.test(lines[0])) lines.shift()
+    return lines.join('\n').trim()
+  }
+
+  function buildTaskContext () {
+    const task = bot?.state?.currentTask
+    if (!task || !task.name) return ''
+    const src = task.source === 'player' ? '玩家命令' : '自动'
+    return `任务:${task.name}(${src})`
+  }
+
+  function buildAffordancesContext () {
+    try {
+      const list = observer.affordances(bot) || []
+      if (!list.length) return ''
+      const fmtArgs = (args) => {
+        if (!args || typeof args !== 'object') return ''
+        const parts = []
+        for (const [k, v] of Object.entries(args)) {
+          if (v == null) continue
+          parts.push(`${k}=${String(v)}`)
+        }
+        return parts.length ? `(${parts.join(',')})` : ''
+      }
+      const items = list.map(item => {
+        const name = String(item?.tool || '').trim()
+        if (!name) return ''
+        return `${name}${fmtArgs(item?.argsHint)}`
+      }).filter(Boolean)
+      return items.length ? `可用动作: ${items.join(' | ')}` : ''
+    } catch { return '' }
+  }
+
+  function resolveSelectionConfig () {
+    const cfg = state.ai?.context?.selection || {}
+    const topK = Number.isFinite(Number(cfg.topK)) ? Math.max(0, Math.floor(Number(cfg.topK))) : 4
+    const minScore = Number.isFinite(Number(cfg.minScore)) ? Number(cfg.minScore) : 0.05
+    const nGram = Number.isFinite(Number(cfg.nGram)) ? Math.max(1, Math.floor(Number(cfg.nGram))) : 2
+    return { topK, minScore, nGram }
+  }
+
+  function scoreCandidateSlices (query, candidates, selectionCfg) {
+    const list = Array.isArray(candidates) ? candidates.filter(c => c && c.text) : []
+    const q = String(query || '').trim()
+    if (!q || !list.length) return { scored: [], scoreMap: new Map() }
+    const docs = list.map(c => ({ id: c.name, text: c.text, meta: c }))
+    const index = bm25.buildIndex(docs, { nGram: selectionCfg.nGram })
+    const scored = bm25.query(index, q, docs.length, selectionCfg.minScore)
+    const scoreMap = new Map(scored.map(row => [row.id, row.score]))
+    return { scored, scoreMap }
+  }
+
+  function selectCandidateSlices (candidates, scoreMap, selectionCfg) {
+    const scored = []
+    for (const c of candidates) {
+      if (!c || !c.text) continue
+      const score = scoreMap.get(c.name)
+      if (!Number.isFinite(score)) continue
+      scored.push({ ...c, score })
+    }
+    scored.sort((a, b) => (b.score - a.score) || String(a.name).localeCompare(String(b.name)))
+    const selected = selectionCfg.topK > 0 ? scored.slice(0, selectionCfg.topK) : []
+    return { selected, scored }
+  }
+
+  function logContextSelection ({ query, candidates, selected, selectionCfg }) {
+    if (!log?.info) return
+    const scored = candidates.map(c => {
+      const score = Number.isFinite(c.score) ? c.score.toFixed(4) : 'na'
+      const mark = selected.some(s => s.name === c.name) ? '*' : ''
+      return `${c.name}:${score}${mark}`
+    })
+    log.info('ctx select ->', `topK=${selectionCfg.topK}`, `minScore=${selectionCfg.minScore}`, `q="${String(query || '').slice(0, 80)}"`, scored.join(' | '))
+  }
+
   function collectRecentChatForMemoryQuery (username, limit = 2) {
     const name = String(username || '').trim()
     if (!name) return []
@@ -457,16 +549,19 @@ function createChatExecutor ({
     return !startRe.test(trimmed)
   }
 
-  function buildUserPromptWithContext ({ userPrompt, metaCtx, gameCtx, peopleProfilesCtx, peopleCommitmentsCtx, memoryCtx, contextPrompt }) {
-    const blocks = [
-      metaCtx,
-      gameCtx,
-      peopleProfilesCtx,
-      peopleCommitmentsCtx,
-      memoryCtx,
-      contextPrompt
-    ].map(s => String(s || '').trim()).filter(Boolean)
-    const ctx = blocks.join('\n\n')
+  function buildUserPromptWithContext ({ userPrompt, contextSlices, metaCtx, gameCtx, peopleProfilesCtx, peopleCommitmentsCtx, memoryCtx, contextPrompt }) {
+    const blocks = (Array.isArray(contextSlices) && contextSlices.length)
+      ? contextSlices
+      : [
+        metaCtx,
+        gameCtx,
+        peopleProfilesCtx,
+        peopleCommitmentsCtx,
+        memoryCtx,
+        contextPrompt
+      ]
+    const normalized = blocks.map(s => String(s || '').trim()).filter(Boolean)
+    const ctx = normalized.join('\n\n')
     const question = String(userPrompt || '').trim()
     if (!ctx) return question
     if (!question) return ctx
@@ -529,7 +624,8 @@ function createChatExecutor ({
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     if (!key) throw new Error('AI key not configured')
     const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-    const contextPrompt = buildContextPrompt(username)
+    const contextBusCtx = buildContextBusPrompt()
+    const recentDialogueCtx = buildRecentDialoguePrompt(username)
     const gameCtx = buildGameContext()
     const memoryQuery = buildMemoryQuery({
       username,
@@ -549,7 +645,14 @@ function createChatExecutor ({
       try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
     })()
     const metaCtx = buildMetaContext()
+    const targetCtx = username ? `当前对话玩家: ${username}` : ''
+    const taskCtx = buildTaskContext()
+    const affordancesCtx = buildAffordancesContext()
+    const userPrompt = String(content || '').trim()
+
     const metaSlice = applySliceBudget('meta', metaCtx, resolveSliceConfig('meta'))
+    const targetSlice = applySliceBudget('target', targetCtx, resolveSliceConfig('target'))
+    const taskSlice = applySliceBudget('task', taskCtx, resolveSliceConfig('task'))
     const gameCfg = resolveSliceConfig('game')
     const gameModeRaw = String(gameCfg.mode || (gameCfg.detail ? 'detail' : 'lite')).toLowerCase()
     const gameMode = gameModeRaw === 'detail' ? 'detail' : 'lite'
@@ -560,19 +663,38 @@ function createChatExecutor ({
     const profilesSlice = applySliceBudget('peopleProfiles', peopleProfilesCtx, resolveSliceConfig('peopleProfiles'))
     const commitmentsSlice = applySliceBudget('peopleCommitments', peopleCommitmentsCtx, resolveSliceConfig('peopleCommitments'))
     const memorySlice = applySliceBudget('memory', memoryCtx, resolveSliceConfig('memory'))
-    const chatCfg = resolveSliceConfig('chat')
-    const chatInclude = (state.ai?.context?.include !== false) && (chatCfg?.include !== false)
-    const chatSlice = applySliceBudget('chat', contextPrompt, { ...chatCfg, include: chatInclude })
-    const userPrompt = String(content || '').trim()
-    logContextSlices([metaSlice, gameSlice, profilesSlice, commitmentsSlice, memorySlice, chatSlice])
+    const contextInclude = state.ai?.context?.include !== false
+    const contextBusCfg = resolveSliceConfig('contextBus')
+    const contextBusSlice = applySliceBudget('contextBus', contextBusCtx, { ...contextBusCfg, include: contextInclude && (contextBusCfg.include !== false) })
+    const recentDialogueCfg = resolveSliceConfig('recentDialogue')
+    const recentDialogueSlice = applySliceBudget('recentDialogue', recentDialogueCtx, { ...recentDialogueCfg, include: contextInclude && (recentDialogueCfg.include !== false) })
+    const affordancesSlice = applySliceBudget('affordances', affordancesCtx, resolveSliceConfig('affordances'))
+
+    const fixedSlices = [metaSlice, targetSlice, taskSlice].filter(s => s && s.text)
+    const candidateSlices = [
+      contextBusSlice,
+      recentDialogueSlice,
+      gameSlice,
+      memorySlice,
+      affordancesSlice,
+      profilesSlice,
+      commitmentsSlice
+    ].filter(s => s && s.text)
+    const selectionCfg = resolveSelectionConfig()
+    const selectionQuery = memoryQuery || userPrompt
+    const scoreInfo = scoreCandidateSlices(selectionQuery, candidateSlices, selectionCfg)
+    const selectedInfo = selectCandidateSlices(candidateSlices, scoreInfo.scoreMap, selectionCfg)
+    const selectedSet = new Set(selectedInfo.selected.map(s => s.name))
+    for (const slice of candidateSlices) {
+      slice.score = scoreInfo.scoreMap.get(slice.name)
+      slice.selected = selectedSet.has(slice.name)
+    }
+    logContextSlices([...fixedSlices, ...candidateSlices])
+    logContextSelection({ query: selectionQuery, candidates: candidateSlices, selected: selectedInfo.selected, selectionCfg })
+    const contextSlices = [...fixedSlices, ...selectedInfo.selected].map(s => s.text)
     const userInput = buildUserPromptWithContext({
       userPrompt,
-      metaCtx: metaSlice.text,
-      gameCtx: gameSlice.text,
-      peopleProfilesCtx: profilesSlice.text,
-      peopleCommitmentsCtx: commitmentsSlice.text,
-      memoryCtx: memorySlice.text,
-      contextPrompt: chatSlice.text
+      contextSlices
     })
     const messages = [
       { role: 'system', content: systemPrompt() },
@@ -580,11 +702,16 @@ function createChatExecutor ({
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
+        log.info('metaCtx ->', metaSlice.text)
+        log.info('targetCtx ->', targetSlice.text)
+        log.info('taskCtx ->', taskSlice.text)
         log.info('gameCtx ->', gameSlice.text)
-        log.info('chatCtx ->', chatSlice.text)
+        log.info('contextBusCtx ->', contextBusSlice.text)
+        log.info('recentDialogueCtx ->', recentDialogueSlice.text)
         log.info('peopleProfilesCtx ->', profilesSlice.text)
         log.info('peopleCommitmentsCtx ->', commitmentsSlice.text)
         log.info('memoryCtx ->', memorySlice.text)
+        log.info('affordancesCtx ->', affordancesSlice.text)
       } catch {}
     }
     const estIn = estTokensFromText(messages.map(m => m.content).join(' '))

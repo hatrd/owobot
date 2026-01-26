@@ -29,6 +29,22 @@ function buildDefaultContext () {
       include: true,
       maxChars: 200
     },
+    target: {
+      include: true,
+      maxChars: 80
+    },
+    task: {
+      include: true,
+      maxChars: 120
+    },
+    contextBus: {
+      include: true,
+      maxChars: 800
+    },
+    recentDialogue: {
+      include: true,
+      maxChars: 600
+    },
     chat: {
       include: true,
       maxChars: 1000
@@ -44,6 +60,11 @@ function buildDefaultContext () {
     affordances: {
       include: true,
       maxChars: 240
+    },
+    selection: {
+      topK: 4,
+      minScore: 0.05,
+      nGram: 2
     },
     game: {
       include: true,

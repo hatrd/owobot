@@ -62,10 +62,15 @@ function prepareAiState (state, opts = {}) {
         recentWindowSec: DEFAULT_RECENT_WINDOW_SEC,
         recentStoreMax: 200,
         meta: { include: true, maxChars: 200 },
+        target: { include: true, maxChars: 80 },
+        task: { include: true, maxChars: 120 },
+        contextBus: { include: true, maxChars: 800 },
+        recentDialogue: { include: true, maxChars: 600 },
         chat: { include: true, maxChars: 1000 },
         peopleProfiles: { include: true, maxChars: 600 },
         peopleCommitments: { include: true, maxChars: 400 },
         affordances: { include: true, maxChars: 240 },
+        selection: { topK: 4, minScore: 0.05, nGram: 2 },
         game: { include: true, mode: 'lite', nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20, liteMaxChars: 150, detailMaxChars: 400, maxChars: 400 },
         memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200, maxChars: 500, mode: 'bm25', nGram: 2, bm25MinScore: 0.08, dialogueMax: 6, dialogueMinScore: 0.08 }
       })
@@ -96,10 +101,15 @@ function prepareAiState (state, opts = {}) {
     ...DEF_CTX,
     ...state.ai.context,
     meta: { ...DEF_CTX.meta, ...(state.ai.context.meta || {}) },
+    target: { ...DEF_CTX.target, ...(state.ai.context.target || {}) },
+    task: { ...DEF_CTX.task, ...(state.ai.context.task || {}) },
+    contextBus: { ...DEF_CTX.contextBus, ...(state.ai.context.contextBus || {}) },
+    recentDialogue: { ...DEF_CTX.recentDialogue, ...(state.ai.context.recentDialogue || {}) },
     chat: { ...DEF_CTX.chat, ...(state.ai.context.chat || {}) },
     peopleProfiles: { ...DEF_CTX.peopleProfiles, ...(state.ai.context.peopleProfiles || {}) },
     peopleCommitments: { ...DEF_CTX.peopleCommitments, ...(state.ai.context.peopleCommitments || {}) },
     affordances: { ...DEF_CTX.affordances, ...(state.ai.context.affordances || {}) },
+    selection: { ...DEF_CTX.selection, ...(state.ai.context.selection || {}) },
     game: { ...DEF_CTX.game, ...(state.ai.context.game || {}) },
     memory: { ...DEF_CTX.memory, ...(state.ai.context.memory || {}) }
   }
