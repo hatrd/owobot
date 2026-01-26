@@ -3,6 +3,17 @@ const path = require('path')
 
 const DATA_DIR = path.resolve(process.cwd(), 'data')
 const DEFAULT_POOL_FILE = path.join(DATA_DIR, 'requirements-pool.txt')
+const MAX_NEED_CHARS = 2048
+const MAX_PUBLIC_MESSAGE_CHARS = 2048
+
+function keepTail (value, maxLen) {
+  const text = String(value ?? '')
+  const limit = Number.isFinite(maxLen) ? Math.floor(maxLen) : null
+  if (!Number.isFinite(limit)) return text
+  if (limit <= 0) return ''
+  if (text.length <= limit) return text
+  return text.slice(-limit)
+}
 
 function normalizeNeed (need) {
   if (typeof need !== 'string') return ''
@@ -10,7 +21,7 @@ function normalizeNeed (need) {
   try { out = need.normalize('NFKC') } catch { out = need }
   out = out.replace(/\s+/g, ' ').trim()
   out = out.replace(/[\r\n]+/g, ' ').trim()
-  return out.slice(0, 200)
+  return keepTail(out, MAX_NEED_CHARS)
 }
 
 function normalizePublicMessage (text) {
@@ -19,7 +30,7 @@ function normalizePublicMessage (text) {
   try { out = text.normalize('NFKC') } catch { out = text }
   out = out.replace(/\s+/g, ' ').trim()
   out = out.replace(/[\r\n]+/g, ' ').trim()
-  return out.slice(0, 240)
+  return keepTail(out, MAX_PUBLIC_MESSAGE_CHARS)
 }
 
 function safeJson (value) {

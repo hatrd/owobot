@@ -2237,6 +2237,16 @@ function createMemoryService ({
     }
   }
 
+  const PEOPLE_PATCH_TEXT_MAX = 2048
+  function keepTailText (value, maxLen = PEOPLE_PATCH_TEXT_MAX) {
+    const text = String(value ?? '')
+    const limit = Number.isFinite(maxLen) ? Math.floor(maxLen) : null
+    if (!Number.isFinite(limit)) return text
+    if (limit <= 0) return ''
+    if (text.length <= limit) return text
+    return text.slice(-limit)
+  }
+
   function sanitizePeoplePatch (patch) {
     const out = { profiles: [], commitments: [] }
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return out
@@ -2252,7 +2262,7 @@ function createMemoryService ({
       const key = player.toLowerCase()
       if (seenProfiles.has(key)) continue
       seenProfiles.add(key)
-      out.profiles.push({ player, profile: profile.slice(0, 240) })
+      out.profiles.push({ player, profile: keepTailText(profile) })
     }
 
     const seenCommitments = new Set()
@@ -2270,7 +2280,7 @@ function createMemoryService ({
         : (Number.isFinite(raw.deadline) ? raw.deadline : (Number.isFinite(raw.deadline_ms) ? raw.deadline_ms : null))
       out.commitments.push({
         player,
-        action: action.slice(0, 180),
+        action: keepTailText(action),
         status,
         ...(Number.isFinite(deadlineMs) ? { deadlineMs } : null)
       })

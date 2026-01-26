@@ -35,7 +35,7 @@ function createAiCliHandler (options = {}) {
         case 'model': state.ai.model = rest[0] || state.ai.model; print('model =', state.ai.model); break
         case 'base': state.ai.baseUrl = rest[0] || state.ai.baseUrl; print('base =', state.ai.baseUrl); break
         case 'path': state.ai.path = rest[0] || state.ai.path; print('path =', state.ai.path); break
-        case 'max': state.ai.maxReplyLen = Math.max(20, parseInt(rest[0] || '120', 10)); print('maxReplyLen =', state.ai.maxReplyLen); break
+        case 'max': state.ai.maxReplyLen = Math.max(20, parseInt(rest[0] || '256', 10)); print('maxReplyLen =', state.ai.maxReplyLen); break
         case 'clear': {
           state.aiRecent = []
           state.aiRecentSeq = 0
