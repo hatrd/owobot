@@ -110,7 +110,10 @@ function createPulseService ({
     const gapMsRaw = Number(args?.gapMs)
     const gapMs = Number.isFinite(gapMsRaw) ? Math.max(0, Math.floor(gapMsRaw)) : 300
     const cancelPrevious = args?.cancelPrevious !== false
-    const maxLen = Math.max(40, Math.min(240, Number(state.ai?.maxReplyLen) || SAY_LIMITS.maxReplyLen))
+    const configuredMaxLen = Number(state.ai?.maxReplyLen)
+    const maxLen = Number.isFinite(configuredMaxLen) && configuredMaxLen > 0
+      ? Math.floor(configuredMaxLen)
+      : Infinity
 
     const rawSteps = Array.isArray(args?.steps) ? args.steps
       : Array.isArray(args?.messages) ? args.messages.map((t, idx) => ({ text: t, pauseMs: idx === args.messages.length - 1 ? 0 : gapMs }))

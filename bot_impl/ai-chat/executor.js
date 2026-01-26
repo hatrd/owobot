@@ -471,6 +471,7 @@ function createChatExecutor ({
 
   async function callAI (username, content, intent, options = {}) {
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
+    const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     if (!key) throw new Error('AI key not configured')
     const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const contextPrompt = buildContextPrompt(username)
@@ -557,7 +558,7 @@ function createChatExecutor ({
       }
       const toolCalls = extractToolCalls(choice)
       if (toolCalls.length) {
-        let speech = reply ? H.trimReply(reply, maxReplyLen || 120) : ''
+        let speech = reply ? H.trimReply(reply, replyLimit) : ''
         let finalText = ''
         for (const call of toolCalls) {
           const payload = normalizeToolPayload(call)
@@ -568,7 +569,7 @@ function createChatExecutor ({
         }
         return { reply: finalText, memoryRefs }
       }
-      return { reply: H.trimReply(reply, maxReplyLen || 120), memoryRefs }
+      return { reply: H.trimReply(reply, replyLimit), memoryRefs }
     } finally {
       clearTimeout(timeout)
       ctrl.abort = null
@@ -619,13 +620,14 @@ function createChatExecutor ({
   }
 
   async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs }) {
+    const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     const toolName = String(payload.tool)
     const toolLower = toolName.toLowerCase()
     if (toolLower === 'skip') return ''
     if (toolLower === 'stop_listen') {
       const rawMessage = payload.args?.message ?? payload.args?.text ?? payload.args?.publicMessage
-      const fromArgs = typeof rawMessage === 'string' ? H.trimReply(rawMessage, maxReplyLen || 120) : ''
-      const fallback = !fromArgs && speech ? H.trimReply(speech, maxReplyLen || 120) : ''
+      const fromArgs = typeof rawMessage === 'string' ? H.trimReply(rawMessage, replyLimit) : ''
+      const fallback = !fromArgs && speech ? H.trimReply(speech, replyLimit) : ''
       if (!state.ai || typeof state.ai !== 'object') state.ai = {}
       state.ai.listenEnabled = false
       ctrl.pending = []
@@ -649,41 +651,41 @@ function createChatExecutor ({
         contextBus,
         state
       })
-      if (!saved.ok) return H.trimReply('我刚才没把这句话记住…你再说一遍？', maxReplyLen || 120)
+      if (!saved.ok) return H.trimReply('我刚才没把这句话记住…你再说一遍？', replyLimit)
       try { contextBus?.pushEvent('feedback.saved', String(saved.capturedAt || '')) } catch {}
       const inPlanContext = Boolean(ctrl.plan && ctrl.plan.owner === username && (intent?.topic === 'plan' || ctrl.planDriving))
       const terminatePlan = terminatePlanRaw === true ? true : (terminatePlanRaw === false ? false : inPlanContext)
 
-      const publicMessage = typeof publicMessageRaw === 'string' ? H.trimReply(publicMessageRaw, maxReplyLen || 120) : ''
-      const defaultPlanMessage = H.trimReply('这一步我现在还不会…我先把它记下来，等我有空学学；计划先停一下。', maxReplyLen || 120)
+      const publicMessage = typeof publicMessageRaw === 'string' ? H.trimReply(publicMessageRaw, replyLimit) : ''
+      const defaultPlanMessage = H.trimReply('这一步我现在还不会…我先把它记下来，等我有空学学；计划先停一下。', replyLimit)
       const outward = publicMessage || (terminatePlan ? defaultPlanMessage : '')
       if (outward) pulse.sendChatReply(username, outward, { reason: 'feedback_public', memoryRefs })
       if (terminatePlan) clearPlan('feedback')
 
-      return (speech || outward) ? '' : H.trimReply('我记下来了，回头我研究研究。', maxReplyLen || 120)
+      return (speech || outward) ? '' : H.trimReply('我记下来了，回头我研究研究。', replyLimit)
     }
     if (toolLower === 'plan_mode') {
       const ok = startPlanMode({ username, goal: payload.args?.goal || content, steps: payload.args?.steps || [] })
-      if (!ok) return H.trimReply('需要提供可执行的计划步骤哦~', maxReplyLen || 120)
+      if (!ok) return H.trimReply('需要提供可执行的计划步骤哦~', replyLimit)
       return ''
     }
     if (toolName === 'write_memory') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const normalized = memory.longTerm.normalizeText(payload.args?.text || '')
-      if (!normalized) return H.trimReply('没听懂要记什么呢~', maxReplyLen || 120)
+      if (!normalized) return H.trimReply('没听懂要记什么呢~', replyLimit)
       const importanceRaw = Number(payload.args?.importance)
       const importance = Number.isFinite(importanceRaw) ? importanceRaw : 1
       const author = payload.args?.author ? String(payload.args.author) : username
       const source = payload.args?.source ? String(payload.args.source) : 'ai'
       const added = memory.longTerm.addEntry({ text: normalized, author, source, importance })
       if (state.ai.trace && log?.info) log.info('tool write_memory ->', { text: normalized, author, source, importance, ok: added.ok })
-      if (!added.ok) return H.trimReply('记忆没有保存下来~', maxReplyLen || 120)
-      return speech ? '' : H.trimReply('记住啦~', maxReplyLen || 120)
+      if (!added.ok) return H.trimReply('记忆没有保存下来~', replyLimit)
+      return speech ? '' : H.trimReply('记住啦~', replyLimit)
     }
     if (toolName === 'add_commitment') {
       const actionRaw = payload.args?.action
       const action = typeof actionRaw === 'string' ? actionRaw.trim() : ''
-      if (!action) return H.trimReply('没听懂要承诺什么呢~', maxReplyLen || 120)
+      if (!action) return H.trimReply('没听懂要承诺什么呢~', replyLimit)
       const player = payload.args?.player ? String(payload.args.player) : username
       const deadlineRaw = payload.args?.deadlineMs
       const deadlineMs = Number.isFinite(deadlineRaw) ? deadlineRaw : null
@@ -701,13 +703,13 @@ function createChatExecutor ({
         } catch { return null }
       })()
       if (!storedInPeople && !commitment) {
-        return H.trimReply('现在记不住承诺呢~', maxReplyLen || 120)
+        return H.trimReply('现在记不住承诺呢~', replyLimit)
       }
       if (contextBus) {
         try { contextBus.pushEvent('commitment.add', `${player}:${action}`) } catch {}
       }
       if (state.ai.trace && log?.info) log.info('commitment ->', commitment)
-      const reply = speech || H.trimReply(`好，我记下了承诺: ${action}`, maxReplyLen || 120)
+      const reply = speech || H.trimReply(`好，我记下了承诺: ${action}`, replyLimit)
       if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:add', memoryRefs })
       return ''
     }
@@ -736,7 +738,7 @@ function createChatExecutor ({
       }
     } catch {}
     if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(toolName)) {
-      return H.trimReply('我这就看看…', maxReplyLen || 120)
+      return H.trimReply('我这就看看…', replyLimit)
     }
     if (toolName === 'follow_player') {
       const raw = String(content || '')
@@ -758,16 +760,16 @@ function createChatExecutor ({
         try { contextBus.pushEvent('tool.afk', toolLower) } catch {}
       }
     }
-    if (!isActionToolAllowed(toolName)) return H.trimReply('这个我还不会哟~', maxReplyLen || 120)
+    if (!isActionToolAllowed(toolName)) return H.trimReply('这个我还不会哟~', replyLimit)
     const busy = Boolean(state?.externalBusy)
     const canOverrideBusy = canToolBypassBusy(toolName, payload)
     if (busy && !canOverrideBusy) {
-      return H.trimReply('我还在执行其他任务，先等我完成或者说“重置”哦~', maxReplyLen || 120)
+      return H.trimReply('我还在执行其他任务，先等我完成或者说“重置”哦~', replyLimit)
     }
     const actionScore = gateActionWithIdentity(toolName)
     if (actionScore && Number.isFinite(actionScore.score) && actionScore.score < 0.45) {
       const scoreStr = actionScore.score.toFixed(2)
-      return H.trimReply(`这个动作我信心不高（评分${scoreStr}），要不要换个？`, maxReplyLen || 120)
+      return H.trimReply(`这个动作我信心不高（评分${scoreStr}），要不要换个？`, replyLimit)
     }
     const hadSpeech = Boolean(speech)
     if (hadSpeech) {
@@ -789,7 +791,7 @@ function createChatExecutor ({
       if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
       const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
       const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
-      const finalText = H.trimReply(baseMsg || fallback, maxReplyLen || 120)
+      const finalText = H.trimReply(baseMsg || fallback, replyLimit)
       if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     }
     runTool().catch((err) => { log?.warn && log.warn('tool async failure', err?.message || err) })

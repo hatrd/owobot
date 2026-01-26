@@ -70,7 +70,7 @@ function prepareAiState (state, opts = {}) {
     baseUrl: DEFAULT_BASE,
     path: DEFAULT_PATH,
     model: DEFAULT_MODEL,
-    maxReplyLen: 240,
+    maxReplyLen: null,
     limits: null,
     currency: (process.env.AI_CURRENCY || 'USD'),
     priceInPerKT: parseFloat(process.env.AI_PRICE_IN_PER_KT || '0'),
