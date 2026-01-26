@@ -110,20 +110,11 @@ function createChatExecutor ({
 
   function buildPendingBatchText (batch) {
     const lines = []
-    const names = [...new Set(batch.map(e => String(e?.username || '').trim()).filter(Boolean))]
-    lines.push('【上一轮回复期间收到的新消息（批量，多玩家）】')
-    if (names.length) lines.push(`参与玩家：${names.join('、')}`)
     for (const entry of batch) {
       const joined = Array.isArray(entry.parts) ? entry.parts.join('\n') : ''
       if (!joined) continue
       lines.push(`${entry.username}: ${joined}`)
     }
-    lines.push([
-      '这是对多个玩家的批量对话输入。',
-      '如果需要分别回应，请用 say 工具分次发送；每条消息开头用“玩家名：”来点名（不要用 @）。',
-      '对不需要回应的玩家，不要发送该玩家的消息。',
-      '如果某个玩家在消息里明确要求“记住/记一下/记下来…”，请调用 write_memory 工具保存，不要只口头答应。'
-    ].join(''))
     return lines.join('\n')
   }
 
