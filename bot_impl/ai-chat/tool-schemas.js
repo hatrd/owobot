@@ -33,7 +33,7 @@ const ACTION_TOOL_DEFINITIONS = [
   },
   {
     name: 'follow_player',
-    description: 'Follow a specific player while keeping some distance. If the player entity is not found nearby, it will only send `/tpa <name>` (no \"not found\" reply).',
+    description: 'Follow a specific player while keeping some distance.',
     parameters: {
       type: 'object',
       properties: {
