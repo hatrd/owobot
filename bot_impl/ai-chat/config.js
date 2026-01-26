@@ -41,10 +41,6 @@ function buildDefaultContext () {
       include: true,
       maxChars: 2048
     },
-    recentDialogue: {
-      include: true,
-      maxChars: 2048
-    },
     chat: {
       include: true,
       maxChars: 2048

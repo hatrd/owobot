@@ -302,15 +302,6 @@ function createChatExecutor ({
     return contextBus.buildXml({ maxEntries, windowSec, includeGaps: true, maxChars: busMaxChars })
   }
 
-  function buildRecentDialoguePrompt (username) {
-    const ctx = state.ai.context || {}
-    const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
-    if (!base) return ''
-    const lines = base.split('\n')
-    if (lines.length && /^当前对话玩家/.test(lines[0])) lines.shift()
-    return lines.join('\n').trim()
-  }
-
   function buildTaskContext () {
     const task = bot?.state?.currentTask
     if (!task || !task.name) return ''
@@ -627,7 +618,6 @@ function createChatExecutor ({
 
   async function buildContextSelection ({ username, content }) {
     const contextBusCtx = buildContextBusPrompt()
-    const recentDialogueCtx = buildRecentDialoguePrompt(username)
     const gameCtx = buildGameContext()
     const memoryQuery = buildMemoryQuery({
       username,
@@ -673,14 +663,11 @@ function createChatExecutor ({
       budgetTokens: null,
       include: contextInclude && (contextBusCfg.include !== false)
     })
-    const recentDialogueCfg = resolveSliceConfig('recentDialogue')
-    const recentDialogueSlice = applySliceBudget('recentDialogue', recentDialogueCtx, { ...recentDialogueCfg, include: contextInclude && (recentDialogueCfg.include !== false) })
     const affordancesSlice = applySliceBudget('affordances', affordancesCtx, resolveSliceConfig('affordances'))
 
     const fixedSlices = [metaSlice, targetSlice, taskSlice].filter(s => s && s.text)
     const candidateSlices = [
       contextBusSlice,
-      recentDialogueSlice,
       gameSlice,
       memorySlice,
       affordancesSlice,
@@ -740,7 +727,6 @@ function createChatExecutor ({
         log.info('taskCtx ->', sliceMap.get('task')?.text || '')
         log.info('gameCtx ->', sliceMap.get('game')?.text || '')
         log.info('contextBusCtx ->', sliceMap.get('contextBus')?.text || '')
-        log.info('recentDialogueCtx ->', sliceMap.get('recentDialogue')?.text || '')
         log.info('peopleProfilesCtx ->', sliceMap.get('peopleProfiles')?.text || '')
         log.info('peopleCommitmentsCtx ->', sliceMap.get('peopleCommitments')?.text || '')
         log.info('memoryCtx ->', sliceMap.get('memory')?.text || '')

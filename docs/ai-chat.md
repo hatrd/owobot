@@ -51,12 +51,11 @@
      3) `taskCtx`：`任务:<name>(玩家命令|自动)`（若存在）
    - 候选片段（BM25 相关度排序 + top-K 预算裁剪）：
      1) `contextBus`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`
-     2) `recentDialogue`：最近聊天顺序（来自 `state.aiRecent`）
-     3) `gameCtx`：`observer.toPrompt(snapshot)`，默认 lite（无 blocks/drops/详细 inv）
-     4) `memoryCtx`：`memory.longTerm.buildContext({ query: memoryQuery, actor })`，包含 `长期记忆:` + `对话记忆:`
-     5) `affordances`：可用动作建议（由 `observer.affordances()` 生成）
-     6) `peopleProfiles/peopleCommitments`
-   - 预算与开关：`state.ai.context.<slice>.include/maxChars`；全局开关 `state.ai.context.include=false` 会同时关掉 `contextBus/recentDialogue`
+     2) `gameCtx`：`observer.toPrompt(snapshot)`，默认 lite（无 blocks/drops/详细 inv）
+     3) `memoryCtx`：`memory.longTerm.buildContext({ query: memoryQuery, actor })`，包含 `长期记忆:` + `对话记忆:`
+     4) `affordances`：可用动作建议（由 `observer.affordances()` 生成）
+     5) `peopleProfiles/peopleCommitments`
+   - 预算与开关：`state.ai.context.<slice>.include/maxChars`；全局开关 `state.ai.context.include=false` 会同时关掉 `contextBus`
    - 选择参数：`state.ai.context.selection.topK/minScore/nGram`
    - `userPrompt`：本轮玩家输入（或内部调用的临时指令，例如 plan mode、auto-look greet）
 

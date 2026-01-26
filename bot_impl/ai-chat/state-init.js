@@ -65,7 +65,6 @@ function prepareAiState (state, opts = {}) {
         target: { include: true, maxChars: 2048 },
         task: { include: true, maxChars: 2048 },
         contextBus: { include: true, maxChars: 2048 },
-        recentDialogue: { include: true, maxChars: 2048 },
         chat: { include: true, maxChars: 2048 },
         peopleProfiles: { include: true, maxChars: 2048 },
         peopleCommitments: { include: true, maxChars: 2048 },
@@ -106,7 +105,6 @@ function prepareAiState (state, opts = {}) {
     target: { ...DEF_CTX.target, ...(state.ai.context.target || {}) },
     task: { ...DEF_CTX.task, ...(state.ai.context.task || {}) },
     contextBus: { ...DEF_CTX.contextBus, ...(state.ai.context.contextBus || {}) },
-    recentDialogue: { ...DEF_CTX.recentDialogue, ...(state.ai.context.recentDialogue || {}) },
     chat: { ...DEF_CTX.chat, ...(state.ai.context.chat || {}) },
     peopleProfiles: { ...DEF_CTX.peopleProfiles, ...(state.ai.context.peopleProfiles || {}) },
     peopleCommitments: { ...DEF_CTX.peopleCommitments, ...(state.ai.context.peopleCommitments || {}) },
@@ -123,7 +121,7 @@ function prepareAiState (state, opts = {}) {
   }
   const ctx = state.ai.context
   if (ctx?.contextBus) ctx.contextBus.maxChars = 2048
-  for (const key of ['meta', 'target', 'task', 'recentDialogue', 'chat', 'peopleProfiles', 'peopleCommitments', 'affordances', 'memory']) {
+  for (const key of ['meta', 'target', 'task', 'chat', 'peopleProfiles', 'peopleCommitments', 'affordances', 'memory']) {
     enforceMinChars(ctx?.[key])
   }
   if (ctx?.game) {
