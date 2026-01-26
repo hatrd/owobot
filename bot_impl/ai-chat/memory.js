@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto')
 const H = require('../ai-chat-helpers')
 const { createMemoryEmbeddings } = require('./memory-embeddings')
+const bm25 = require('./retrieval/bm25')
 
 const MEMORY_REWRITE_SYSTEM_PROMPT = [
   '你是Minecraft服务器里的记忆整理助手。玩家会告诉你一条记忆，你需要判断是否值得记录。',
@@ -923,6 +924,7 @@ function createMemoryService ({
     const raw = normalizeMemoryText(cfg?.mode).toLowerCase()
     if (!raw) return 'keyword'
     if (['keyword', 'legacy'].includes(raw)) return 'keyword'
+    if (['bm25', 'ngram', 'ngram-bm25', 'ngram_bm25'].includes(raw)) return 'bm25'
     if (['v2', 'multi', 'multisignal', 'multi-signal'].includes(raw)) return 'v2'
     if (['hybrid', 'rrf'].includes(raw)) return 'hybrid'
     return 'keyword'
@@ -966,6 +968,62 @@ function createMemoryService ({
     const avg = entry?.effectiveness?.averageScore
     const effNorm = Number.isFinite(avg) ? clamp01((Math.max(-1, Math.min(1, avg)) + 1) / 2) : 0.5
     return clamp01(0.8 * countNorm + 0.2 * effNorm)
+  }
+
+  function resolveBm25NGram (cfg, fallback = 2) {
+    const raw = Number(cfg?.nGram ?? cfg?.ngram)
+    if (Number.isFinite(raw) && raw > 0) return Math.max(1, Math.floor(raw))
+    return fallback
+  }
+
+  function resolveBm25MinScore (cfg, fallback = 0.05) {
+    const raw = Number(cfg?.bm25MinScore ?? cfg?.minScore)
+    if (Number.isFinite(raw)) return raw
+    return fallback
+  }
+
+  function buildMemoryDocText (entry) {
+    if (!entry || typeof entry !== 'object') return ''
+    const tags = Array.isArray(entry.tags) ? entry.tags.map(t => normalizeMemoryText(t)).filter(Boolean).join(' ') : ''
+    const triggers = Array.isArray(entry.triggers) ? entry.triggers.map(t => normalizeMemoryText(t)).filter(Boolean).join(' ') : ''
+    const locLabel = entry.location ? locationLabel(entry.location) : ''
+    const authors = [entry.lastAuthor, entry.firstAuthor, entry.author].map(a => normalizeMemoryText(a)).filter(Boolean).join(' ')
+    const parts = [
+      entry.summary,
+      entry.text,
+      entry.feature,
+      entry.greetSuffix,
+      entry.kind,
+      tags,
+      triggers,
+      locLabel,
+      authors
+    ].map(t => normalizeMemoryText(t)).filter(Boolean)
+    return parts.join(' ')
+  }
+
+  function buildDialogueDocText (entry) {
+    if (!entry || typeof entry !== 'object') return ''
+    const people = Array.isArray(entry.participants) ? entry.participants.map(p => normalizeMemoryText(p)).filter(Boolean).join(' ') : ''
+    const parts = [entry.summary, people].map(t => normalizeMemoryText(t)).filter(Boolean)
+    return parts.join(' ')
+  }
+
+  function pickBm25Entries ({ entries, query, topK, minScore, nGram, buildText }) {
+    const list = Array.isArray(entries) ? entries : []
+    const docs = []
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i]
+      const text = buildText(entry)
+      if (!text) continue
+      const id = entry?.id != null ? entry.id : `entry_${i}`
+      docs.push({ id, text, meta: entry })
+    }
+    if (!docs.length) return { selected: [], scored: [] }
+    const index = bm25.buildIndex(docs, { nGram })
+    const scored = bm25.query(index, query, topK, minScore)
+    const selected = scored.map(r => r.meta).filter(Boolean)
+    return { selected, scored }
   }
 
   function scoreMemoryRelevanceRaw ({ entry, tokens, queryIsLocation, debug = false }) {
@@ -1245,6 +1303,7 @@ function createMemoryService ({
     let selected = []
     let debugInfo = null
     const askNorm = query ? normalizeMemoryText(query) : ''
+    const askRaw = askNorm
     const askWantsHere = Boolean(askNorm) && /(这里|这儿|此处|附近|周围)/.test(askNorm)
     const askIsLocation = Boolean(askNorm) && /(在哪|哪儿|哪里|位置|坐标)/.test(askNorm)
     if (query && mode === 'keyword') {
@@ -1300,6 +1359,44 @@ function createMemoryService ({
             tokenMatches: row.tokenMatches || null,
             cut: { minScoreOk: row.score >= minScore, minRelevanceOk: row.relevance >= minRelevance },
             entry: memoryDebugSummary(row.entry)
+          }))
+        }
+      }
+    }
+
+    if (query && mode === 'bm25') {
+      const entries = ensureMemoryEntries()
+      const allowed = []
+      for (const entry of entries) {
+        if (isMemoryDisabled(entry)) continue
+        if (actor && !memoryAllowedForActor(entry, actor)) continue
+        allowed.push(entry)
+      }
+      const nGram = resolveBm25NGram(cfg, 2)
+      const minScore = resolveBm25MinScore(cfg, 0.05)
+      const topK = Math.max(1, limit * 2)
+      const picked = pickBm25Entries({
+        entries: allowed,
+        query: askRaw,
+        topK,
+        minScore,
+        nGram,
+        buildText: buildMemoryDocText
+      })
+      selected = dedupeMemoryEntries(picked.selected, limit)
+      if (debug) {
+        const top = picked.scored.slice(0, Math.max(0, Math.floor(Number(debugLimit) || 0)))
+        debugInfo = {
+          mode,
+          query: askRaw,
+          nGram,
+          totalEntries: entries.length,
+          matchedCount: picked.scored.length,
+          thresholds: { minScore },
+          selected: selected.map(m => memoryDebugSummary(m)).filter(Boolean),
+          scoredTop: top.map(row => ({
+            score: row.score,
+            entry: memoryDebugSummary(row.meta || {})
           }))
         }
       }
@@ -1484,7 +1581,39 @@ function createMemoryService ({
       if (!debugInfo) debugInfo = { query: normalizeMemoryText(query), tokens: [], queryIsLocation: false, totalEntries: ensureMemoryEntries().length, matchedCount: 0, scoredTop: [], selected: [] }
       if (!debugInfo.mode) debugInfo.mode = mode === 'keyword' ? 'empty' : mode
     }
-    const text = sections.join(' ')
+    if (query) {
+      const dialogueLimit = Number.isFinite(Number(opts.dialogueLimit)) ? Math.max(0, Math.floor(Number(opts.dialogueLimit))) : Math.max(0, Math.floor(Number(cfg?.dialogueMax) || 0))
+      if (dialogueLimit > 0) {
+        const dialogues = selectDialoguesForContext(actor)
+        if (dialogues.length) {
+          const nGram = resolveBm25NGram({ nGram: cfg?.dialogueNGram ?? cfg?.nGram ?? cfg?.ngram }, 2)
+          const minScore = Number.isFinite(Number(cfg?.dialogueMinScore)) ? Number(cfg.dialogueMinScore) : resolveBm25MinScore(cfg, 0.05)
+          const picked = pickBm25Entries({
+            entries: dialogues,
+            query: askRaw,
+            topK: dialogueLimit,
+            minScore,
+            nGram,
+            buildText: buildDialogueDocText
+          })
+          const lines = formatDialogueEntriesForDisplay(picked.selected)
+          if (lines.length) sections.push(`对话记忆：\n${lines.join('\n')}`)
+          if (debug) {
+            if (!debugInfo) debugInfo = { mode, query: normalizeMemoryText(query), tokens: [], queryIsLocation: false, totalEntries: ensureMemoryEntries().length, matchedCount: 0, scoredTop: [], selected: [] }
+            debugInfo.dialogue = {
+              nGram,
+              minScore,
+              selected: picked.selected.map(m => ({
+                id: m?.id || null,
+                summary: m?.summary || ''
+              })),
+              scoredTop: picked.scored.map(r => ({ score: r.score, id: r.id }))
+            }
+          }
+        }
+      }
+    }
+    const text = sections.join('\n')
     if (debug) {
       const trace = {
         version: 1,

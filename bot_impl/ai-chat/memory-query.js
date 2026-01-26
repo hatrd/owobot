@@ -38,11 +38,9 @@ function buildMemoryQuery ({ username, message, recentChat, worldHint } = {}) {
     myLines.push(text)
   }
 
-  const world = normalizeWorldHint(worldHint)
-  const tail = myLines.slice(-6)
-  const parts = [user, msg, ...tail, world].filter(Boolean)
+  const tail = myLines.slice(-2)
+  const parts = [user, msg, ...tail].filter(Boolean)
   return parts.join(' | ')
 }
 
 module.exports = { buildMemoryQuery }
-

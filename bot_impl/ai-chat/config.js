@@ -61,8 +61,12 @@ function buildDefaultContext () {
       include: true,
       max: 6,
       storeMax: DEFAULT_MEMORY_STORE_MAX,
-      mode: 'keyword',
+      mode: 'bm25',
       maxChars: 500,
+      nGram: 2,
+      bm25MinScore: 0.08,
+      dialogueMax: 6,
+      dialogueMinScore: 0.08,
       // Location context injection (long-term memory is primarily places now)
       location: {
         include: true,

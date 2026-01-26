@@ -278,16 +278,14 @@ function createChatExecutor ({
         windowSec,
         includeGaps: true
       })
-      const conv = memory.dialogue.buildPrompt(username)
-      const parts = [`当前对话玩家: ${username}`, xmlCtx, conv].filter(Boolean)
+      const parts = [`当前对话玩家: ${username}`, xmlCtx].filter(Boolean)
       return parts.join('\n\n')
     }
     const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
-    const conv = memory.dialogue.buildPrompt(username)
-    return [base, conv].filter(Boolean).join('\n\n')
+    return [base].filter(Boolean).join('\n\n')
   }
 
-  function collectRecentChatForMemoryQuery (username, limit = 8) {
+  function collectRecentChatForMemoryQuery (username, limit = 2) {
     const name = String(username || '').trim()
     if (!name) return []
     const cap = Math.max(0, Math.min(50, Math.floor(Number(limit) || 0)))
@@ -536,7 +534,7 @@ function createChatExecutor ({
     const memoryQuery = buildMemoryQuery({
       username,
       message: content,
-      recentChat: collectRecentChatForMemoryQuery(username, 8),
+      recentChat: collectRecentChatForMemoryQuery(username, 2),
       worldHint: null
     })
     const cacheBefore = cacheStats.snapshotEmbeddingStore(state)
