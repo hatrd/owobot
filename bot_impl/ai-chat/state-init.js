@@ -66,7 +66,7 @@ function prepareAiState (state, opts = {}) {
         peopleProfiles: { include: true, maxChars: 600 },
         peopleCommitments: { include: true, maxChars: 400 },
         affordances: { include: true, maxChars: 240 },
-        game: { include: true, nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20, maxChars: 400 },
+        game: { include: true, mode: 'lite', nearPlayerRange: 16, nearPlayerMax: 5, dropsRange: 8, dropsMax: 6, invTop: 20, liteMaxChars: 150, detailMaxChars: 400, maxChars: 400 },
         memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200, maxChars: 500 }
       })
   const DEF_CTX = resolveContext()

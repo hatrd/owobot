@@ -552,7 +552,13 @@ function createChatExecutor ({
     })()
     const metaCtx = buildMetaContext()
     const metaSlice = applySliceBudget('meta', metaCtx, resolveSliceConfig('meta'))
-    const gameSlice = applySliceBudget('game', gameCtx, resolveSliceConfig('game'))
+    const gameCfg = resolveSliceConfig('game')
+    const gameModeRaw = String(gameCfg.mode || (gameCfg.detail ? 'detail' : 'lite')).toLowerCase()
+    const gameMode = gameModeRaw === 'detail' ? 'detail' : 'lite'
+    const gameMaxChars = gameMode === 'detail'
+      ? (Number.isFinite(Number(gameCfg.detailMaxChars)) ? Number(gameCfg.detailMaxChars) : gameCfg.maxChars)
+      : (Number.isFinite(Number(gameCfg.liteMaxChars)) ? Number(gameCfg.liteMaxChars) : gameCfg.maxChars)
+    const gameSlice = applySliceBudget('game', gameCtx, { ...gameCfg, maxChars: gameMaxChars })
     const profilesSlice = applySliceBudget('peopleProfiles', peopleProfilesCtx, resolveSliceConfig('peopleProfiles'))
     const commitmentsSlice = applySliceBudget('peopleCommitments', peopleCommitmentsCtx, resolveSliceConfig('peopleCommitments'))
     const memorySlice = applySliceBudget('memory', memoryCtx, resolveSliceConfig('memory'))

@@ -101,18 +101,25 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     state.aiSpend.total.cost += cost
   }
 
-  function buildGameContext () {
+  function buildGameContext (opts = {}) {
     try {
       const g = state.ai.context?.game
       if (!g || g.include === false) return ''
-      const snap = observer.snapshot(bot, {
-        invTop: g.invTop || 20,
+      const modeRaw = String(opts.mode || g.mode || (g.detail ? 'detail' : 'lite')).toLowerCase()
+      const mode = modeRaw === 'detail' ? 'detail' : 'lite'
+      const baseOpts = {
         nearPlayerRange: g.nearPlayerRange || 16,
-        nearPlayerMax: g.nearPlayerMax || 5,
-        dropsRange: g.dropsRange || 8,
-        dropsMax: g.dropsMax || 6,
-        hostileRange: 24
-      })
+        nearPlayerMax: g.nearPlayerMax || 5
+      }
+      const snap = mode === 'detail'
+        ? observer.snapshot(bot, {
+          ...baseOpts,
+          invTop: g.invTop || 20,
+          dropsRange: g.dropsRange || 8,
+          dropsMax: g.dropsMax || 6,
+          hostileRange: 24
+        })
+        : observer.snapshotLite(bot, baseOpts)
       return observer.toPrompt(snap)
     } catch { return '' }
   }

@@ -47,11 +47,14 @@ function buildDefaultContext () {
     },
     game: {
       include: true,
+      mode: 'lite',
       nearPlayerRange: 16,
       nearPlayerMax: 5,
       dropsRange: 8,
       dropsMax: 6,
       invTop: 20,
+      liteMaxChars: 150,
+      detailMaxChars: 400,
       maxChars: 400
     },
     memory: {

@@ -224,6 +224,17 @@ function snapshot (bot, opts = {}) {
   return { t: now, pos, dim, time: tod, env, vitals, inv, hotbar, nearby: { players, drops, hostiles }, blocks, task }
 }
 
+function snapshotLite (bot, opts = {}) {
+  const now = Date.now()
+  const pos = (() => { try { const p = bot.entity?.position?.floored?.() || bot.entity?.position; return p ? { x: p.x, y: p.y, z: p.z } : null } catch { return null } })()
+  const dim = dimName(bot)
+  const tod = timeBrief(bot)
+  const vitals = collectVitals(bot)
+  const players = collectNearbyPlayers(bot, Math.max(1, opts.nearPlayerRange || 16), Math.max(0, opts.nearPlayerMax || 5))
+  const task = (bot.state && bot.state.currentTask) ? { name: bot.state.currentTask.name, source: bot.state.currentTask.source, startedAt: bot.state.currentTask.startedAt } : null
+  return { t: now, pos, dim, time: tod, vitals, nearby: { players }, task }
+}
+
 function toPrompt (snap) {
   try {
     if (!snap) return ''
@@ -381,4 +392,4 @@ function affordances (bot, snap = null) {
   } catch { return [] }
 }
 
-module.exports = { snapshot, toPrompt, detail, affordances }
+module.exports = { snapshot, snapshotLite, toPrompt, detail, affordances }
