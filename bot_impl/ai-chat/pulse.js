@@ -464,6 +464,17 @@ function createPulseService ({
     return { name, content }
   }
 
+  function parseWhisperToYou (plain) {
+    const cleaned = stripMcFormatting(plain).trim()
+    const m = cleaned.match(/^([A-Za-z0-9_]{1,16})\s+whispers to you:\s*(.+)$/i)
+    if (!m) return null
+    const name = String(m[1] || '').trim()
+    const content = String(m[2] || '').trim()
+    if (!name || !content) return null
+    if (/^server$/i.test(name)) return null
+    return { name, content }
+  }
+
   function pulseKey (entry) {
     if (!entry) return ''
     const user = String(entry.user || '').trim().toLowerCase()
@@ -604,6 +615,14 @@ function createPulseService ({
       const plain = extractPlainText(message).trim()
       if (!plain) return
       if (handleDeathChestNotice(plain)) return
+      const whisperChat = parseWhisperToYou(plain)
+      if (whisperChat) {
+        const selfName = String(bot.username || '').trim()
+        if (selfName && selfName.toLowerCase() === String(whisperChat.name).toLowerCase()) return
+        if (seenPlayerChatRecently(whisperChat.name, whisperChat.content, PLAYER_CHAT_DEDUPE_MS)) return
+        captureChat(whisperChat.name, whisperChat.content)
+        return whisperChat
+      }
       const maybePlayer = parseAngleBracketPlayerChat(plain)
       if (maybePlayer) {
         const selfName = String(bot.username || '').trim()

@@ -287,7 +287,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   const onChat = (username, message) => { executor.handleChat(username, message).catch(() => {}) }
   const onChatCapture = (username, message) => pulse.captureChat(username, message)
-  const onMessage = (message) => pulse.captureSystemMessage(message)
+  const onMessage = (message) => {
+    const parsed = pulse.captureSystemMessage(message)
+    if (parsed && parsed.name && parsed.content) {
+      executor.handleChat(parsed.name, parsed.content).catch(() => {})
+    }
+  }
   on('chat', onChatCapture)
   on('chat', onChat)
   on('message', onMessage)
