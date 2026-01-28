@@ -156,13 +156,19 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   validateAiConfig()
 
+  const refsEnabled = state.ai?.refsEnabled !== false
+
   // REFS: 创建反馈收集器
-  const feedbackCollector = createFeedbackCollector({ state, bot, log, now, memoryStore, memory })
+  const feedbackCollector = refsEnabled
+    ? createFeedbackCollector({ state, bot, log, now, memoryStore, memory })
+    : null
 
   // 定时刷新反馈窗口，防止无新消息时反馈卡住
-  const feedbackTimer = setInterval(() => {
-    try { feedbackCollector.tick() } catch {}
-  }, 10000)
+  const feedbackTimer = refsEnabled
+    ? setInterval(() => {
+      try { feedbackCollector.tick() } catch {}
+    }, 10000)
+    : null
 
   // REFS: 创建上下文总线
   const contextBus = createContextBus({ state, now })
@@ -380,31 +386,57 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
 
   // REFS: 创建自省引擎
-  const introspection = createIntrospectionEngine({
-    state,
-    bot,
-    log,
-    now,
-    feedbackCollector,
-    memory,
-    memoryStore,
-    aiCall
-  })
+  const introspection = refsEnabled
+    ? createIntrospectionEngine({
+      state,
+      bot,
+      log,
+      now,
+      feedbackCollector,
+      memory,
+      memoryStore,
+      aiCall
+    })
+    : {
+        start: () => {},
+        stop: () => {},
+        runIntrospection: async () => null,
+        getEffectivePersonality: () => (state.aiPersonality?.traits || {}),
+        getStatus: () => ({
+          running: false,
+          lastRun: state.aiIntrospection?.lastRun || null,
+          historyCount: Array.isArray(state.aiIntrospection?.history) ? state.aiIntrospection.history.length : 0,
+          consecutiveNegative: state.aiIntrospection?.consecutiveNegative || 0,
+          personality: state.aiPersonality?.traits || {},
+          emotionalState: state.aiEmotionalState
+        }),
+        checkEmergencyIntrospection: () => {},
+        persistState: () => {}
+      }
   introspection.start()
 
   // REFS: 纯粹惊讶引擎（意识最简原理）
-  const mind = createPureSurprise({
-    state,
-    bot,
-    observer,
-    log,
-    now
-  })
+  const mind = refsEnabled
+    ? createPureSurprise({
+      state,
+      bot,
+      observer,
+      log,
+      now
+    })
+    : {
+        start: () => {},
+        stop: () => {},
+        getStatus: () => ({ running: false, surprise: 0, curious: null, knownStates: 0, history: [] }),
+        whatFollows: () => [],
+        predict: () => null
+      }
   mind.start()
 
   // REFS: 监听玩家消息以收集反馈
   const onFeedbackCapture = (username, message) => {
     try {
+      if (!feedbackCollector) return
       if (username === bot.username) return
       const result = feedbackCollector.processPlayerMessage(username, message)
       if (result && result.signals?.length) {
@@ -418,13 +450,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   // REFS: 监听技能结束事件
   const onSkillEnd = (data) => {
     try {
-      feedbackCollector.recordActionOutcome({
-        taskName: data.name,
-        success: data.status === 'succeeded',
-        duration: data.duration,
-        failureReason: data.failureReason,
-        triggeredBy: data.triggeredBy
-      })
+      if (feedbackCollector) {
+        feedbackCollector.recordActionOutcome({
+          taskName: data.name,
+          success: data.status === 'succeeded',
+          duration: data.duration,
+          failureReason: data.failureReason,
+          triggeredBy: data.triggeredBy
+        })
+      }
       const eventType = data.status === 'succeeded' ? 'skill.end' : 'skill.fail'
       const info = data.status === 'succeeded'
         ? `${data.name}:success`
@@ -575,7 +609,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const decayTimer = setInterval(() => {
     try {
       memory.longTerm.decayUnused()
-      feedbackCollector.persistState()
+      if (feedbackCollector) feedbackCollector.persistState()
     } catch {}
   }, 60 * 60 * 1000) // 每小时
 

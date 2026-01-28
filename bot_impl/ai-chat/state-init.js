@@ -81,7 +81,15 @@ function prepareAiState (state, opts = {}) {
     maxTokensPerCall: 512,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     notifyOnBudget: true,
-    trace: false
+    trace: false,
+    refsEnabled: false
+  }
+  const refsEnv = process.env.AI_REFS
+  if (refsEnv != null) {
+    const v = String(refsEnv).toLowerCase()
+    state.ai.refsEnabled = !(v === '0' || v === 'false' || v === 'no' || v === 'off' || v === 'disable' || v === 'disabled')
+  } else if (typeof state.ai.refsEnabled !== 'boolean') {
+    state.ai.refsEnabled = false
   }
   if (typeof state.ai.listenEnabled !== 'boolean') state.ai.listenEnabled = true
   if (!Number.isFinite(state.ai.timeoutMs) || state.ai.timeoutMs <= 0) state.ai.timeoutMs = DEFAULT_TIMEOUT_MS
