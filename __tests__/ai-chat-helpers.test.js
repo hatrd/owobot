@@ -1,6 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { estTokensFromText, trimReply, buildContextPrompt, projectedCostForCall, canAfford } from '../bot_impl/ai-chat-helpers.js'
+import { estTokensFromText, trimReply, buildContextPrompt, projectedCostForCall, canAfford, extractAssistantText } from '../bot_impl/ai-chat-helpers.js'
+
+test('extractAssistantText supports string/segment content and avoids reasoning when content exists', () => {
+  assert.equal(extractAssistantText('hi'), 'hi')
+  assert.equal(extractAssistantText({ content: 'ok' }), 'ok')
+  assert.equal(extractAssistantText({ content: '  ' }), '')
+  assert.equal(extractAssistantText({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }), 'ab')
+  assert.equal(extractAssistantText({ content: [{ type: 'output_text', text: 'answer' }], reasoning_content: 'analysis' }), 'answer')
+  assert.equal(extractAssistantText({ content: { text: 'obj' } }), 'obj')
+  assert.equal(extractAssistantText({ text: 'alt' }), 'alt')
+  assert.equal(extractAssistantText({ content: '', reasoning_content: 'reason' }), 'reason')
+})
 
 test('estTokensFromText approximates chars/4 ceil', () => {
   assert.equal(estTokensFromText(''), 0)

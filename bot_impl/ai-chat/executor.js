@@ -341,9 +341,6 @@ function createChatExecutor ({
       if (!ms || typeof ms.scoreAction !== 'function') return null
       const res = ms.scoreAction(toolName)
       if (!res || !Number.isFinite(res.score)) return null
-      if (contextBus) {
-        try { contextBus.pushEvent('minimalSelf.score', `${toolName}:${res.score.toFixed(2)}`) } catch {}
-      }
       return res
     } catch { return null }
   }
@@ -456,7 +453,7 @@ function createChatExecutor ({
     if (state.ai?.listenEnabled === false) { traceChat('[chat] followup listen-disabled', { username }); return false }
     const lastReason = state?.aiPulse?.lastReason
     const lastAt = state?.aiPulse?.lastMessageAt
-    if (lastReason === 'drive' && (!lastAt || (now() - lastAt) < 180000)) {
+    if (lastReason === 'drive' && (!lastAt || (now() - lastAt) < (120 * 1000))) {
       traceChat('[chat] followup drive-active', { username })
       return true
     }

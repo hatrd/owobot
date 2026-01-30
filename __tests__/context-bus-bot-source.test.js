@@ -98,3 +98,12 @@ test('server messages stack identical lines within window', () => {
   assert.equal(store.length, 1)
   assert.equal(store[0].payload.content, '1/2 players sleeping x3')
 })
+
+test('context bus drops minimalSelf.score events', () => {
+  const state = { ai: { context: {} } }
+  const bus = createContextBus({ state, now: () => 1 })
+  bus.pushEvent('minimalSelf.score', 'reset:1.07')
+  assert.equal(bus.getStore().length, 0)
+  const xml = bus.buildXml({ maxEntries: 10, windowSec: 999, includeGaps: false })
+  assert.equal(xml, '')
+})

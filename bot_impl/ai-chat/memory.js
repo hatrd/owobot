@@ -1831,6 +1831,7 @@ function createMemoryService ({
   function summarizeBucketEntries (entries) {
     const texts = entries
       .map(e => (typeof e?.summary === 'string' ? e.summary.trim() : ''))
+      .filter(s => s && !looksLikePromptEchoSummary(s))
       .filter(Boolean)
     if (!texts.length) return `${entries.length}条对话`
     const MAX = 3
@@ -1906,11 +1907,26 @@ function createMemoryService ({
   function summarizationFallback (entries) {
     const texts = entries
       .map(e => typeof e?.summary === 'string' ? e.summary.trim() : '')
+      .filter(s => s && !looksLikePromptEchoSummary(s))
       .filter(Boolean)
     if (!texts.length) return `${entries.length}条对话活动`
     const sample = texts.slice(0, 3).join(' / ')
     if (texts.length > 3) return `${sample} / 等${texts.length}条`
     return sample
+  }
+
+  function looksLikePromptEchoSummary (text) {
+    const t = normalizeMemoryText(String(text || ''))
+    if (!t) return false
+    if (/^\d+\.\s*\*{0,2}分析用户请求/.test(t)) return true
+    if (t.includes('分析用户请求')) return true
+    if (t.includes('Minecraft服务器聊天总结助手') && (t.includes('长度限制') || t.includes('内容要求'))) return true
+    const needles = ['角色：', '语言：', '长度限制', '内容要求', '请输出', '禁止', 'json', 'JSON']
+    let hits = 0
+    for (const n of needles) {
+      if (t.includes(n)) hits++
+    }
+    return hits >= 4
   }
 
   async function summarizeDialogueWindow (entries, label, tierName) {
@@ -1932,7 +1948,9 @@ function createMemoryService ({
     ]
     const summary = await runSummaryModel(messages, 100, 0.2)
     if (!summary) return fallback
-    return summary.replace(/\s+/g, ' ').trim()
+    const cleaned = summary.replace(/\s+/g, ' ').trim()
+    if (!cleaned || looksLikePromptEchoSummary(cleaned)) return fallback
+    return cleaned
   }
 
   async function aggregateDialogueWindow ({ sourceTier, targetTier, kind, start, end }) {
@@ -2141,7 +2159,9 @@ function createMemoryService ({
     ]
     const summary = await runSummaryModel(messages, 80, 0.3)
     if (!summary) return fallback
-    return summary.replace(/\s+/g, ' ').trim()
+    const cleaned = summary.replace(/\s+/g, ' ').trim()
+    if (!cleaned || looksLikePromptEchoSummary(cleaned)) return fallback
+    return cleaned
   }
 
   function normalizeInspectorStatus (raw) {
@@ -2408,6 +2428,23 @@ function createMemoryService ({
     while (state.aiDialogues.length > CONVERSATION_STORE_MAX) state.aiDialogues.shift()
   }
 
+  function scrubInvalidDialogues () {
+    if (!Array.isArray(state.aiDialogues) || !state.aiDialogues.length) return false
+    const before = state.aiDialogues.length
+    state.aiDialogues = state.aiDialogues.filter(entry => {
+      if (!entry || typeof entry !== 'object') return false
+      const summary = typeof entry.summary === 'string' ? entry.summary.trim() : ''
+      if (!summary) return true
+      return !looksLikePromptEchoSummary(summary)
+    })
+    const changed = state.aiDialogues.length !== before
+    if (changed) {
+      try { trimConversationStore() } catch {}
+      persistMemoryState()
+    }
+    return changed
+  }
+
   function extractJsonLoose (raw) {
     if (!raw) return null
     const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -2585,6 +2622,8 @@ function createMemoryService ({
     processQueue: processMemoryQueue,
     recentSnippet: recentChatSnippet
   }
+
+  try { scrubInvalidDialogues() } catch {}
 
   return {
     setMessenger,

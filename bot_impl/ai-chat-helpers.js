@@ -63,11 +63,44 @@ function canAfford (estInTok, maxOutTok, budgets, prices) {
 }
 
 function extractAssistantText (message) {
+  if (typeof message === 'string') return message
   if (!message || typeof message !== 'object') return ''
+
   const content = message.content
   if (typeof content === 'string' && content.trim()) return content
-  const alt = message.reasoning_content ?? message.reasoning ?? message.thinking ?? message.text
+
+  // Some providers/proxies return `content` as an array of typed segments:
+  // - Anthropic-style: [{ type: 'text', text: '...' }, ...]
+  // - OpenAI Responses-style: [{ type: 'output_text', text: '...' }, ...]
+  if (Array.isArray(content) && content.length) {
+    const parts = []
+    for (const item of content) {
+      if (!item) continue
+      if (typeof item === 'string') {
+        if (item.trim()) parts.push(item)
+        continue
+      }
+      if (typeof item !== 'object') continue
+      const text = item.text ?? item.content ?? item.value
+      if (typeof text === 'string' && text.trim()) parts.push(text)
+    }
+    const joined = parts.join('').trim()
+    if (joined) return joined
+  }
+
+  if (content && typeof content === 'object') {
+    const text = content.text ?? content.content ?? content.value
+    if (typeof text === 'string' && text.trim()) return text
+  }
+
+  // Prefer normal answer fields over model "thinking"/"reasoning" fields.
+  const alt = message.text ?? message.output_text ?? message.completion ?? message.result
   if (typeof alt === 'string' && alt.trim()) return alt
+
+  // Last resort: some providers only expose the response via reasoning fields.
+  const reasoning = message.reasoning_content ?? message.reasoning ?? message.thinking
+  if (typeof reasoning === 'string' && reasoning.trim()) return reasoning
+
   return ''
 }
 

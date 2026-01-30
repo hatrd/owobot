@@ -4,6 +4,7 @@ const DEFAULT_WINDOW_SEC = 24 * 60 * 60
 const STACK_WINDOW_MS = 5000
 const EVENT_DATA_MAX = 100
 const NUMERIC_STACK_EVENTS = ['heal']
+const DROPPED_EVENT_TYPES = new Set(['minimalSelf.score'])
 
 function createContextBus ({ state, now = () => Date.now() }) {
   function ensureStore () {
@@ -173,6 +174,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
   }
 
   function pushEvent (eventType, data) {
+    if (DROPPED_EVENT_TYPES.has(String(eventType || ''))) return null
     const stacked = tryStackEvent(eventType, data)
     if (stacked) return stacked
     return push('event', { eventType, data: String(data ?? '').slice(0, EVENT_DATA_MAX) })
@@ -217,10 +219,20 @@ function createContextBus ({ state, now = () => Date.now() }) {
       case 'tool':
         return `<t>${escapeXml(payload.content)}</t>`
       case 'event':
+        if (DROPPED_EVENT_TYPES.has(String(payload.eventType || ''))) return ''
         return `<e t="${escapeXml(payload.eventType)}" d="${escapeXml(payload.data)}"/>`
       default:
         return ''
     }
+  }
+
+  function shouldIncludeEntry (entry) {
+    if (!entry || typeof entry !== 'object') return false
+    if (entry.type === 'event') {
+      const eventType = String(entry?.payload?.eventType || '')
+      if (DROPPED_EVENT_TYPES.has(eventType)) return false
+    }
+    return true
   }
 
   function buildXml (options = {}) {
@@ -246,6 +258,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
       const e = store[i]
       if (!e || !Number.isFinite(e.t)) continue
       if (e.t < cutoff) break
+      if (!shouldIncludeEntry(e)) continue
       filtered.push(e)
       if (filtered.length >= maxEntries) break
     }
