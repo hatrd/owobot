@@ -1918,15 +1918,24 @@ function createMemoryService ({
   function looksLikePromptEchoSummary (text) {
     const t = normalizeMemoryText(String(text || ''))
     if (!t) return false
-    if (/^\d+\.\s*\*{0,2}分析用户请求/.test(t)) return true
-    if (t.includes('分析用户请求')) return true
+    if (/^\d+\.\s*\*{0,2}(分析|识别)用户请求/.test(t)) return true
+    if (t.includes('分析用户请求') || t.includes('识别用户请求')) return true
     if (t.includes('Minecraft服务器聊天总结助手') && (t.includes('长度限制') || t.includes('内容要求'))) return true
-    const needles = ['角色：', '语言：', '长度限制', '内容要求', '请输出', '禁止', 'json', 'JSON']
+    const needles = [
+      '角色', '语言', '长度限制', '内容要求',
+      '请输出', '不要', '禁止',
+      'json', 'JSON'
+    ]
     let hits = 0
     for (const n of needles) {
       if (t.includes(n)) hits++
     }
-    return hits >= 4
+    // Avoid false positives: require strong signal of meta prompt formatting.
+    if (hits >= 5) return true
+    if (hits >= 4 && (t.includes('Minecraft') || t.includes('服务器') || t.includes('助手'))) return true
+    // Markdown-ish prompt analysis often contains lots of bullet markers.
+    if (hits >= 4 && (t.includes('**') || t.includes('* ') || t.includes('1. '))) return true
+    return false
   }
 
   async function summarizeDialogueWindow (entries, label, tierName) {
@@ -2075,6 +2084,7 @@ function createMemoryService ({
   }
 
   function selectDialoguesForContext (username) {
+    try { scrubInvalidDialogues() } catch {}
     if (!Array.isArray(state.aiDialogues) || !state.aiDialogues.length) return []
     const sorted = state.aiDialogues.slice().sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
     const prioritized = username ? sorted.filter(entry => Array.isArray(entry.participants) && entry.participants.includes(username)) : sorted
@@ -2127,7 +2137,12 @@ function createMemoryService ({
 
   async function runSummaryModel (messages, maxTokens = 60, temperature = 0.2) {
     const { key, model } = state.ai || {}
-    if (!key) return null
+    if (!key) {
+      if (state.ai?.trace) {
+        try { traceChat('[summary] skipped: missing api key') } catch {}
+      }
+      return null
+    }
     const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const body = { model: model || defaults.DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
     try {
@@ -2136,9 +2151,48 @@ function createMemoryService ({
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
         body: JSON.stringify(body)
       })
-      if (!res.ok) return null
-      const data = await res.json()
-      return H.extractAssistantText(data?.choices?.[0]?.message).trim() || null
+      if (!res.ok) {
+        if (state.ai?.trace) {
+          try {
+            const text = await res.text().catch(() => '')
+            const hint = text ? text.slice(0, 240) : '(empty)'
+            traceChat('[summary] http error', { status: res.status, body: hint })
+          } catch {}
+        }
+        return null
+      }
+
+      const data = await res.json().catch((err) => {
+        if (state.ai?.trace) {
+          try { traceChat('[summary] json parse error', err?.message || err) } catch {}
+        }
+        return null
+      })
+      if (!data) return null
+
+      const choice0 = data?.choices?.[0]
+      const msg = choice0?.message ?? choice0 ?? data
+      const extracted = H.extractAssistantText(msg).trim()
+      if (state.ai?.trace) {
+        try {
+          const shape = msg && typeof msg === 'object' ? Object.keys(msg) : []
+          const contentShape = (() => {
+            const c = msg?.content
+            if (typeof c === 'string') return 'string'
+            if (Array.isArray(c)) return `array(len=${c.length})`
+            if (c && typeof c === 'object') return 'object'
+            return typeof c
+          })()
+          const preview = extracted ? extracted.slice(0, 220) : '(empty)'
+          const dataKeys = data && typeof data === 'object' ? Object.keys(data) : []
+          const choiceKeys = choice0 && typeof choice0 === 'object' ? Object.keys(choice0) : []
+          log?.info && log.info('[summary] extracted ->', preview, 'content=', contentShape, 'messageKeys=', shape, 'choiceKeys=', choiceKeys, 'dataKeys=', dataKeys)
+          if (!extracted && data?.error) {
+            try { log?.info && log.info('[summary] api error ->', String(data.error?.message || data.error).slice(0, 240)) } catch {}
+          }
+        } catch {}
+      }
+      return extracted || null
     } catch { return null }
   }
 
@@ -2160,7 +2214,10 @@ function createMemoryService ({
     const summary = await runSummaryModel(messages, 80, 0.3)
     if (!summary) return fallback
     const cleaned = summary.replace(/\s+/g, ' ').trim()
-    if (!cleaned || looksLikePromptEchoSummary(cleaned)) return fallback
+    if (!cleaned || looksLikePromptEchoSummary(cleaned)) {
+      try { traceChat('[chat] summary filtered', cleaned ? cleaned.slice(0, 220) : '(empty)') } catch {}
+      return fallback
+    }
     return cleaned
   }
 
@@ -2377,6 +2434,17 @@ function createMemoryService ({
       if (!lines.length) return
       const participants = job.participants && job.participants.length ? job.participants : conversationParticipantsFromLines(lines)
       if (!participants.length) participants.push(job.username || '玩家')
+      if (state.ai?.trace) {
+        try {
+          traceChat('[chat] summary start', {
+            id: job.id,
+            username: job.username,
+            reason: job.reason,
+            participants,
+            seq: [job.startSeq, job.endSeq]
+          })
+        } catch {}
+      }
       const summary = await summarizeConversationLines(lines, participants)
       if (!summary) return
       const record = {
@@ -2391,6 +2459,9 @@ function createMemoryService ({
       state.aiDialogues.push(record)
       trimConversationStore()
       persistMemoryState()
+      if (state.ai?.trace) {
+        try { traceChat('[chat] summary saved', { id: record.id, summary: record.summary.slice(0, 160) }) } catch {}
+      }
       try { await maybeWritePeopleMemoryFromConversation(lines, record.participants, job.username, job.reason || 'summary') } catch {}
     } catch (e) {
       traceChat('[chat] process summary error', e?.message || e)
@@ -2414,6 +2485,9 @@ function createMemoryService ({
         endedAt: entry.lastAt || now(),
         reason
       }
+      if (state.ai?.trace) {
+        try { traceChat('[chat] summary queued', { id: payload.id, username, reason, seq: [startSeq, endSeq] }) } catch {}
+      }
       return processConversationSummary(payload).catch(err => traceChat('[chat] summary error', err?.message || err))
     } catch (e) {
       traceChat('[chat] summary queue error', e?.message || e)
@@ -2431,16 +2505,22 @@ function createMemoryService ({
   function scrubInvalidDialogues () {
     if (!Array.isArray(state.aiDialogues) || !state.aiDialogues.length) return false
     const before = state.aiDialogues.length
+    const removedSamples = []
     state.aiDialogues = state.aiDialogues.filter(entry => {
       if (!entry || typeof entry !== 'object') return false
       const summary = typeof entry.summary === 'string' ? entry.summary.trim() : ''
       if (!summary) return true
-      return !looksLikePromptEchoSummary(summary)
+      const bad = looksLikePromptEchoSummary(summary)
+      if (bad && removedSamples.length < 2) removedSamples.push(summary.slice(0, 120))
+      return !bad
     })
     const changed = state.aiDialogues.length !== before
     if (changed) {
       try { trimConversationStore() } catch {}
       persistMemoryState()
+      if (state.ai?.trace) {
+        try { traceChat('[chat] scrub dialogues', { before, after: state.aiDialogues.length, samples: removedSamples }) } catch {}
+      }
     }
     return changed
   }

@@ -369,9 +369,22 @@ function createPulseService ({
         const body = { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 60, stream: false }
         try {
           const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
-          if (!res.ok) return
-          const data = await res.json()
-          const sum = H.extractAssistantText(data?.choices?.[0]?.message).trim()
+          if (!res.ok) {
+            if (state.ai?.trace && log?.info) {
+              try {
+                const text = await res.text().catch(() => '')
+                log.info('[overflow] http error', res.status, text.slice(0, 240))
+              } catch {}
+            }
+            return
+          }
+          const data = await res.json().catch((err) => {
+            if (state.ai?.trace && log?.info) log.info('[overflow] json parse error', err?.message || err)
+            return null
+          })
+          if (!data) return
+          const choice0 = data?.choices?.[0]
+          const sum = H.extractAssistantText(choice0?.message ?? choice0 ?? data).trim()
           if (!sum) return
           if (!Array.isArray(state.aiLong)) state.aiLong = []
           state.aiLong.push({ t: Date.now(), summary: sum })
