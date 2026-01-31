@@ -1111,7 +1111,7 @@ function createMemoryService ({
       model: model || defaults.DEFAULT_MODEL,
       messages,
       temperature: 0.2,
-      max_tokens: 220,
+      max_tokens: 1024,
       stream: false
     }
     try {
@@ -1128,7 +1128,9 @@ function createMemoryService ({
         return { status: 'error', reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` }
       }
       const data = await res.json()
-      const reply = H.extractAssistantText(data?.choices?.[0]?.message)
+      const msg = data?.choices?.[0]?.message
+      const cleanedMsg = stripReasoningFields(msg)
+      const reply = H.extractAssistantText(cleanedMsg, { allowReasoning: false })
       const jsonRaw = extractJsonLoose(reply)
       if (!jsonRaw) return { status: 'error', reason: 'no_json' }
       let parsed = null
@@ -1955,7 +1957,7 @@ function createMemoryService ({
       { role: 'system', content: sys },
       { role: 'user', content: `时间段：${label}\n层级：${tierName}\n参与者：${names.join('、') || '玩家们'}\n摘要列表：${combined}\n请输出一段≤50字总结。` }
     ]
-    const summary = await runSummaryModel(messages, 100, 0.2)
+    const summary = await runSummaryModel(messages, 1024, 0.2)
     if (!summary) return fallback
     const cleaned = summary.replace(/\s+/g, ' ').trim()
     if (!cleaned || looksLikePromptEchoSummary(cleaned)) return fallback
@@ -2135,6 +2137,15 @@ function createMemoryService ({
     return [...set]
   }
 
+  function stripReasoningFields (msg) {
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return msg
+    const cleaned = { ...msg }
+    try { delete cleaned.reasoning_content } catch {}
+    try { delete cleaned.reasoning } catch {}
+    try { delete cleaned.thinking } catch {}
+    return cleaned
+  }
+
   async function runSummaryModel (messages, maxTokens = 60, temperature = 0.2) {
     const { key, model } = state.ai || {}
     if (!key) {
@@ -2172,7 +2183,8 @@ function createMemoryService ({
 
       const choice0 = data?.choices?.[0]
       const msg = choice0?.message ?? choice0 ?? data
-      const extracted = H.extractAssistantText(msg).trim()
+      const cleanedMsg = stripReasoningFields(msg)
+      const extracted = H.extractAssistantText(cleanedMsg, { allowReasoning: false }).trim()
       if (state.ai?.trace) {
         try {
           const shape = msg && typeof msg === 'object' ? Object.keys(msg) : []
@@ -2183,7 +2195,7 @@ function createMemoryService ({
             if (c && typeof c === 'object') return 'object'
             return typeof c
           })()
-          const preview = extracted ? extracted.slice(0, 220) : '(empty)'
+          const preview = extracted || '(empty)'
           const dataKeys = data && typeof data === 'object' ? Object.keys(data) : []
           const choiceKeys = choice0 && typeof choice0 === 'object' ? Object.keys(choice0) : []
           log?.info && log.info('[summary] extracted ->', preview, 'content=', contentShape, 'messageKeys=', shape, 'choiceKeys=', choiceKeys, 'dataKeys=', dataKeys)
@@ -2211,11 +2223,11 @@ function createMemoryService ({
       { role: 'system', content: sys },
       { role: 'user', content: `玩家：${participants.join('、') || '未知'}\n聊天摘录（旧→新）：${joined}\n请输出一句总结。` }
     ]
-    const summary = await runSummaryModel(messages, 80, 0.3)
+    const summary = await runSummaryModel(messages, 1024, 0.3)
     if (!summary) return fallback
     const cleaned = summary.replace(/\s+/g, ' ').trim()
     if (!cleaned || looksLikePromptEchoSummary(cleaned)) {
-      try { traceChat('[chat] summary filtered', cleaned ? cleaned.slice(0, 220) : '(empty)') } catch {}
+      try { traceChat('[chat] summary filtered', cleaned || '(empty)') } catch {}
       return fallback
     }
     return cleaned
@@ -2388,7 +2400,7 @@ function createMemoryService ({
       { role: 'system', content: PEOPLE_INSPECTOR_SYSTEM_PROMPT },
       { role: 'user', content: user }
     ]
-    const raw = await runSummaryModel(messages, 280, 0.1)
+    const raw = await runSummaryModel(messages, 1024, 0.1)
     if (!raw) return null
     const jsonText = extractJsonLoose(raw) || raw
     try {

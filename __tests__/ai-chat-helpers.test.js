@@ -11,6 +11,8 @@ test('extractAssistantText supports string/segment content and avoids reasoning 
   assert.equal(extractAssistantText({ content: { text: 'obj' } }), 'obj')
   assert.equal(extractAssistantText({ text: 'alt' }), 'alt')
   assert.equal(extractAssistantText({ content: '', reasoning_content: 'reason' }), 'reason')
+  assert.equal(extractAssistantText({ content: '', reasoning_content: 'reason' }, { allowReasoning: false }), '')
+  assert.equal(extractAssistantText({ reasoning_content: [{ type: 'text', text: 'r' }] }, { allowReasoning: true }), 'r')
 })
 
 test('estTokensFromText approximates chars/4 ceil', () => {

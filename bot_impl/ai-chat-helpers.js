@@ -62,44 +62,45 @@ function canAfford (estInTok, maxOutTok, budgets, prices) {
   return { ok, proj, rem: { day: remDay, month: remMonth, total: remTotal } }
 }
 
-function extractAssistantText (message) {
+function extractAssistantText (message, options = {}) {
   if (typeof message === 'string') return message
   if (!message || typeof message !== 'object') return ''
 
-  const content = message.content
-  if (typeof content === 'string' && content.trim()) return content
+  const allowReasoning = options?.allowReasoning !== false
 
-  // Some providers/proxies return `content` as an array of typed segments:
-  // - Anthropic-style: [{ type: 'text', text: '...' }, ...]
-  // - OpenAI Responses-style: [{ type: 'output_text', text: '...' }, ...]
-  if (Array.isArray(content) && content.length) {
-    const parts = []
-    for (const item of content) {
-      if (!item) continue
-      if (typeof item === 'string') {
-        if (item.trim()) parts.push(item)
-        continue
+  const extractFromValue = (value, depth = 0) => {
+    if (typeof value === 'string') return value.trim()
+    if (!value || typeof value !== 'object') return ''
+    if (depth > 2) return ''
+    if (Array.isArray(value)) {
+      const parts = []
+      for (const item of value) {
+        const text = extractFromValue(item, depth + 1)
+        if (text) parts.push(text)
       }
-      if (typeof item !== 'object') continue
-      const text = item.text ?? item.content ?? item.value
-      if (typeof text === 'string' && text.trim()) parts.push(text)
+      const joined = parts.join('').trim()
+      return joined
     }
-    const joined = parts.join('').trim()
-    if (joined) return joined
+    const direct = value.text ?? value.content ?? value.value
+    if (typeof direct === 'string') return direct.trim()
+    if (direct && typeof direct === 'object') {
+      const nested = extractFromValue(direct, depth + 1)
+      if (nested) return nested
+    }
+    return ''
   }
 
-  if (content && typeof content === 'object') {
-    const text = content.text ?? content.content ?? content.value
-    if (typeof text === 'string' && text.trim()) return text
-  }
+  const contentText = extractFromValue(message.content)
+  if (contentText) return contentText
 
   // Prefer normal answer fields over model "thinking"/"reasoning" fields.
-  const alt = message.text ?? message.output_text ?? message.completion ?? message.result
-  if (typeof alt === 'string' && alt.trim()) return alt
+  const alt = extractFromValue(message.text ?? message.output_text ?? message.completion ?? message.result ?? message.answer ?? message.output)
+  if (alt) return alt
 
-  // Last resort: some providers only expose the response via reasoning fields.
-  const reasoning = message.reasoning_content ?? message.reasoning ?? message.thinking
-  if (typeof reasoning === 'string' && reasoning.trim()) return reasoning
+  if (allowReasoning) {
+    const reasoning = extractFromValue(message.reasoning_content ?? message.reasoning ?? message.thinking)
+    if (reasoning) return reasoning
+  }
 
   return ''
 }

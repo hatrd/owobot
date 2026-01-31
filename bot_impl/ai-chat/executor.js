@@ -521,7 +521,7 @@ function createChatExecutor ({
       model: model || defaults.DEFAULT_MODEL,
       messages,
       temperature: 0.2,
-      max_tokens: Math.max(120, Math.min(512, state.ai.maxTokensPerCall || 256)),
+      max_tokens: Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 1024)),
       stream: false,
       tools: TOOL_FUNCTIONS
     }

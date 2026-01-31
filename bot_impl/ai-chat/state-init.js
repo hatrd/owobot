@@ -78,7 +78,7 @@ function prepareAiState (state, opts = {}) {
     budgetDay: null,
     budgetMonth: null,
     budgetTotal: null,
-    maxTokensPerCall: 512,
+    maxTokensPerCall: 1024,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     notifyOnBudget: true,
     trace: false,

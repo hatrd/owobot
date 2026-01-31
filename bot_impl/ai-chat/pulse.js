@@ -1,4 +1,5 @@
 const ACTIVE_CHAT_WINDOW_MS = 120 * 1000
+const ACTIVE_CHAT_CLEANUP_MS = 5000
 const PLAYER_CHAT_DEDUPE_MS = 1200
 const CHAT_EVENT_DEDUPE_MS = 250
 const DEATHCHEST_DEDUPE_MS = 8000
@@ -296,6 +297,16 @@ function createPulseService ({
     sessions.set(username, entry)
   }
 
+  function startSessionCleanupTimer () {
+    try {
+      if (!state.aiPulse || typeof state.aiPulse !== 'object') state.aiPulse = {}
+      if (state.aiPulse._timer) return
+      state.aiPulse._timer = setInterval(() => {
+        try { cleanupActiveSessions() } catch {}
+      }, ACTIVE_CHAT_CLEANUP_MS)
+    } catch {}
+  }
+
   function touchConversationSession (username, extraParticipants = []) {
     if (!username) return
     const sessions = ensureActiveSessions()
@@ -366,7 +377,7 @@ function createPulseService ({
         const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
         const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
         const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-        const body = { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 60, stream: false }
+        const body = { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 1024, stream: false }
         try {
           const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
           if (!res.ok) {
@@ -384,7 +395,7 @@ function createPulseService ({
           })
           if (!data) return
           const choice0 = data?.choices?.[0]
-          const sum = H.extractAssistantText(choice0?.message ?? choice0 ?? data).trim()
+          const sum = H.extractAssistantText(choice0?.message ?? choice0 ?? data, { allowReasoning: false }).trim()
           if (!sum) return
           if (!Array.isArray(state.aiLong)) state.aiLong = []
           state.aiLong.push({ t: Date.now(), summary: sum })
@@ -684,6 +695,8 @@ function createPulseService ({
       state.aiPulse._timer = null
     }
   }
+
+  startSessionCleanupTimer()
 
   return {
     stop,

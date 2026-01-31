@@ -351,7 +351,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
     const reqMax = Number(maxTokens)
     const maxOut = Number.isFinite(reqMax) && reqMax > 0 ? Math.floor(reqMax) : 256
-    const cappedOut = Math.max(60, Math.min(maxOut, state.ai.maxTokensPerCall || 512))
+    const cappedOut = Math.max(60, Math.min(maxOut, state.ai.maxTokensPerCall || 1024))
     const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.2
 
     const body = {
@@ -379,7 +379,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
       const data = await res.json()
-      const reply = H.extractAssistantText(data?.choices?.[0]?.message)
+      const reply = H.extractAssistantText(data?.choices?.[0]?.message, { allowReasoning: false })
       const usage = data?.usage || {}
       const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
       const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : H.estTokensFromText(reply)
