@@ -59,7 +59,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const inv = observer.detail(bot, { what: 'inventory' })?.data
       if (!inv) { P('inv', 'no data'); return }
       const top = full ? (inv.all || []) : (inv.top || [])
-      P('inv', (top || []).map(it => `${it.name}x${it.count}`).join(', ') || 'empty')
+      P('inv', (top || []).map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(', ') || 'empty')
       P('hands', `held=${inv.held || '无'} offhand=${inv.offhand || '无'}`)
       const ar = inv.armor || {}
       P('armor', `head=${ar.head || '无'} chest=${ar.chest || '无'} legs=${ar.legs || '无'} feet=${ar.feet || '无'}`)

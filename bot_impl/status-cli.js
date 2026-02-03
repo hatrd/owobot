@@ -19,7 +19,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const sat = vit.saturation != null ? `${Number(vit.saturation).toFixed ? Number(vit.saturation).toFixed(1) : vit.saturation}` : '未知'
       const inv = snap.inv || {}
       const all = Array.isArray(inv.all) ? inv.all : (inv.top || [])
-      const invStr = (all || []).map(it => `${it.name}x${it.count}`).join(', ')
+      const invStr = (all || []).map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(', ')
       const hands = `主手=${inv.held || '无'} 副手=${inv.offhand || '无'}`
       const ar = inv.armor || {}
       const armor = `头=${ar.head || '无'} 胸=${ar.chest || '无'} 腿=${ar.legs || '无'} 脚=${ar.feet || '无'}`
@@ -57,4 +57,3 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 }
 
 module.exports = { install }
-

@@ -11,6 +11,88 @@ function dimName (bot) { try { return bot.game?.dimension || 'overworld' } catch
 
 function timeBrief (bot) { try { const tod = bot.time?.timeOfDay || 0; return (tod >= 13000 && tod <= 23000) ? '夜间' : '白天' } catch { return '' } }
 
+function stripColorCodes (s) {
+  try { return String(s || '').replace(/\u00a7./g, '') } catch { return '' }
+}
+
+function toPlainTextSafe (v) {
+  try {
+    const { toPlainText } = require('../actions/lib/book')
+    return stripColorCodes(toPlainText(v))
+  } catch {
+    try { return stripColorCodes(String(v || '')) } catch { return '' }
+  }
+}
+
+function simplifyNbtSync (raw) {
+  if (!raw) return null
+  try {
+    const nbt = require('prismarine-nbt')
+    const simplify = nbt.simplify || ((x) => x)
+    if (raw.type && raw.value) return simplify(raw)
+    if (raw.parsed && raw.parsed.type && raw.parsed.value) return simplify(raw.parsed)
+    if (typeof raw === 'object') return raw
+  } catch {}
+  return null
+}
+
+function readTypedNbtString (raw, path) {
+  try {
+    let node = raw
+    if (node && node.parsed) node = node.parsed
+    for (const key of (Array.isArray(path) ? path : [path])) {
+      if (!node || node.type !== 'compound') return null
+      node = node.value?.[key]
+    }
+    if (!node) return null
+    if (node.type === 'string') return String(node.value || '')
+    if (node.type && node.value != null) return String(node.value)
+    return null
+  } catch {
+    return null
+  }
+}
+
+function itemCustomLabel (bot, item) {
+  try {
+    if (!item) return null
+    const slotIdx = Number.isFinite(item.slot) ? item.slot : null
+    if (slotIdx != null) {
+      const cached = bot?.state?.invLabels?.bySlot?.[String(slotIdx)]
+      if (typeof cached === 'string') {
+        const t = cached.trim()
+        if (t) return t
+        // empty string means "known no label"
+      }
+    }
+    const raw = item.nbt
+    const tag = simplifyNbtSync(raw)
+    const id = String(item?.name || '').toLowerCase()
+    if (id === 'written_book' || id === 'writable_book') {
+      const titleRaw = tag?.title || readTypedNbtString(raw, ['title'])
+      const title = toPlainTextSafe(titleRaw || '').trim()
+      if (title) return title
+    }
+    const nameRaw = tag?.display?.Name || readTypedNbtString(raw, ['display', 'Name'])
+    const custom = toPlainTextSafe(nameRaw || '').trim()
+    return custom || null
+  } catch {
+    return null
+  }
+}
+
+function itemBriefName (bot, item) {
+  try {
+    if (!item) return null
+    const base = item.name || String(item.type)
+    const label = itemCustomLabel(bot, item)
+    if (!label) return base
+    return `${base}「${label}」`
+  } catch {
+    return null
+  }
+}
+
 function collectNearbyPlayers (bot, range = 16, max = 5) {
   try {
     const me = bot.entity?.position
@@ -129,27 +211,34 @@ function collectHostiles (bot, range = 24) {
 function collectInventorySummary (bot, top = 6) {
   try {
     const inv = bot.inventory?.items() || []
-    const held = bot.heldItem ? (bot.heldItem.name || String(bot.heldItem.type)) : null
-    const offhand = (() => { try { return bot.inventory?.slots?.[45]?.name || null } catch { return null } })()
+    const held = bot.heldItem ? itemBriefName(bot, bot.heldItem) : null
+    const offhand = (() => { try { return itemBriefName(bot, bot.inventory?.slots?.[45]) } catch { return null } })()
     const armor = {
-      head: (() => { try { return bot.inventory?.slots?.[5]?.name || null } catch { return null } })(),
-      chest: (() => { try { return bot.inventory?.slots?.[6]?.name || null } catch { return null } })(),
-      legs: (() => { try { return bot.inventory?.slots?.[7]?.name || null } catch { return null } })(),
-      feet: (() => { try { return bot.inventory?.slots?.[8]?.name || null } catch { return null } })()
+      head: (() => { try { return itemBriefName(bot, bot.inventory?.slots?.[5]) } catch { return null } })(),
+      chest: (() => { try { return itemBriefName(bot, bot.inventory?.slots?.[6]) } catch { return null } })(),
+      legs: (() => { try { return itemBriefName(bot, bot.inventory?.slots?.[7]) } catch { return null } })(),
+      feet: (() => { try { return itemBriefName(bot, bot.inventory?.slots?.[8]) } catch { return null } })()
     }
     const mcData = ensureMcData(bot)
     const foodsByName = mcData?.foodsByName || {}
     let foodCount = 0
-    const byName = new Map()
+    const byBaseName = new Map()
+    const byKey = new Map()
     for (const it of inv) {
-      const name = it.name || String(it.type)
-      byName.set(name, (byName.get(name) || 0) + (it.count || 0))
-      if (foodsByName[name]) foodCount += it.count || 0
+      const baseName = it.name || String(it.type)
+      const label = itemCustomLabel(bot, it)
+      const key = `${baseName}\u0000${label || ''}`
+      const prev = byKey.get(key) || { name: baseName, label: label || null, count: 0 }
+      prev.count += (it.count || 0)
+      byKey.set(key, prev)
+
+      byBaseName.set(baseName, (byBaseName.get(baseName) || 0) + (it.count || 0))
+      if (foodsByName[baseName]) foodCount += it.count || 0
     }
     const tiers = ['netherite','diamond','iron','stone','golden','wooden']
     let bestPick = null
-    for (const t of tiers) { const key = `${t}_pickaxe`; if (byName.get(key)) { bestPick = key; break } }
-    const allSorted = Array.from(byName.entries()).sort((a, b) => b[1] - a[1]).map(([n, c]) => ({ name: n, count: c }))
+    for (const t of tiers) { const key = `${t}_pickaxe`; if (byBaseName.get(key)) { bestPick = key; break } }
+    const allSorted = Array.from(byKey.values()).sort((a, b) => (b.count || 0) - (a.count || 0))
     const rows = allSorted.slice(0, Math.max(1, top))
     return { held, offhand, armor, top: rows, all: allSorted, foodCount, bestPick }
   } catch { return { held: null, top: [], foodCount: 0, bestPick: null } }
@@ -161,7 +250,7 @@ function collectHotbar (bot) {
     const names = []
     for (let i = 36; i <= 44; i++) {
       const it = slots[i]
-      if (it && it.name) names.push({ slot: i - 36, name: it.name, count: it.count || 0 })
+      if (it && it.name) names.push({ slot: i - 36, name: it.name, label: itemCustomLabel(bot, it), count: it.count || 0 })
     }
     return names
   } catch { return [] }
@@ -253,7 +342,7 @@ function toPrompt (snap) {
     const invAll = Array.isArray(inv.all) ? inv.all : (Array.isArray(inv.top) ? inv.top : [])
     if (invAll.length) {
       const maxShow = 24
-      const shown = invAll.slice(0, maxShow).map(it => `${it.name}x${it.count}`).join(',')
+      const shown = invAll.slice(0, maxShow).map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(',')
       const suffix = invAll.length > maxShow ? `,…+${invAll.length - maxShow}种` : ''
       parts.push(`背包:${shown}${suffix}`)
     }
@@ -330,7 +419,7 @@ function detail (bot, args = {}) {
   if (what === 'inventory' || what === 'inv' || what === 'bag') {
     const inv = collectInventorySummary(bot, 999)
     const all = Array.isArray(inv.all) ? inv.all : []
-    const line = all.length ? all.map(it => `${it.name}x${it.count}`).join(', ') : '空'
+    const line = all.length ? all.map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(', ') : '空'
     return { ok: true, msg: `背包物品(${all.length}种): ${line}`, data: inv }
   }
   if (what === 'cows' || what === 'cow') {
@@ -367,7 +456,12 @@ function affordances (bot, snap = null) {
     const s = snap || snapshot(bot, {})
     const a = []
     const inv = s.inv || {}
-    const byName = new Map((inv.top || []).map(it => [String(it.name), it.count]))
+    const byName = new Map()
+    for (const it of (inv.top || [])) {
+      const n = String(it?.name || '')
+      if (!n) continue
+      byName.set(n, (byName.get(n) || 0) + (it.count || 0))
+    }
     const has = (n) => (byName.get(n) || 0) > 0
     // Suggest crafting torches if low and materials present
     if ((inv.torch || 0) < 8 && (has('coal') || has('charcoal')) && (has('stick') || (has('oak_planks') && (inv.foodCount || 0) >= 0))) {

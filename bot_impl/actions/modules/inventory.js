@@ -1,5 +1,6 @@
 module.exports = function registerInventory (ctx) {
   const { bot, register, ok, fail, assertCanEquipHand, isMainHandLocked } = ctx
+  const { extractBookInfo, isBookItem } = require('../lib/book')
 
   function normalizeName (name) {
     const n = String(name || '').toLowerCase().trim()
@@ -337,7 +338,99 @@ module.exports = function registerInventory (ctx) {
     return dropped > 0 ? ok(`已丢弃 ${summary.join(', ')}`) : fail('没有丢出任何物品')
   }
 
+  function itemFromSlotSelector (slot) {
+    const key = String(slot).toLowerCase()
+    if (key === 'hand' || key === 'main' || key === 'mainhand') return bot.heldItem || null
+    if (key === 'offhand' || key === 'off-hand' || key === 'off_hand') return bot.inventory?.slots?.[45] || null
+    const equipAlias = {
+      head: 5, helmet: 5,
+      chest: 6, torso: 6, body: 6,
+      legs: 7, pants: 7,
+      feet: 8, boots: 8
+    }
+    if (equipAlias[key] != null) return bot.inventory?.slots?.[equipAlias[key]] || null
+    const idx = parseInt(String(slot), 10)
+    if (Number.isFinite(idx) && bot.inventory?.slots) return bot.inventory.slots[idx] || null
+    return null
+  }
+
+  function findAnyBook () {
+    try {
+      const candidates = []
+      if (bot.heldItem) candidates.push(bot.heldItem)
+      const off = bot.inventory?.slots?.[45]
+      if (off) candidates.push(off)
+      const stacks = collectInventoryStacks({ includeArmor: true, includeOffhand: true, includeHeld: true, includeMain: true, includeHotbar: true })
+      for (const it of stacks) candidates.push(it)
+      return candidates.find(isBookItem) || null
+    } catch {
+      return null
+    }
+  }
+
+  async function read_book (args = {}) {
+    const slot = args.slot ?? args.where
+    const name = args.name ?? args.item
+    const wantTitle = String(args.title ?? args.label ?? '').trim()
+    const wantLoose = String(args.match ?? '').trim()
+
+    function bookCandidates () {
+      try {
+        const candidates = []
+        if (bot.heldItem) candidates.push(bot.heldItem)
+        const off = bot.inventory?.slots?.[45]
+        if (off) candidates.push(off)
+        const stacks = collectInventoryStacks({ includeArmor: true, includeOffhand: true, includeHeld: true, includeMain: true, includeHotbar: true })
+        for (const it of stacks) candidates.push(it)
+        const out = []
+        const seen = new Set()
+        for (const it of candidates) {
+          if (!it || seen.has(it)) continue
+          seen.add(it)
+          if (isBookItem(it)) out.push(it)
+        }
+        return out
+      } catch {
+        return []
+      }
+    }
+
+    async function pickBookByTitle (needle) {
+      const q = String(needle || '').trim().toLowerCase()
+      if (!q) return null
+      const books = bookCandidates()
+      for (const it of books) {
+        try {
+          const meta = await extractBookInfo(it, { maxPages: 1, maxCharsPerPage: 1, pageFrom: 1, pageTo: 1 })
+          const title = String(meta?.data?.title || '').trim().toLowerCase()
+          if (!title) continue
+          if (title === q || title.includes(q) || q.includes(title)) return it
+        } catch {}
+      }
+      return null
+    }
+
+    let item = null
+    if (wantTitle) item = await pickBookByTitle(wantTitle)
+    if (!item && wantLoose) item = await pickBookByTitle(wantLoose)
+
+    if (!item && slot != null) {
+      const picked = itemFromSlotSelector(slot)
+      if (picked && isBookItem(picked)) item = picked
+    }
+    if (!item && name) {
+      const picked = resolveItemByName(name)
+      if (picked && isBookItem(picked)) item = picked
+      if (!item) item = await pickBookByTitle(name)
+    }
+    if (!item) item = findAnyBook()
+    if (!item) return fail('我身上没有找到书（书与笔/成书）')
+    const res = await extractBookInfo(item, args)
+    return res.ok ? ok(res.msg, { data: res.data }) : fail(res.msg || '读取失败')
+  }
+
   register('equip', equip)
   register('use_item', use_item)
   register('toss', toss)
+  register('read_book', read_book)
 }

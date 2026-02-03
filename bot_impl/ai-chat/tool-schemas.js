@@ -152,6 +152,23 @@ const ACTION_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'read_book',
+    description: 'Read text from a book (writable_book / written_book) held in hand/offhand or stored in inventory.',
+    parameters: {
+      type: 'object',
+      properties: {
+        slot: { type: 'string', description: 'Where to read: hand|offhand|head|chest|legs|feet or a raw inventory slot number.' },
+        name: { type: 'string', description: 'Item name to read; if omitted, auto-picks the first book found.' },
+        title: { type: 'string', description: 'Preferred book title/custom label to select among multiple books.' },
+        pageFrom: { type: 'number', description: '1-based start page.' },
+        pageTo: { type: 'number', description: '1-based end page.' },
+        maxPages: { type: 'number', description: 'Max pages to display in one reply.' },
+        maxCharsPerPage: { type: 'number', description: 'Max characters per page to display.' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
     name: 'pickup',
     description: 'Collect nearby dropped items.',
     parameters: {

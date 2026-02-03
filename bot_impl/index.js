@@ -175,6 +175,12 @@ function activate (botInstance, options = {}) {
   } catch (err) {
     coreLog.warn('watcher install error:', err?.message || err)
   }
+  try {
+    const invLabels = require('./agent/inventory-label-cache')
+    invLabels.install(bot, { state, on, registerCleanup, log: logging.getLogger('invlabels') })
+  } catch (err) {
+    coreLog.warn('inv label cache install error:', err?.message || err)
+  }
 
   // Track current external task for AI context (source: chat/cli -> player/auto)
   on('external:begin', (info) => {
