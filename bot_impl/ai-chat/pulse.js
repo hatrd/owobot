@@ -304,6 +304,7 @@ function createPulseService ({
       state.aiPulse._timer = setInterval(() => {
         try { cleanupActiveSessions() } catch {}
       }, ACTIVE_CHAT_CLEANUP_MS)
+      try { state.aiPulse._timer.unref && state.aiPulse._timer.unref() } catch {}
     } catch {}
   }
 
@@ -376,8 +377,12 @@ function createPulseService ({
         const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
         const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
         const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
-        const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-        const body = { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 1024, stream: false }
+        const apiPath = state.ai.path || defaults.DEFAULT_PATH
+        const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+        const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
+        const body = useResponses
+          ? { model: state.ai.model || defaults.DEFAULT_MODEL, input: messages, max_output_tokens: 1024 }
+          : { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 1024, stream: false }
         try {
           const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
           if (!res.ok) {
@@ -394,8 +399,9 @@ function createPulseService ({
             return null
           })
           if (!data) return
-          const choice0 = data?.choices?.[0]
-          const sum = H.extractAssistantText(choice0?.message ?? choice0 ?? data, { allowReasoning: false }).trim()
+          const sum = typeof H.extractAssistantTextFromApiResponse === 'function'
+            ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false }).trim()
+            : H.extractAssistantText(data?.choices?.[0]?.message ?? data?.choices?.[0] ?? data, { allowReasoning: false }).trim()
           if (!sum) return
           if (!Array.isArray(state.aiLong)) state.aiLong = []
           state.aiLong.push({ t: Date.now(), summary: sum })

@@ -1,6 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { estTokensFromText, trimReply, buildContextPrompt, projectedCostForCall, canAfford, extractAssistantText } from '../bot_impl/ai-chat-helpers.js'
+import {
+  estTokensFromText,
+  trimReply,
+  buildContextPrompt,
+  projectedCostForCall,
+  canAfford,
+  extractAssistantText,
+  stripReasoningText,
+  isResponsesApiPath,
+  extractAssistantTextFromApiResponse,
+  extractToolCallsFromApiResponse,
+  extractUsageFromApiResponse
+} from '../bot_impl/ai-chat-helpers.js'
 
 test('extractAssistantText supports string/segment content and avoids reasoning when content exists', () => {
   assert.equal(extractAssistantText('hi'), 'hi')
@@ -13,6 +25,44 @@ test('extractAssistantText supports string/segment content and avoids reasoning 
   assert.equal(extractAssistantText({ content: '', reasoning_content: 'reason' }), 'reason')
   assert.equal(extractAssistantText({ content: '', reasoning_content: 'reason' }, { allowReasoning: false }), '')
   assert.equal(extractAssistantText({ reasoning_content: [{ type: 'text', text: 'r' }] }, { allowReasoning: true }), 'r')
+})
+
+test('stripReasoningText removes <think>/<analysis> blocks', () => {
+  assert.equal(stripReasoningText('a<think>secret</think>b'), 'ab')
+  assert.equal(stripReasoningText('a<analysis>secret</analysis>b'), 'ab')
+  assert.equal(stripReasoningText('a<THINK>secret</THINK>b'), 'ab')
+  assert.equal(stripReasoningText('a<think>secret'), 'a')
+})
+
+test('extractAssistantText strips <think> when allowReasoning=false', () => {
+  const msg = { content: '<think>secret</think>final answer' }
+  assert.equal(extractAssistantText(msg, { allowReasoning: false }), 'final answer')
+})
+
+test('OpenAI-compatible response helpers support chat-completions and responses shapes', () => {
+  assert.equal(isResponsesApiPath('/v1/responses'), true)
+  assert.equal(isResponsesApiPath('/v1/chat/completions'), false)
+
+  const chatData = {
+    choices: [
+      { message: { role: 'assistant', content: '<think>x</think>hi', tool_calls: [{ id: 't1', function: { name: 'say', arguments: '{}' } }] } }
+    ],
+    usage: { prompt_tokens: 10, completion_tokens: 20 }
+  }
+  assert.equal(extractAssistantTextFromApiResponse(chatData, { allowReasoning: false }), 'hi')
+  assert.equal(extractToolCallsFromApiResponse(chatData).length, 1)
+  assert.deepEqual(extractUsageFromApiResponse(chatData), { inTok: 10, outTok: 20 })
+
+  const respData = {
+    output: [
+      { type: 'message', role: 'assistant', content: '<think>x</think>hello' },
+      { type: 'function_call', call_id: 'c1', name: 'say', arguments: '{"text":"ok"}' }
+    ],
+    usage: { input_tokens: 3, output_tokens: 4 }
+  }
+  assert.equal(extractAssistantTextFromApiResponse(respData, { allowReasoning: false }), 'hello')
+  assert.equal(extractToolCallsFromApiResponse(respData)[0]?.function?.name, 'say')
+  assert.deepEqual(extractUsageFromApiResponse(respData), { inTok: 3, outTok: 4 })
 })
 
 test('estTokensFromText approximates chars/4 ceil', () => {

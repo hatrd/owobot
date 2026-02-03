@@ -70,6 +70,7 @@ function prepareAiState (state, opts = {}) {
     baseUrl: DEFAULT_BASE,
     path: DEFAULT_PATH,
     model: DEFAULT_MODEL,
+    reasoningEffort: process.env.AI_REASONING_EFFORT || null,
     maxReplyLen: null,
     limits: null,
     currency: (process.env.AI_CURRENCY || 'USD'),

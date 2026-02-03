@@ -336,7 +336,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   async function aiCall ({ systemPrompt, userPrompt, maxTokens, temperature }) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) throw new Error('AI key not configured')
-    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+    const apiPath = path || defaults.DEFAULT_PATH
+    const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
 
     const messages = [
       systemPrompt ? { role: 'system', content: String(systemPrompt) } : null,
@@ -354,13 +355,21 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const cappedOut = Math.max(60, Math.min(maxOut, state.ai.maxTokensPerCall || 1024))
     const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.2
 
-    const body = {
-      model: model || defaults.DEFAULT_MODEL,
-      messages,
-      temperature: temp,
-      max_tokens: cappedOut,
-      stream: false
-    }
+    const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
+    const body = useResponses
+      ? {
+          model: model || defaults.DEFAULT_MODEL,
+          input: messages,
+          max_output_tokens: cappedOut,
+          ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
+        }
+      : {
+          model: model || defaults.DEFAULT_MODEL,
+          messages,
+          temperature: temp,
+          max_tokens: cappedOut,
+          stream: false
+        }
 
     const ac = new AbortController()
     const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
@@ -379,10 +388,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
       const data = await res.json()
-      const reply = H.extractAssistantText(data?.choices?.[0]?.message, { allowReasoning: false })
-      const usage = data?.usage || {}
-      const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
-      const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : H.estTokensFromText(reply)
+      const reply = typeof H.extractAssistantTextFromApiResponse === 'function'
+        ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false })
+        : H.extractAssistantText(data?.choices?.[0]?.message, { allowReasoning: false })
+      const usage = typeof H.extractUsageFromApiResponse === 'function' ? H.extractUsageFromApiResponse(data) : { inTok: null, outTok: null }
+      const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estIn
+      const outTok = Number.isFinite(usage.outTok) ? usage.outTok : H.estTokensFromText(reply)
       applyUsage(inTok, outTok)
       return String(reply).trim()
     } finally {

@@ -1093,7 +1093,8 @@ function createMemoryService ({
   async function invokeMemoryRewrite (job) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) return { status: 'error', reason: 'no_key' }
-    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+    const apiPath = path || defaults.DEFAULT_PATH
+    const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const payload = {
       job_id: job.id,
       player: job.player,
@@ -1107,13 +1108,21 @@ function createMemoryService ({
       { role: 'system', content: MEMORY_REWRITE_SYSTEM_PROMPT },
       { role: 'user', content: JSON.stringify(payload) }
     ]
-    const body = {
-      model: model || defaults.DEFAULT_MODEL,
-      messages,
-      temperature: 0.2,
-      max_tokens: 1024,
-      stream: false
-    }
+    const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
+    const body = useResponses
+      ? {
+          model: model || defaults.DEFAULT_MODEL,
+          input: messages,
+          max_output_tokens: 1024,
+          ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
+        }
+      : {
+          model: model || defaults.DEFAULT_MODEL,
+          messages,
+          temperature: 0.2,
+          max_tokens: 1024,
+          stream: false
+        }
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -1128,9 +1137,10 @@ function createMemoryService ({
         return { status: 'error', reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` }
       }
       const data = await res.json()
-      const msg = data?.choices?.[0]?.message
-      const cleanedMsg = stripReasoningFields(msg)
-      const reply = H.extractAssistantText(cleanedMsg, { allowReasoning: false })
+      const replyRaw = typeof H.extractAssistantTextFromApiResponse === 'function'
+        ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false })
+        : H.extractAssistantText(data?.choices?.[0]?.message, { allowReasoning: false })
+      const reply = (typeof H.stripReasoningText === 'function' ? H.stripReasoningText(replyRaw) : String(replyRaw || '')).trim()
       const jsonRaw = extractJsonLoose(reply)
       if (!jsonRaw) return { status: 'error', reason: 'no_json' }
       let parsed = null
@@ -2154,8 +2164,17 @@ function createMemoryService ({
       }
       return null
     }
-    const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: state.ai.path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-    const body = { model: model || defaults.DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
+    const apiPath = state.ai.path || defaults.DEFAULT_PATH
+    const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+    const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
+    const body = useResponses
+      ? {
+          model: model || defaults.DEFAULT_MODEL,
+          input: messages,
+          max_output_tokens: maxTokens,
+          ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
+        }
+      : { model: model || defaults.DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -2181,24 +2200,14 @@ function createMemoryService ({
       })
       if (!data) return null
 
-      const choice0 = data?.choices?.[0]
-      const msg = choice0?.message ?? choice0 ?? data
-      const cleanedMsg = stripReasoningFields(msg)
-      const extracted = H.extractAssistantText(cleanedMsg, { allowReasoning: false }).trim()
+      const extracted = typeof H.extractAssistantTextFromApiResponse === 'function'
+        ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false }).trim()
+        : H.extractAssistantText(data?.choices?.[0]?.message ?? data?.choices?.[0] ?? data, { allowReasoning: false }).trim()
       if (state.ai?.trace) {
         try {
-          const shape = msg && typeof msg === 'object' ? Object.keys(msg) : []
-          const contentShape = (() => {
-            const c = msg?.content
-            if (typeof c === 'string') return 'string'
-            if (Array.isArray(c)) return `array(len=${c.length})`
-            if (c && typeof c === 'object') return 'object'
-            return typeof c
-          })()
           const preview = extracted || '(empty)'
           const dataKeys = data && typeof data === 'object' ? Object.keys(data) : []
-          const choiceKeys = choice0 && typeof choice0 === 'object' ? Object.keys(choice0) : []
-          log?.info && log.info('[summary] extracted ->', preview, 'content=', contentShape, 'messageKeys=', shape, 'choiceKeys=', choiceKeys, 'dataKeys=', dataKeys)
+          log?.info && log.info('[summary] extracted ->', preview, 'dataKeys=', dataKeys)
           if (!extracted && data?.error) {
             try { log?.info && log.info('[summary] api error ->', String(data.error?.message || data.error).slice(0, 240)) } catch {}
           }

@@ -470,7 +470,8 @@ function createChatExecutor ({
     const { key, baseUrl, path, model, maxReplyLen } = state.ai
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     if (!key) throw new Error('AI key not configured')
-    const url = H.buildAiUrl({ baseUrl, path, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+    const apiPath = path || defaults.DEFAULT_PATH
+    const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()
     const memoryQuery = buildMemoryQuery({
@@ -517,14 +518,24 @@ function createChatExecutor ({
       const msg = state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : ''
       throw new Error(msg || 'budget_exceeded')
     }
-    const body = {
-      model: model || defaults.DEFAULT_MODEL,
-      messages,
-      temperature: 0.2,
-      max_tokens: Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 1024)),
-      stream: false,
-      tools: TOOL_FUNCTIONS
-    }
+    const maxOut = Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 1024))
+    const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
+    const body = useResponses
+      ? {
+          model: model || defaults.DEFAULT_MODEL,
+          input: messages,
+          max_output_tokens: maxOut,
+          tools: TOOL_FUNCTIONS,
+          ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
+        }
+      : {
+          model: model || defaults.DEFAULT_MODEL,
+          messages,
+          temperature: 0.2,
+          max_tokens: maxOut,
+          stream: false,
+          tools: TOOL_FUNCTIONS
+        }
     const ac = new AbortController()
     ctrl.abort = ac
     const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
@@ -543,17 +554,18 @@ function createChatExecutor ({
         throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
       }
       const data = await res.json()
-      const choice = data?.choices?.[0]?.message || {}
-      const reply = H.extractAssistantText(choice)
-      const usage = data?.usage || {}
-      const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : estIn
-      const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : estTokensFromText(reply)
+      const reply = typeof H.extractAssistantTextFromApiResponse === 'function'
+        ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false })
+        : H.extractAssistantText(data?.choices?.[0]?.message || {}, { allowReasoning: false })
+      const usage = typeof H.extractUsageFromApiResponse === 'function' ? H.extractUsageFromApiResponse(data) : { inTok: null, outTok: null }
+      const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estIn
+      const outTok = Number.isFinite(usage.outTok) ? usage.outTok : estTokensFromText(reply)
       applyUsage(inTok, outTok)
       if (state.ai.trace && log?.info) {
         const delta = (inTok / 1000) * (state.ai.priceInPerKT || 0) + (outTok / 1000) * (state.ai.priceOutPerKT || 0)
         log.info('usage inTok=', inTok, 'outTok=', outTok, 'cost+=', delta.toFixed(4))
       }
-      const toolCalls = extractToolCalls(choice)
+      const toolCalls = typeof H.extractToolCallsFromApiResponse === 'function' ? H.extractToolCallsFromApiResponse(data) : []
       if (toolCalls.length) {
         let speech = reply ? H.trimReply(reply, replyLimit) : ''
         let finalText = ''
@@ -571,13 +583,6 @@ function createChatExecutor ({
       clearTimeout(timeout)
       ctrl.abort = null
     }
-  }
-
-  function extractToolCalls (message) {
-    if (!message || typeof message !== 'object') return []
-    if (Array.isArray(message.tool_calls)) return message.tool_calls.filter(Boolean)
-    if (message.function_call) return [{ id: message.id || 'fn-0', function: message.function_call }]
-    return []
   }
 
   function normalizeToolPayload (toolCall) {

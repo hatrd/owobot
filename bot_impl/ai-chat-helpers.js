@@ -62,6 +62,27 @@ function canAfford (estInTok, maxOutTok, budgets, prices) {
   return { ok, proj, rem: { day: remDay, month: remMonth, total: remTotal } }
 }
 
+function stripReasoningText (text) {
+  if (typeof text !== 'string') return ''
+  let s = text
+  // Many reasoning models include chain-of-thought inside tags; never leak this to chat.
+  // Examples: DeepSeek-R1: <think>...</think>
+  s = s.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
+  s = s.replace(/<analysis\b[^>]*>[\s\S]*?<\/analysis>/gi, '')
+  // Handle missing closing tags by truncating to the prefix before the tag.
+  s = s.replace(/<think\b[^>]*>[\s\S]*$/gi, '')
+  s = s.replace(/<analysis\b[^>]*>[\s\S]*$/gi, '')
+  // Remove any stray tags left behind.
+  s = s.replace(/<\/?think\b[^>]*>/gi, '')
+  s = s.replace(/<\/?analysis\b[^>]*>/gi, '')
+  return s.trim()
+}
+
+function isResponsesApiPath (path) {
+  const p = String(path || '').toLowerCase()
+  return p.includes('/responses')
+}
+
 function extractAssistantText (message, options = {}) {
   if (typeof message === 'string') return message
   if (!message || typeof message !== 'object') return ''
@@ -91,11 +112,11 @@ function extractAssistantText (message, options = {}) {
   }
 
   const contentText = extractFromValue(message.content)
-  if (contentText) return contentText
+  if (contentText) return allowReasoning ? contentText : stripReasoningText(contentText)
 
   // Prefer normal answer fields over model "thinking"/"reasoning" fields.
   const alt = extractFromValue(message.text ?? message.output_text ?? message.completion ?? message.result ?? message.answer ?? message.output)
-  if (alt) return alt
+  if (alt) return allowReasoning ? alt : stripReasoningText(alt)
 
   if (allowReasoning) {
     const reasoning = extractFromValue(message.reasoning_content ?? message.reasoning ?? message.thinking)
@@ -103,6 +124,73 @@ function extractAssistantText (message, options = {}) {
   }
 
   return ''
+}
+
+function extractAssistantTextFromApiResponse (data, options = {}) {
+  if (!data || typeof data !== 'object') return ''
+
+  if (Array.isArray(data.choices)) {
+    const choice0 = data.choices[0]
+    const msg = choice0?.message ?? choice0 ?? data
+    return extractAssistantText(msg, options)
+  }
+
+  // Responses API (OpenAI) shapes:
+  // - { output_text: "..." }
+  // - { output: [{ type: "message", content: [...] }, { type: "function_call", ... }] }
+  const direct = typeof data.output_text === 'string' ? data.output_text.trim() : ''
+  if (direct) return (options?.allowReasoning === false) ? stripReasoningText(direct) : direct
+
+  const output = Array.isArray(data.output) ? data.output : []
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue
+    if (item.type === 'message' || item.content != null) {
+      const text = extractAssistantText(item, options)
+      if (text) return text
+    }
+    if (item.type === 'output_text' && typeof item.text === 'string') {
+      const text = (options?.allowReasoning === false) ? stripReasoningText(item.text) : item.text.trim()
+      if (text) return text
+    }
+  }
+
+  return ''
+}
+
+function extractToolCallsFromApiResponse (data) {
+  if (!data || typeof data !== 'object') return []
+
+  if (Array.isArray(data.choices)) {
+    const msg = data.choices?.[0]?.message
+    if (Array.isArray(msg?.tool_calls)) return msg.tool_calls.filter(Boolean)
+    if (msg?.function_call) return [{ id: msg.id || 'fn-0', function: msg.function_call }]
+    return []
+  }
+
+  const output = Array.isArray(data.output) ? data.output : []
+  const calls = []
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue
+    if (item.type !== 'function_call') continue
+    const name = String(item.name || '').trim()
+    if (!name) continue
+    const args = item.arguments
+    const argsStr = typeof args === 'string' ? args : (args && typeof args === 'object' ? JSON.stringify(args) : '')
+    calls.push({
+      id: item.call_id || item.id || `call_${calls.length}`,
+      function: { name, arguments: argsStr }
+    })
+  }
+  return calls
+}
+
+function extractUsageFromApiResponse (data) {
+  const usage = (data && typeof data === 'object') ? (data.usage || {}) : {}
+  const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens
+    : (Number.isFinite(usage.input_tokens) ? usage.input_tokens : null)
+  const outTok = Number.isFinite(usage.completion_tokens) ? usage.completion_tokens
+    : (Number.isFinite(usage.output_tokens) ? usage.output_tokens : null)
+  return { inTok, outTok }
 }
 
 function buildAiUrl ({ baseUrl, path, defaultBase, defaultPath }) {
@@ -127,6 +215,11 @@ module.exports = {
   buildContextPrompt,
   projectedCostForCall,
   canAfford,
+  stripReasoningText,
+  isResponsesApiPath,
   extractAssistantText,
+  extractAssistantTextFromApiResponse,
+  extractToolCallsFromApiResponse,
+  extractUsageFromApiResponse,
   buildAiUrl
 }
