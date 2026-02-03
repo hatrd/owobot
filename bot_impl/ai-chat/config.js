@@ -1,6 +1,7 @@
 const DEFAULT_MODEL = process.env.AI_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-chat'
 const DEFAULT_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-const DEFAULT_PATH = process.env.DEEPSEEK_PATH || '/v1/chat/completions'
+const DEFAULT_CHAT_PATH = process.env.AI_CHAT_PATH || process.env.DEEPSEEK_CHAT_PATH || '/v1/chat/completions'
+const DEFAULT_PATH = process.env.DEEPSEEK_PATH || DEFAULT_CHAT_PATH
 const DEFAULT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AI_TIMEOUT_MS || process.env.DEEPSEEK_TIMEOUT_MS)
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 25000
@@ -77,6 +78,7 @@ function buildDefaultContext () {
 module.exports = {
   DEFAULT_MODEL,
   DEFAULT_BASE,
+  DEFAULT_CHAT_PATH,
   DEFAULT_PATH,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_RECENT_COUNT,

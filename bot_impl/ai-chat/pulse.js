@@ -377,7 +377,7 @@ function createPulseService ({
         const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
         const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
         const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
-        const apiPath = state.ai.path || defaults.DEFAULT_PATH
+        const apiPath = state.ai.pathOverride || state.ai.path || defaults.DEFAULT_PATH
         const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
         const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
         const body = useResponses

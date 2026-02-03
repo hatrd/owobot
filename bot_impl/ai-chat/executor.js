@@ -467,10 +467,10 @@ function createChatExecutor ({
   }
 
   async function callAI (username, content, intent, options = {}) {
-    const { key, baseUrl, path, model, maxReplyLen } = state.ai
+    const { key, baseUrl, path, pathOverride, model, maxReplyLen } = state.ai
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     if (!key) throw new Error('AI key not configured')
-    const apiPath = path || defaults.DEFAULT_PATH
+    const apiPath = pathOverride || path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const contextPrompt = buildContextPrompt(username)
     const gameCtx = buildGameContext()

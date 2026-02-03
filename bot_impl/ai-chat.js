@@ -16,6 +16,7 @@ const { createContextBus } = require('./ai-chat/context-bus')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
+  DEFAULT_CHAT_PATH,
   DEFAULT_PATH,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_RECENT_COUNT,
@@ -119,6 +120,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const defaults = {
     DEFAULT_MODEL,
     DEFAULT_BASE,
+    DEFAULT_CHAT_PATH,
     DEFAULT_PATH,
     DEFAULT_TIMEOUT_MS,
     DEFAULT_RECENT_COUNT,
@@ -155,6 +157,82 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
   validateAiConfig()
+
+  async function probeResponsesThenFallback () {
+    try {
+      if (!state.ai || typeof state.ai !== 'object') return
+      if (state.ai._probedResponses) return
+      state.ai._probedResponses = true
+
+      const key = String(state.ai.key || '').trim()
+      if (!key) return
+
+      const rawPath = String(state.ai.path || defaults.DEFAULT_PATH || '').trim()
+      const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(rawPath)
+      if (!useResponses) return
+
+      const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: rawPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+
+      const body = {
+        model: state.ai.model || defaults.DEFAULT_MODEL,
+        input: [{ role: 'user', content: 'ping' }],
+        max_output_tokens: 1
+      }
+
+      const ac = new AbortController()
+      const timeout = setTimeout(() => ac.abort('probe_timeout'), 3500)
+      let res
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify(body),
+          signal: ac.signal
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
+      if (!res) return
+      if (res.ok) return
+
+      const status = res.status
+      const hint = await res.text().catch(() => '')
+      const msg = (() => {
+        try {
+          const j = JSON.parse(hint)
+          const e = j?.error?.message ?? j?.message ?? j?.error
+          return String(e || '').trim() || hint
+        } catch {
+          return hint
+        }
+      })()
+
+      const shouldFallback = (() => {
+        if ([404, 405, 410].includes(status)) return true
+        if (status !== 400) return false
+        const m = String(msg || '').toLowerCase()
+        if (!m) return false
+        // Heuristic: endpoint exists but expects chat-completions schema (messages/max_tokens) or rejects responses schema.
+        if (m.includes('messages') && m.includes('required')) return true
+        if (m.includes('max_tokens') && m.includes('required')) return true
+        if (m.includes('unrecognized') && (m.includes('input') || m.includes('max_output_tokens') || m.includes('reasoning'))) return true
+        if (m.includes('unknown') && (m.includes('endpoint') || m.includes('route') || m.includes('path'))) return true
+        if (m.includes('not found')) return true
+        return false
+      })()
+
+      if (!shouldFallback) return
+      state.ai.pathOverride = defaults.DEFAULT_CHAT_PATH
+      if (log?.warn) log.warn('[AI] /responses unsupported; fallback to chat-completions. status=', status, 'hint=', String(msg || '').slice(0, 160))
+      else console.warn('[AI] /responses unsupported; fallback to chat-completions. status=', status, 'hint=', String(msg || '').slice(0, 160))
+    } catch (err) {
+      // Probe is best-effort: never break startup.
+      if (state.ai?.trace && log?.info) {
+        try { log.info('[AI] responses probe skipped:', err?.message || err) } catch {}
+      }
+    }
+  }
+  probeResponsesThenFallback().catch(() => {})
 
   const refsEnabled = state.ai?.refsEnabled !== false
 
@@ -334,9 +412,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   // REFS: Introspection AI call wrapper (DeepSeek; respects budget)
   async function aiCall ({ systemPrompt, userPrompt, maxTokens, temperature }) {
-    const { key, baseUrl, path, model } = state.ai || {}
+    const { key, baseUrl, path, pathOverride, model } = state.ai || {}
     if (!key) throw new Error('AI key not configured')
-    const apiPath = path || defaults.DEFAULT_PATH
+    const apiPath = pathOverride || path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
 
     const messages = [

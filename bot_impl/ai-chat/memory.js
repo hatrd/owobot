@@ -1093,7 +1093,7 @@ function createMemoryService ({
   async function invokeMemoryRewrite (job) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) return { status: 'error', reason: 'no_key' }
-    const apiPath = path || defaults.DEFAULT_PATH
+    const apiPath = state.ai?.pathOverride || path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const payload = {
       job_id: job.id,
@@ -2164,7 +2164,7 @@ function createMemoryService ({
       }
       return null
     }
-    const apiPath = state.ai.path || defaults.DEFAULT_PATH
+    const apiPath = state.ai.pathOverride || state.ai.path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
     const body = useResponses

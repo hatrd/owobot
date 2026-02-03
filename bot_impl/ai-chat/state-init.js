@@ -69,6 +69,7 @@ function prepareAiState (state, opts = {}) {
     key: process.env.DEEPSEEK_API_KEY || null,
     baseUrl: DEFAULT_BASE,
     path: DEFAULT_PATH,
+    pathOverride: null,
     model: DEFAULT_MODEL,
     reasoningEffort: process.env.AI_REASONING_EFFORT || null,
     maxReplyLen: null,

@@ -89,6 +89,16 @@ function extractAssistantText (message, options = {}) {
 
   const allowReasoning = options?.allowReasoning !== false
 
+  const isReasoningType = (typeRaw) => {
+    const t = String(typeRaw || '').toLowerCase()
+    if (!t) return false
+    // Provider-specific/compat variants:
+    // - OpenAI: reasoning_content (stream delta), reasoning (responses)
+    // - DeepSeek-R1: reasoning/thinking
+    // - Some adapters: analysis
+    return t.includes('reasoning') || t.includes('thinking') || t === 'analysis'
+  }
+
   const extractFromValue = (value, depth = 0) => {
     if (typeof value === 'string') return value.trim()
     if (!value || typeof value !== 'object') return ''
@@ -96,12 +106,14 @@ function extractAssistantText (message, options = {}) {
     if (Array.isArray(value)) {
       const parts = []
       for (const item of value) {
+        if (!allowReasoning && item && typeof item === 'object' && isReasoningType(item.type)) continue
         const text = extractFromValue(item, depth + 1)
         if (text) parts.push(text)
       }
       const joined = parts.join('').trim()
       return joined
     }
+    if (!allowReasoning && isReasoningType(value.type)) return ''
     const direct = value.text ?? value.content ?? value.value
     if (typeof direct === 'string') return direct.trim()
     if (direct && typeof direct === 'object') {
