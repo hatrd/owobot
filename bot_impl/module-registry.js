@@ -20,6 +20,7 @@ const MODULES = [
   { id: 'auto-login', path: './auto-login', logger: 'login', kind: 'feature', description: 'Handle /login prompts automatically' },
   { id: 'drops-debug', path: './drops-debug', logger: 'drops', kind: 'debug', description: 'CLI helpers for nearby item entities' },
   { id: 'collect-cli', path: './collect-cli', logger: 'collect', kind: 'cli', description: 'CLI command for collecting drops around the bot' },
+  { id: 'tool-cli', path: './tool-cli', logger: 'tool', kind: 'cli', description: 'Unified CLI entrypoint for running action tools (.tool ...)' },
   { id: 'place-cli', path: './place-cli', logger: 'place', kind: 'cli', description: 'CLI command for block placement utilities' },
   { id: 'spawnproof-cli', path: './spawnproof-cli', logger: 'spawnproof', kind: 'cli', description: 'CLI command to place spawn-proofing blocks' },
   { id: 'tab-cli', path: './tab-cli', logger: 'tab', kind: 'cli', description: 'CLI command to print current tablist players with ping' },
