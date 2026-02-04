@@ -179,14 +179,10 @@ function install (bot, { on, registerCleanup, log } = {}) {
       const args = coerceToolArgs(tool, parsed)
 
       if (isDry) {
-        // MVP dry-run: parse + validate tool existence; does not touch the world.
+        // MVP dry-run: validate-only, no world probe.
         const actions = actionsMod.install(bot, { log })
-        const known = new Set(actions.list())
-        if (!known.has(tool)) {
-          print('dry fail', `unknown tool: ${tool}`)
-          return
-        }
-        print('dry ok', `tool=${tool}`, JSON.stringify(args))
+        const res = actions.dry ? actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported', blocks: ['no_dry'] }
+        print('dry', JSON.stringify(res))
         return
       }
 

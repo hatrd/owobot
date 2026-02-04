@@ -98,6 +98,32 @@ function install (bot, options = {}) {
     if (typeof load === 'function') load(ctx)
   }
 
+  function dry (tool, args) {
+    try {
+      const name = String(tool || '')
+      if (!name) return { ok: false, msg: '缺少工具名', blocks: ['missing_tool'] }
+      if (!TOOL_NAMES.includes(name)) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
+      const fn = ctx.registry.get(name)
+      if (!fn) return { ok: false, msg: '未知工具', blocks: ['unknown_tool'] }
+      const safeArgs = (args && typeof args === 'object') ? args : {}
+      return {
+        ok: true,
+        msg: 'dry-run: validate-only (no world probe)',
+        preview: {
+          title: `Would run tool: ${name}`,
+          steps: [{ op: 'run', tool: name, args: safeArgs }]
+        },
+        warnings: ['dry-run currently validates tool/args only; runtime world state is not simulated'],
+        blocks: [],
+        uncertainty: 'high',
+        capability: { level: 'validate_only' }
+      }
+    } catch (e) {
+      const errMsg = String(e?.message || e)
+      return { ok: false, msg: 'dry-run failed', error: errMsg, blocks: ['internal_error'] }
+    }
+  }
+
   function run (tool, args) {
     const fn = ctx.registry.get(tool)
     if (!fn) return { ok: false, msg: '未知工具' }
@@ -120,7 +146,7 @@ function install (bot, options = {}) {
     if (missing.length || extra.length) ctx.log?.warn && ctx.log.warn('TOOL_NAMES mismatch', { missing, extra })
   }
 
-  return { run, list }
+  return { run, list, dry }
 }
 
 module.exports = { install, TOOL_NAMES }

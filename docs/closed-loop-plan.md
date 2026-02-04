@@ -43,6 +43,9 @@
 交付：
 - 所有工具具备 dry-run 路径。
 - dry-run 输出格式稳定，便于 CLI/日志显示。
+实现落点（MVP）：
+- `bot_impl/actions/index.js` 提供 `actions.dry(tool, args)`，当前为 `validate_only`（不探测世界状态）。
+- `bot_impl/tool-cli.js` 的 `.tool dry ...` 直接打印 `actions.dry(...)` 的 JSON 结果（便于脚本解析）。
 
 ### P2 内部 CLI：统一工具入口
 **目标**：通过内部命令行（`.xxx`）执行工具/预览。
