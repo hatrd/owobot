@@ -84,6 +84,9 @@
 交付：
 - 1 个脚本化控制入口（例如 `node scripts/botctl.js ...`）可连接 UDS 并执行 `tool.dry/tool.run`。
 - 1 份最小协议说明（本文件即可），保证自动化不漂移。
+实现落点（MVP）：
+- 服务端：`bot.js` 启动时创建 `./.mcbot.sock`（UDS）与 `./.mcbot.pid`，支持 `hello/tool.list/tool.dry/tool.run`。
+- 客户端：`scripts/botctl.js`（示例：`node scripts/botctl.js list` / `node scripts/botctl.js dry pickup radius=20`）。
 
 ### P4 验证闭环：热重载 + 进程重启
 **目标**：Codex 能明确“什么时候热重载、什么时候重启”。

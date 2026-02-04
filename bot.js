@@ -2,6 +2,7 @@ if (!process.env.TZ) process.env.TZ = 'Asia/Shanghai'
 
 const mineflayer = require('mineflayer')
 const readline = require('readline')
+const net = require('net')
 const fs = require('fs')
 const path = require('path')
 const fileLogger = require('./bot_impl/file-logger')
@@ -168,6 +169,132 @@ rl.on('line', (line) => {
 const pluginRoot = path.resolve(__dirname, 'bot_impl')
 let plugin = null
 let sharedState = { pendingGreets: new Map(), greetedPlayers: new Set(), readyForGreeting: false, extinguishing: false }
+
+// --- Control plane (Unix socket, NDJSON) ---
+// Stable IPC for scripts/Codex; avoids fragile stdin attach/quoting.
+const ctl = {
+  startedAt: Date.now(),
+  pidPath: path.resolve(process.cwd(), '.mcbot.pid'),
+  sockPath: path.resolve(process.cwd(), '.mcbot.sock'),
+  server: null
+}
+
+function safeUnlink (p) {
+  try { fs.unlinkSync(p) } catch {}
+}
+
+function startControlPlane () {
+  if (ctl.server) return
+  // Best-effort cleanup from previous runs.
+  safeUnlink(ctl.sockPath)
+  try { fs.writeFileSync(ctl.pidPath, String(process.pid) + '\n') } catch {}
+
+  const server = net.createServer((socket) => {
+    socket.setEncoding('utf8')
+    let buf = ''
+    socket.on('data', (chunk) => {
+      buf += chunk
+      while (true) {
+        const idx = buf.indexOf('\n')
+        if (idx < 0) break
+        const line = buf.slice(0, idx).trim()
+        buf = buf.slice(idx + 1)
+        if (!line) continue
+        let req
+        try { req = JSON.parse(line) } catch { req = null }
+        handleCtlRequest(req).then((res) => {
+          try { socket.write(JSON.stringify(res) + '\n') } catch {}
+        }).catch((err) => {
+          const id = req && req.id != null ? req.id : null
+          try { socket.write(JSON.stringify({ id, ok: false, error: String(err?.message || err) }) + '\n') } catch {}
+        })
+      }
+    })
+  })
+  ctl.server = server
+
+  server.listen(ctl.sockPath, () => {
+    try { fs.chmodSync(ctl.sockPath, 0o600) } catch {}
+    console.log('[CTL] listening on', ctl.sockPath)
+  })
+  server.on('error', (err) => {
+    console.error('[CTL] server error:', err?.message || err)
+  })
+}
+
+function stopControlPlane () {
+  if (!ctl.server) return
+  try { ctl.server.close() } catch {}
+  ctl.server = null
+  safeUnlink(ctl.sockPath)
+  safeUnlink(ctl.pidPath)
+}
+
+async function handleCtlRequest (req) {
+  const id = req && req.id != null ? req.id : null
+  const op = req && req.op ? String(req.op) : ''
+  if (!op) return { id, ok: false, error: 'missing op' }
+
+  if (op === 'hello') {
+    return {
+      id,
+      ok: true,
+      result: {
+        cwd: process.cwd(),
+        pid: process.pid,
+        startedAt: ctl.startedAt,
+        hasBot: Boolean(bot),
+        username: bot && bot.username ? bot.username : null
+      }
+    }
+  }
+
+  if (!bot) return { id, ok: false, error: 'bot not ready' }
+
+  if (op === 'tool.list' || op === 'tool.dry' || op === 'tool.run') {
+    // Require inside handler so hot reload cache clears stay consistent.
+    // eslint-disable-next-line import/no-dynamic-require
+    const actionsMod = require(path.join(pluginRoot, 'actions'))
+    const actions = actionsMod.install(bot, { log: null })
+
+    if (op === 'tool.list') {
+      const registered = actions.list()
+      const allowlist = Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : []
+      const regSet = new Set(registered)
+      return {
+        id,
+        ok: true,
+        result: {
+          allowlist,
+          registered,
+          missing: allowlist.filter(n => !regSet.has(n)),
+          extra: registered.filter(n => !allowlist.includes(n))
+        }
+      }
+    }
+
+    const tool = req && req.tool != null ? String(req.tool) : ''
+    const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
+    if (!tool) return { id, ok: false, error: 'missing tool' }
+
+    if (op === 'tool.dry') {
+      const r = actions.dry ? actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported' }
+      return { id, ok: true, result: r }
+    }
+
+    // tool.run
+    try { bot.emit('external:begin', { source: 'ctl', tool }) } catch {}
+    let r
+    try {
+      r = await actions.run(tool, args)
+    } finally {
+      try { bot.emit('external:end', { source: 'ctl', tool }) } catch {}
+    }
+    return { id, ok: true, result: r }
+  }
+
+  return { id, ok: false, error: `unknown op: ${op}` }
+}
 // Optional: reload gate file to control when hot-reload applies
 function resolveReloadGate () {
   const arg = argv.args['reload-gate']
@@ -231,6 +358,8 @@ function loadPlugin() {
     console.error('Hot reload: activation failed:', e?.message || e)
   }
 }
+
+startControlPlane()
 
 startBot()
 
@@ -344,6 +473,7 @@ process.on('SIGINT', () => {
   if (shuttingDown) return
   shuttingDown = true
   console.log('Shutting down bot...')
+  try { stopControlPlane() } catch {}
   try { if (plugin && plugin.deactivate) plugin.deactivate() } catch {}
   try { closeAllWatchers() } catch {}
   try { if (gateWatcher) gateWatcher.close() } catch {}
