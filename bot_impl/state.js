@@ -32,6 +32,8 @@ function prepareSharedState (existing, { greetEnabled, loginPassword } = {}) {
   // Player stats module state
   if (!state.playerStats) state.playerStats = {}
   state.playerStats.activeSessions = ensureMap(state.playerStats.activeSessions)
+  // Shared runtime for actions/tools (interval handles, abort flags, debug toggles, etc.)
+  if (!state.actionsRuntime || typeof state.actionsRuntime !== 'object') state.actionsRuntime = {}
   return state
 }
 

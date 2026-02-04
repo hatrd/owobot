@@ -16,18 +16,35 @@ const MODULES = [
   require('./modules/stats')
 ]
 
-function createContext (bot, { log, on, registerCleanup } = {}) {
-  const registry = new Map()
-  const shared = {
-    huntInterval: null,
-    huntTarget: null,
-    guardInterval: null,
-    guardTarget: null,
-    cullInterval: null,
-    miningAbort: false,
-    armorStandInterval: null,
-    armorStandDebug: { enabled: false, lastTick: null, _lastTickLog: { reason: null, targetId: null } }
+function prepareActionsRuntime (existing) {
+  const shared = (existing && typeof existing === 'object') ? existing : {}
+  if (!('huntInterval' in shared)) shared.huntInterval = null
+  if (!('huntTarget' in shared)) shared.huntTarget = null
+  if (!('guardInterval' in shared)) shared.guardInterval = null
+  if (!('guardTarget' in shared)) shared.guardTarget = null
+  if (!('cullInterval' in shared)) shared.cullInterval = null
+  if (!('miningAbort' in shared)) shared.miningAbort = false
+  if (!('armorStandInterval' in shared)) shared.armorStandInterval = null
+  if (!shared.armorStandDebug || typeof shared.armorStandDebug !== 'object') {
+    shared.armorStandDebug = { enabled: false, lastTick: null, _lastTickLog: { reason: null, targetId: null } }
+  } else {
+    if (!('enabled' in shared.armorStandDebug)) shared.armorStandDebug.enabled = false
+    if (!('lastTick' in shared.armorStandDebug)) shared.armorStandDebug.lastTick = null
+    if (!shared.armorStandDebug._lastTickLog || typeof shared.armorStandDebug._lastTickLog !== 'object') {
+      shared.armorStandDebug._lastTickLog = { reason: null, targetId: null }
+    } else {
+      if (!('reason' in shared.armorStandDebug._lastTickLog)) shared.armorStandDebug._lastTickLog.reason = null
+      if (!('targetId' in shared.armorStandDebug._lastTickLog)) shared.armorStandDebug._lastTickLog.targetId = null
+    }
   }
+  return shared
+}
+
+function createContext (bot, { log, on, registerCleanup, runtime } = {}) {
+  const registry = new Map()
+  // Runtime must be shared across all action entrypoints (AI, CLI, etc.),
+  // otherwise stop/reset can only affect the instance that created the interval/flag.
+  const shared = prepareActionsRuntime(runtime || bot?.state?.actionsRuntime)
   let pathfinderPkg = null
   let guardDebug = false
 
