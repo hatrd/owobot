@@ -94,12 +94,14 @@
   - **仅改 `bot_impl/`** → `touch open_fire` 热重载验证
   - **涉及启动流程/依赖/脚本** → 提供“安全重启”入口
 - 补一条脚本化入口（示例）：
-  - `npm run bot:reload`（内部做 `touch open_fire`）
-  - `npm run bot:restart`（安全停止并拉起）
+  - `npm run bot:reload`（等价 `touch open_fire`，由 `scripts/reload-gate.js` 实现，可受 `HOT_RELOAD_GATE` 控制）
+  - `npm run bot:restart`（通过 `./.mcbot.pid` SIGINT 停止旧进程并前台拉起新进程；由 `scripts/restart-bot.js` 实现）
 
 交付：
 - 明确可复制的验证步骤（CLI/脚本）。
 - 文档中写清“热重载 vs 重启”的判断标准。
+实现落点：
+- `scripts/reload-gate.js` / `scripts/restart-bot.js` / `package.json` scripts。
 
 ## 验收标准（Definition of Done）
 - 任一工具都能通过 `.tool dry ...` 预览，将要发生的动作清晰可见。

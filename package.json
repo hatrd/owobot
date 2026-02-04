@@ -7,6 +7,8 @@
     "start": "node bot.js",
     "dev": "nodemon",
     "test": "node --test",
+    "bot:reload": "node scripts/reload-gate.js",
+    "bot:restart": "node scripts/restart-bot.js",
     "inspect:context": "node scripts/inspect-injected-context.js",
     "wt": "bash scripts/wt"
   },
