@@ -3,6 +3,9 @@
 const HOSTILE_TOKENS_EN = ['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute']
 const HOSTILE_TOKENS_CN = ['苦力怕','僵尸','骷髅','蜘蛛','洞穴蜘蛛','末影人','女巫','史莱姆','溺尸','尸壳','掠夺者','恼鬼','掠夺兽','幻翼','烈焰人','恶魂','岩浆怪','守卫者','远古守卫者','潜影贝','凋灵骷髅','疣猪兽','僵尸疣猪兽','流浪者','蠹虫','唤魔者','卫道士','监守者','猪灵','猪灵蛮兵']
 
+let bookLib = null
+try { bookLib = require('../actions/lib/book') } catch {}
+
 function ensureMcData (bot) { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
 
 function fmtNum (n) { return Number.isFinite(n) ? Number(n).toFixed(1) : String(n) }
@@ -17,8 +20,10 @@ function stripColorCodes (s) {
 
 function toPlainTextSafe (v) {
   try {
-    const { toPlainText } = require('../actions/lib/book')
-    return stripColorCodes(toPlainText(v))
+    if (bookLib && typeof bookLib.toPlainText === 'function') {
+      return stripColorCodes(bookLib.toPlainText(v))
+    }
+    return stripColorCodes(String(v || ''))
   } catch {
     try { return stripColorCodes(String(v || '')) } catch { return '' }
   }
@@ -65,6 +70,12 @@ function itemCustomLabel (bot, item) {
         // empty string means "known no label"
       }
     }
+    try {
+      if (bookLib && typeof bookLib.extractItemLabel === 'function') {
+        const label = bookLib.extractItemLabel(item, { fallbackBookDisplayName: true })
+        if (typeof label === 'string' && label.trim()) return label.trim()
+      }
+    } catch {}
     const raw = item.nbt
     const tag = simplifyNbtSync(raw)
     const id = String(item?.name || '').toLowerCase()

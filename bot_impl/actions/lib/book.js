@@ -83,6 +83,18 @@ async function simplifyNbtAny (raw) {
   return null
 }
 
+function simplifyNbtBestEffortSync (raw) {
+  if (!raw) return null
+  try {
+    const nbt = require('prismarine-nbt')
+    const simplify = nbt.simplify || ((v) => v)
+    if (raw.type && raw.value) return simplify(raw)
+    if (raw.parsed && raw.parsed.type && raw.parsed.value) return simplify(raw.parsed)
+    if (typeof raw === 'object') return raw
+  } catch {}
+  return null
+}
+
 function isBookItem (item) {
   const n = String(item?.name || '').toLowerCase()
   return n === 'writable_book' || n === 'written_book'
@@ -239,6 +251,66 @@ function pickFirstField (obj, keys) {
     if (k in obj) return obj[k]
   }
   return undefined
+}
+
+function extractCustomName (item) {
+  try {
+    if (!item) return null
+    const components = extractComponentsFromItem(item)
+    const rawFromComponents = pickFirstField(components, ['custom_name', 'minecraft:custom_name', 'customname', 'customName'])
+    const compName = toPlainText(rawFromComponents).trim()
+    if (compName) return compName
+
+    const raw = item?.nbt
+    const tag = simplifyNbtBestEffortSync(raw)
+    const tagInner = isPlainObject(tag?.tag) ? tag.tag : null
+    const nbtNameRaw = tag?.display?.Name ?? tagInner?.display?.Name
+    const typedName = readTypedString(raw, ['display', 'Name']) || readTypedString(raw, ['tag', 'display', 'Name'])
+    const legacyName = toPlainText(nbtNameRaw ?? typedName).trim()
+    return legacyName || null
+  } catch {
+    return null
+  }
+}
+
+function extractBookTitle (item) {
+  try {
+    if (!item || !isBookItem(item)) return null
+    const base = String(item?.name || '').toLowerCase()
+    const components = extractComponentsFromItem(item)
+    if (base === 'written_book') {
+      const content = pickFirstField(components, ['written_book_content', 'minecraft:written_book_content'])
+      if (content && typeof content === 'object') {
+        const t = toPlainText(content.rawTitle ?? content.filteredTitle ?? content.title).trim()
+        if (t) return t
+      }
+    }
+    const raw = item?.nbt
+    const tag = simplifyNbtBestEffortSync(raw)
+    const tagInner = isPlainObject(tag?.tag) ? tag.tag : null
+    const titleRaw = tag?.title ?? tagInner?.title
+    const titleTyped = readTypedString(raw, ['title']) || readTypedString(raw, ['tag', 'title'])
+    const legacyTitle = toPlainText(titleRaw ?? titleTyped).trim()
+    return legacyTitle || null
+  } catch {
+    return null
+  }
+}
+
+function extractItemLabel (item, opts = {}) {
+  try {
+    if (!item) return null
+    const fallbackBookDisplayName = opts.fallbackBookDisplayName !== false
+    const customName = extractCustomName(item)
+    if (isBookItem(item)) {
+      const title = extractBookTitle(item)
+      const label = title || customName || (fallbackBookDisplayName ? String(item.displayName || '').trim() : '')
+      return label && label.trim() ? label.trim() : null
+    }
+    return customName || null
+  } catch {
+    return null
+  }
 }
 
 function normalizeBookPageEntries (pages) {
@@ -456,6 +528,9 @@ async function extractBookInfo (item, opts = {}) {
 module.exports = {
   extractBookInfo,
   extractBookMeta,
+  extractBookTitle,
+  extractCustomName,
+  extractItemLabel,
   isBookItem,
   toPlainText
 }
