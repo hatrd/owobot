@@ -157,6 +157,8 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: {
       type: 'object',
       properties: {
+        list: { type: 'boolean', description: 'If true, list all books in inventory with slot/title info (no page content).' },
+        index: { type: 'number', description: '1-based index from list=true output, to select a specific book.' },
         slot: { type: 'string', description: 'Where to read: hand|offhand|head|chest|legs|feet or a raw inventory slot number.' },
         name: { type: 'string', description: 'Item name to read; if omitted, auto-picks the first book found.' },
         title: { type: 'string', description: 'Preferred book title/custom label to select among multiple books.' },

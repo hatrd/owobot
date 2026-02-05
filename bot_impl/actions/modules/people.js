@@ -15,10 +15,94 @@ function fold (value) {
   return String(value || '').trim().toLowerCase()
 }
 
+function parseIntClamped (value, fallback, min, max) {
+  if (value == null) return fallback
+  const n = Number.parseInt(String(value), 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, n))
+}
+
 module.exports = function loadPeopleActions (ctx) {
   const { bot, register, ok, fail } = ctx
   const state = bot?.state || (bot.state = {})
   const people = createPeopleService({ state, peopleStore })
+
+  register('people_commitments_list', async (args = {}) => {
+    const mode = fold(args.mode || args.m || 'pending')
+    const playerNeedle = fold(args.player || args.name || '')
+    const matchNeedle = fold(args.match || args.q || '')
+    const limit = parseIntClamped(args.limit || args.n, 50, 1, 200)
+    const withContext = parseBool(args.context || args.ctx, true)
+
+    const supported = new Set(['pending', 'closed', 'all'])
+    if (!supported.has(mode)) {
+      return fail('不支持的 mode；可选 pending|closed|all', { blocks: ['bad_args'] })
+    }
+
+    people.load()
+    const all = people.listCommitments()
+    let items = all
+    if (mode === 'pending') items = items.filter(c => c.status === 'pending')
+    if (mode === 'closed') items = items.filter(c => c.status !== 'pending')
+    if (playerNeedle) items = items.filter(c => fold(c.playerKey || c.player) === playerNeedle)
+    if (matchNeedle) items = items.filter(c => fold(c.action).includes(matchNeedle))
+
+    const returned = items.slice(0, limit)
+    const context = (() => {
+      if (!withContext) return null
+      if (!returned.length) return null
+      const title = mode === 'pending' ? '承诺（未完成）：' : (mode === 'closed' ? '承诺（已关闭）：' : '承诺（全部）：')
+      const lines = [title]
+      for (const c of returned) {
+        const suffix = c.status === 'pending' ? '' : `（${c.status}）`
+        lines.push(`${c.player}：${c.action}${suffix}`)
+      }
+      return lines.length > 1 ? lines.join('\n') : null
+    })()
+
+    return ok(`承诺 ${returned.length}/${items.length} 条`, {
+      mode,
+      returned: returned.length,
+      total: items.length,
+      items: returned,
+      context
+    })
+  })
+
+  register('people_commitments_dedupe', async (args = {}) => {
+    const mode = fold(args.mode || args.m || 'pending')
+    const playerNeedle = String(args.player || args.name || '').trim()
+    const matchNeedle = String(args.match || args.q || '').trim()
+    const keep = fold(args.keep || 'shortest')
+    const thresholdRaw = args.threshold ?? args.t
+    const threshold = thresholdRaw == null ? undefined : Number.parseFloat(String(thresholdRaw))
+    const minOverlapHitsRaw = args.min_hits ?? args.minHits ?? args.hits
+    const minOverlapHits = minOverlapHitsRaw == null ? undefined : Number.parseInt(String(minOverlapHitsRaw), 10)
+    const minLcsRaw = args.min_lcs ?? args.minLcs ?? args.lcs
+    const minCommonSubstrLen = minLcsRaw == null ? undefined : Number.parseInt(String(minLcsRaw), 10)
+    const apply = parseBool(args.apply ?? args.confirm, false)
+    const previewLimit = parseIntClamped(args.preview || args.p, 12, 1, 50)
+
+    if (!people?.dedupeCommitments) return fail('people service not available', { blocks: ['internal_error'] })
+
+    const result = people.dedupeCommitments({
+      mode,
+      player: playerNeedle,
+      match: matchNeedle,
+      keep,
+      threshold,
+      minOverlapHits,
+      minCommonSubstrLen,
+      previewLimit,
+      persist: apply
+    })
+
+    if (!result?.ok) {
+      return fail('dedupe failed', { ...result, blocks: ['internal_error'] })
+    }
+
+    return ok(`${apply ? '已应用' : 'dry-run'}：去重移除 ${result.removed || 0} 条`, result)
+  })
 
   register('people_commitments_clear', async (args = {}) => {
     const mode = fold(args.mode || args.m || 'done')

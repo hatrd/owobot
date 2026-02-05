@@ -9,6 +9,27 @@ function isProbablyJson (s) {
   return false
 }
 
+function isPlainObject (v) {
+  return v != null && typeof v === 'object' && !Array.isArray(v)
+}
+
+function looksLikeTypedNbt (v) {
+  return isPlainObject(v) && typeof v.type === 'string' && 'value' in v
+}
+
+function normalizeComponentsObject (v) {
+  if (!v) return null
+  if (isPlainObject(v)) return v
+  try {
+    if (v instanceof Map) {
+      const out = {}
+      for (const [k, val] of v.entries()) out[String(k)] = val
+      return out
+    }
+  } catch {}
+  return null
+}
+
 function flattenTextComponent (node) {
   if (node == null) return ''
   if (typeof node === 'string') return node
@@ -32,6 +53,14 @@ function toPlainText (maybeComponent) {
     }
     return maybeComponent
   }
+  try {
+    if (looksLikeTypedNbt(maybeComponent)) {
+      const nbt = require('prismarine-nbt')
+      const simplify = nbt.simplify || ((v) => v)
+      const simplified = simplify(maybeComponent)
+      return flattenTextComponent(simplified)
+    }
+  } catch {}
   return flattenTextComponent(maybeComponent)
 }
 
@@ -59,6 +88,179 @@ function isBookItem (item) {
   return n === 'writable_book' || n === 'written_book'
 }
 
+function extractComponentsLike (tag) {
+  if (!isPlainObject(tag)) return null
+  const direct = tag.components
+  if (isPlainObject(direct)) return direct
+  const alt = tag.Components
+  if (isPlainObject(alt)) return alt
+  const inner = tag.tag
+  if (isPlainObject(inner)) return extractComponentsLike(inner)
+  return null
+}
+
+function unwrapTypedRoot (raw) {
+  if (!raw) return null
+  if (raw.parsed) return raw.parsed
+  return raw
+}
+
+function readTypedNode (raw, path) {
+  try {
+    let node = unwrapTypedRoot(raw)
+    const keys = Array.isArray(path) ? path : [path]
+    for (const key of keys) {
+      if (!node || node.type !== 'compound') return null
+      node = node.value?.[key]
+    }
+    return node || null
+  } catch {
+    return null
+  }
+}
+
+function readTypedString (raw, path) {
+  const node = readTypedNode(raw, path)
+  if (!node) return null
+  if (node.type === 'string') return String(node.value || '')
+  if (node.value != null && typeof node.value !== 'object') return String(node.value)
+  return null
+}
+
+function readTypedListStrings (raw, path) {
+  const node = readTypedNode(raw, path)
+  if (!node || node.type !== 'list') return null
+  const inner = node.value
+  const arr = inner && Array.isArray(inner.value) ? inner.value : null
+  if (!arr) return null
+  return arr.map(v => (v == null ? '' : String(v)))
+}
+
+function simplifyTypedNode (node) {
+  if (!node) return null
+  try {
+    const nbt = require('prismarine-nbt')
+    const simplify = nbt.simplify || ((v) => v)
+    if (node.type && node.value != null) return simplify(node)
+  } catch {}
+  return null
+}
+
+let SLOT_COMPONENT_TYPE_NAMES = null
+function loadSlotComponentTypeNames () {
+  if (Array.isArray(SLOT_COMPONENT_TYPE_NAMES)) return SLOT_COMPONENT_TYPE_NAMES
+  try {
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const base = path.dirname(require.resolve('minecraft-data'))
+    const protoPath = path.join(base, 'minecraft-data', 'data', 'pc', 'latest', 'proto.yml')
+    const src = fs.readFileSync(protoPath, 'utf8')
+    const lines = src.split(/\r?\n/)
+    const names = []
+    let inBlock = false
+    for (const line of lines) {
+      if (!inBlock) {
+        if (/^\s*SlotComponentType:\s*varint\s*=>\s*$/.test(line)) inBlock = true
+        continue
+      }
+      const m = line.match(/^\s*-\s*([^\s#]+)\s*$/)
+      if (m) { names.push(m[1]); continue }
+      if (/^\S/.test(line)) break
+      if (!line.trim()) continue
+      if (!/^\s+/.test(line)) break
+    }
+    SLOT_COMPONENT_TYPE_NAMES = names
+    return names
+  } catch {
+    SLOT_COMPONENT_TYPE_NAMES = []
+    return SLOT_COMPONENT_TYPE_NAMES
+  }
+}
+
+function normalizeComponentTypeName (type) {
+  if (type == null) return null
+  if (typeof type === 'string') return type.toLowerCase()
+  if (typeof type === 'number' && Number.isFinite(type)) {
+    const names = loadSlotComponentTypeNames()
+    const name = names[type]
+    return typeof name === 'string' ? name.toLowerCase() : null
+  }
+  return String(type).toLowerCase()
+}
+
+function extractComponentsFromItem (item) {
+  try {
+    const out = {}
+    if (!item) return null
+    const put = (k, v) => { if (k) out[k] = v }
+    const payloadFromComponent = (comp) => {
+      if (!comp || typeof comp !== 'object') return undefined
+      if ('data' in comp && comp.data != null) return comp.data
+      // protodef switch often flattens fields onto the component object itself.
+      const cloned = { ...comp }
+      delete cloned.type
+      // Some decoders may use `_` for anon fields; merge it if present.
+      if (cloned._ && typeof cloned._ === 'object' && !Array.isArray(cloned._)) {
+        const merged = { ...cloned._, ...cloned }
+        delete merged._
+        return merged
+      }
+      delete cloned._
+      return cloned
+    }
+    // prismarine-item (1.20.5+) stores components as an array plus a componentMap.
+    if (item.componentMap && typeof item.componentMap.get === 'function') {
+      for (const [rawType, comp] of item.componentMap.entries()) {
+        const name = normalizeComponentTypeName(rawType)
+        if (!name) continue
+        put(name, payloadFromComponent(comp))
+      }
+      return Object.keys(out).length ? out : null
+    }
+    if (Array.isArray(item.components)) {
+      for (const comp of item.components) {
+        if (!comp || typeof comp !== 'object') continue
+        const name = normalizeComponentTypeName(comp.type)
+        if (!name) continue
+        put(name, payloadFromComponent(comp))
+      }
+      return Object.keys(out).length ? out : null
+    }
+    // Legacy / custom shapes
+    const obj = normalizeComponentsObject(item.components)
+    if (obj) return obj
+  } catch {}
+  return null
+}
+
+function pickFirstField (obj, keys) {
+  if (!isPlainObject(obj)) return undefined
+  for (const k of keys) {
+    if (k in obj) return obj[k]
+  }
+  return undefined
+}
+
+function normalizeBookPageEntries (pages) {
+  if (!Array.isArray(pages)) return []
+  return pages.map((p) => {
+    if (p == null) return ''
+    if (typeof p === 'string') return p
+    if (isPlainObject(p)) {
+      // Newer data-components may store pages as {raw, filtered} or similar.
+      if (typeof p.raw === 'string') return p.raw
+      if (typeof p.filtered === 'string') return p.filtered
+      if (typeof p.content === 'string') return p.content
+      if (typeof p.filteredContent === 'string') return p.filteredContent
+      if (p.content != null) return p.content
+      if (p.filteredContent != null) return p.filteredContent
+      // Sometimes page itself can be a text component object.
+      return p
+    }
+    return String(p)
+  })
+}
+
 function formatPages (pages, opts = {}) {
   const maxPages = Math.max(1, parseInt(opts.maxPages ?? '6', 10) || 6)
   const maxCharsPerPage = Math.max(50, parseInt(opts.maxCharsPerPage ?? '600', 10) || 600)
@@ -81,26 +283,146 @@ function formatPages (pages, opts = {}) {
   return { total, start, end, shown: out }
 }
 
+async function extractBookMeta (item, opts = {}) {
+  if (!item) return { ok: false, msg: '没有找到书', data: null }
+  if (!isBookItem(item)) return { ok: false, msg: `这不是书（${item.name || 'unknown'}）`, data: null }
+
+  const tag = await simplifyNbtAny(item.nbt)
+  return extractBookMetaFromSimplified(item, tag, opts)
+}
+
+function extractBookMetaFromSimplified (item, tag, opts = {}) {
+  const tagInner = isPlainObject(tag?.tag) ? tag.tag : null
+  const itemComponents = extractComponentsFromItem(item)
+  const typedComponents = (() => {
+    const fromRaw = item?.nbt
+    const node = readTypedNode(fromRaw, ['components']) || readTypedNode(fromRaw, ['tag', 'components'])
+    return simplifyTypedNode(node)
+  })()
+  const components = itemComponents || typedComponents || extractComponentsLike(tag) || extractComponentsLike(tagInner)
+
+  const writtenContent = pickFirstField(components, ['written_book_content', 'minecraft:written_book_content', 'writtenBookContent', 'writtenbookcontent'])
+  const writableContent = pickFirstField(components, ['writable_book_content', 'minecraft:writable_book_content', 'writableBookContent', 'writablebookcontent'])
+  const componentContent = isPlainObject(writtenContent) ? writtenContent : (isPlainObject(writableContent) ? writableContent : null)
+
+  const legacyTitleRaw = pickFirstField(isPlainObject(tag) ? tag : null, ['title']) ?? pickFirstField(tagInner, ['title'])
+  const legacyAuthorRaw = pickFirstField(isPlainObject(tag) ? tag : null, ['author']) ?? pickFirstField(tagInner, ['author'])
+  const legacyPagesRaw = pickFirstField(isPlainObject(tag) ? tag : null, ['pages']) ?? pickFirstField(tagInner, ['pages'])
+  const legacyTitleTyped = readTypedString(item?.nbt, ['title']) || readTypedString(item?.nbt, ['tag', 'title'])
+  const legacyAuthorTyped = readTypedString(item?.nbt, ['author']) || readTypedString(item?.nbt, ['tag', 'author'])
+  const legacyPagesTyped = readTypedListStrings(item?.nbt, ['pages']) || readTypedListStrings(item?.nbt, ['tag', 'pages'])
+
+  const componentTitleRaw = pickFirstField(componentContent, ['title', 'rawTitle', 'filteredTitle'])
+  const componentAuthorRaw = pickFirstField(componentContent, ['author'])
+  const componentPagesRaw = pickFirstField(componentContent, ['pages'])
+
+  const displayName = String(item.displayName || '').trim()
+
+  const customNameRaw = pickFirstField(components, ['minecraft:custom_name', 'custom_name', 'customname']) ??
+    pickFirstField(isPlainObject(tag) ? tag : null, ['display'])?.Name ??
+    pickFirstField(tagInner, ['display'])?.Name
+  const customNameTyped = readTypedString(item?.nbt, ['display', 'Name']) || readTypedString(item?.nbt, ['tag', 'display', 'Name'])
+  const customName = toPlainText(customNameRaw ?? customNameTyped).trim() || displayName || ''
+
+  const contentTitle = toPlainText(componentTitleRaw).trim()
+  const legacyTitle = toPlainText(legacyTitleRaw ?? legacyTitleTyped).trim()
+  const bestTitle = (contentTitle || legacyTitle || toPlainText(customNameTyped).trim() || customName || displayName || item.name).trim()
+
+  const author = toPlainText(componentAuthorRaw).trim() || toPlainText(legacyAuthorRaw ?? legacyAuthorTyped).trim()
+
+  const rawPages = (() => {
+    if (Array.isArray(componentPagesRaw)) return normalizeBookPageEntries(componentPagesRaw)
+    if (Array.isArray(legacyPagesRaw)) return normalizeBookPageEntries(legacyPagesRaw)
+    if (Array.isArray(legacyPagesTyped)) return normalizeBookPageEntries(legacyPagesTyped)
+    return []
+  })()
+
+  const totalPages = rawPages.length
+  const probePages = Math.max(0, Math.min(totalPages, parseInt(opts.probePages ?? '3', 10) || 3))
+  let hasContent = false
+  for (let i = 0; i < probePages; i++) {
+    const t = toPlainText(rawPages[i]).replace(/\r\n/g, '\n').trim()
+    if (t) { hasContent = true; break }
+  }
+
+  const slot = (typeof item.slot === 'number' && Number.isFinite(item.slot)) ? item.slot : null
+
+  return {
+    ok: true,
+    msg: 'ok',
+    data: {
+      title: bestTitle,
+      contentTitle: contentTitle || null,
+      legacyTitle: legacyTitle || null,
+      customName: customName || null,
+      author: author || null,
+      type: item.name,
+      slot,
+      totalPages,
+      hasContent
+    }
+  }
+}
+
 async function extractBookInfo (item, opts = {}) {
   if (!item) return { ok: false, msg: '没有找到书' }
   if (!isBookItem(item)) return { ok: false, msg: `这不是书（${item.name || 'unknown'}）` }
 
-  const nbtRaw = item.nbt
-  const tag = await simplifyNbtAny(nbtRaw)
-  const pagesRaw = Array.isArray(tag?.pages) ? tag.pages : []
+  const tag = await simplifyNbtAny(item.nbt)
+  const meta = extractBookMetaFromSimplified(item, tag, { probePages: opts.probePages })
+  const data = meta.ok ? meta.data : null
+
+  const tagInner = isPlainObject(tag?.tag) ? tag.tag : null
+  const itemComponents = extractComponentsFromItem(item)
+  const typedComponents = (() => {
+    const node = readTypedNode(item?.nbt, ['components']) || readTypedNode(item?.nbt, ['tag', 'components'])
+    return simplifyTypedNode(node)
+  })()
+  const components = itemComponents || typedComponents || extractComponentsLike(tag) || extractComponentsLike(tagInner)
+  const writtenContent = pickFirstField(components, ['minecraft:written_book_content', 'written_book_content', 'writtenbookcontent']) ?? pickFirstField(components, ['written_book_content'])
+  const writableContent = pickFirstField(components, ['minecraft:writable_book_content', 'writable_book_content', 'writablebookcontent']) ?? pickFirstField(components, ['writable_book_content'])
+  const componentContent = isPlainObject(writtenContent) ? writtenContent : (isPlainObject(writableContent) ? writableContent : null)
+  const pagesRawFromComponents = pickFirstField(componentContent, ['pages'])
+  const legacyPagesRaw = pickFirstField(isPlainObject(tag) ? tag : null, ['pages']) ?? pickFirstField(tagInner, ['pages'])
+  const legacyPagesTyped = readTypedListStrings(item?.nbt, ['pages']) || readTypedListStrings(item?.nbt, ['tag', 'pages'])
+  const pagesRaw = Array.isArray(pagesRawFromComponents)
+    ? normalizeBookPageEntries(pagesRawFromComponents)
+    : (Array.isArray(legacyPagesRaw)
+        ? normalizeBookPageEntries(legacyPagesRaw)
+        : (Array.isArray(legacyPagesTyped) ? normalizeBookPageEntries(legacyPagesTyped) : []))
+
   const pageInfo = formatPages(pagesRaw, opts)
 
   const displayName = String(item.displayName || '').trim()
-  const title = toPlainText(tag?.title || tag?.display?.Name || '').trim() || displayName || item.name
-  const author = toPlainText(tag?.author || '').trim()
+  const title = String(data?.title || '').trim() || displayName || item.name
+  const author = String(data?.author || '').trim()
+  const contentTitle = String(data?.contentTitle || '').trim()
+  const customName = String(data?.customName || '').trim()
 
   const headerParts = [`书: ${title}`]
+  if (contentTitle && contentTitle !== title) headerParts.push(`书名: ${contentTitle}`)
+  if (customName && customName !== title && customName !== contentTitle) headerParts.push(`显示名: ${customName}`)
   if (author) headerParts.push(`作者: ${author}`)
   headerParts.push(`类型: ${item.name}`)
+  if (data?.slot != null) headerParts.push(`槽位: ${data.slot}`)
   if (pageInfo.total) headerParts.push(`页数: ${pageInfo.total}`)
 
   if (!pageInfo.total) {
-    return { ok: true, msg: headerParts.join(' | ') + ' | （没有内容）', data: { title, author, type: item.name, pages: [], totalPages: 0 } }
+    return {
+      ok: true,
+      msg: headerParts.join(' | ') + ' | （没有内容）',
+      data: {
+        title,
+        contentTitle: contentTitle || null,
+        customName: customName || null,
+        author,
+        type: item.name,
+        slot: data?.slot ?? null,
+        totalPages: 0,
+        hasContent: false,
+        pages: []
+      }
+    }
   }
 
   const body = pageInfo.shown
@@ -117,11 +439,15 @@ async function extractBookInfo (item, opts = {}) {
     msg: headerParts.join(' | ') + '\n' + body + suffix,
     data: {
       title,
+      contentTitle: contentTitle || null,
+      customName: customName || null,
       author,
       type: item.name,
+      slot: data?.slot ?? null,
       totalPages: pageInfo.total,
       shownFrom: pageInfo.start,
       shownTo: pageInfo.end,
+      hasContent: Boolean(data?.hasContent),
       pages: pageInfo.shown.map(p => ({ page: p.page, text: p.text }))
     }
   }
@@ -129,7 +455,7 @@ async function extractBookInfo (item, opts = {}) {
 
 module.exports = {
   extractBookInfo,
+  extractBookMeta,
   isBookItem,
   toPlainText
 }
-

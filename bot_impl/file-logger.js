@@ -10,7 +10,8 @@ const state = {
   original: null,
   mode: null,
   dir: null,
-  currentStamp: null
+  currentStamp: null,
+  closing: false
 }
 
 function toAbsolute (input, cwd) {
@@ -61,7 +62,11 @@ function rotateStreamIfNeeded () {
   const stamp = formatDateTz()
   if (state.currentStamp === stamp && state.stream) return
   const targetPath = path.join(state.dir, `bot-${stamp}.log`)
-  try { if (state.stream) state.stream.end() } catch {}
+  try {
+    const old = state.stream
+    state.stream = null
+    if (old && !old.destroyed) old.end()
+  } catch {}
   try {
     state.stream = ensureStream(targetPath)
     state.path = targetPath
@@ -97,7 +102,8 @@ function overrideConsole () {
     console[method] = (...args) => {
       try {
         if (state.mode === 'daily') rotateStreamIfNeeded()
-        if (state.stream) state.stream.write(formatLine(level, args) + '\n')
+        const s = state.stream
+        if (s && !s.destroyed && !s.writableEnded) s.write(formatLine(level, args) + '\n')
       } catch {}
       try {
         if (typeof original === 'function') original.apply(console, args)
@@ -108,10 +114,17 @@ function overrideConsole () {
 
 function attachFinalizers () {
   const finalize = () => {
-    try { if (state.stream) state.stream.end() } catch {}
+    if (state.closing) return
+    state.closing = true
+    try {
+      const s = state.stream
+      state.stream = null
+      if (s && !s.destroyed) s.end()
+    } catch {}
   }
+  // Do not close the stream on SIGINT directly, since bot.js has its own SIGINT handler
+  // that still logs during shutdown. Rely on 'exit' to flush and close.
   process.once('exit', finalize)
-  process.once('SIGINT', finalize)
 }
 
 function install (options = {}) {

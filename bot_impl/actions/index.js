@@ -4,7 +4,7 @@ const pvp = require('../pvp')
 const observer = require('../agent/observer')
 const skillRunnerMod = require('../agent/runner')
 
-const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'use_item', 'toss', 'read_book', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'range_attack', 'attack_armor_stand', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests', 'query_player_stats', 'query_leaderboard', 'announce_daily_star', 'people_commitments_clear']
+const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'use_item', 'toss', 'read_book', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'range_attack', 'attack_armor_stand', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests', 'query_player_stats', 'query_leaderboard', 'announce_daily_star', 'people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
 
 const MODULES = [
   require('./modules/movement'),
@@ -100,13 +100,29 @@ function install (bot, options = {}) {
   }
 
   function dry (tool, args) {
-    try {
+    return Promise.resolve().then(async () => {
       const name = String(tool || '')
       if (!name) return { ok: false, msg: '缺少工具名', blocks: ['missing_tool'] }
       if (!TOOL_NAMES.includes(name)) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
       const fn = ctx.registry.get(name)
       if (!fn) return { ok: false, msg: '未知工具', blocks: ['unknown_tool'] }
       const safeArgs = (args && typeof args === 'object') ? args : {}
+
+      // Read-only dry-run: allow a small set of safe, non-side-effect tools to probe runtime state.
+      // This is primarily for data-fetch tools where "validate_only" is not useful.
+      if (name === 'read_book') {
+        try {
+          const r = await Promise.resolve(fn(safeArgs))
+          if (r && typeof r === 'object') {
+            return { ...r, capability: { level: 'read_only' }, dryRun: true }
+          }
+          return { ok: true, msg: String(r || ''), capability: { level: 'read_only' }, dryRun: true }
+        } catch (e) {
+          const errMsg = String(e?.message || e)
+          return { ok: false, msg: 'dry-run failed', error: errMsg, blocks: ['internal_error'], capability: { level: 'read_only' }, dryRun: true }
+        }
+      }
+
       return {
         ok: true,
         msg: 'dry-run: validate-only (no world probe)',
@@ -119,10 +135,10 @@ function install (bot, options = {}) {
         uncertainty: 'high',
         capability: { level: 'validate_only' }
       }
-    } catch (e) {
+    }).catch((e) => {
       const errMsg = String(e?.message || e)
       return { ok: false, msg: 'dry-run failed', error: errMsg, blocks: ['internal_error'] }
-    }
+    })
   }
 
   function run (tool, args) {

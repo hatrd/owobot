@@ -181,8 +181,15 @@ function install (bot, { on, registerCleanup, log } = {}) {
       if (isDry) {
         // MVP dry-run: validate-only, no world probe.
         const actions = actionsMod.install(bot, { log })
-        const res = actions.dry ? actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported', blocks: ['no_dry'] }
+        const res = actions.dry ? await actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported', blocks: ['no_dry'] }
         print('dry', JSON.stringify(res))
+        try {
+          if (res && res.capability && res.capability.level === 'read_only' && res.msg) {
+            const text = String(res.msg)
+            const lines = text.split('\n')
+            for (const line of lines) print('dry.msg', line)
+          }
+        } catch {}
         return
       }
 

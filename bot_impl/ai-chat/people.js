@@ -168,6 +168,13 @@ function normalizeCommitmentStatus (raw) {
 }
 
 function createPeopleService ({ state, peopleStore, now = () => Date.now(), trace = () => {} } = {}) {
+  function parseFloatClamped (value, fallback, min, max) {
+    if (value == null) return fallback
+    const n = Number.parseFloat(String(value))
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(min, Math.min(max, n))
+  }
+
   function escapeXml (value) {
     const s = String(value == null ? '' : value)
     if (!s) return ''
@@ -326,6 +333,270 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     }
   }
 
+  function buildBigrams (text) {
+    const s = String(text || '')
+    if (!s) return null
+    const chars = Array.from(s)
+    if (chars.length < 2) return null
+    const set = new Set()
+    for (let i = 0; i < chars.length - 1; i++) set.add(chars[i] + chars[i + 1])
+    return set
+  }
+
+  function longestCommonSubstringLen (a, b, limit = 140) {
+    const as = String(a || '')
+    const bs = String(b || '')
+    if (!as || !bs) return 0
+    const aChars = Array.from(as.slice(0, limit))
+    const bChars = Array.from(bs.slice(0, limit))
+    if (aChars.length < 2 || bChars.length < 2) return 0
+    const dp = new Array(bChars.length + 1).fill(0)
+    let best = 0
+    for (let i = 1; i <= aChars.length; i++) {
+      let prev = 0
+      for (let j = 1; j <= bChars.length; j++) {
+        const tmp = dp[j]
+        if (aChars[i - 1] === bChars[j - 1]) {
+          dp[j] = prev + 1
+          if (dp[j] > best) best = dp[j]
+        } else {
+          dp[j] = 0
+        }
+        prev = tmp
+      }
+    }
+    return best
+  }
+
+  function overlapStats (a, b) {
+    if (!a || !b) return { hits: 0, denom: 0, coeff: 0 }
+    const aSize = a.size || 0
+    const bSize = b.size || 0
+    const denom = Math.min(aSize, bSize)
+    if (!denom) return { hits: 0, denom: 0, coeff: 0 }
+    const [small, big] = aSize <= bSize ? [a, b] : [b, a]
+    let hit = 0
+    for (const x of small) {
+      if (big.has(x)) hit++
+    }
+    return { hits: hit, denom, coeff: hit / denom }
+  }
+
+  function isSimilarAction (aKey, bKey, aBigrams, bBigrams, { minContainLen = 4, threshold = 0.72, minOverlapHits = 4, minCommonSubstrLen = 14 } = {}) {
+    if (!aKey || !bKey) return false
+    if (aKey === bKey) return true
+    if (aKey.length >= minContainLen && bKey.includes(aKey)) return true
+    if (bKey.length >= minContainLen && aKey.includes(bKey)) return true
+    if (minCommonSubstrLen > 1) {
+      const minLen = Math.min(aKey.length, bKey.length)
+      if (minLen >= minCommonSubstrLen) {
+        if (longestCommonSubstringLen(aKey, bKey) >= minCommonSubstrLen) return true
+      }
+    }
+    if (!aBigrams || !bBigrams) return false
+    const st = overlapStats(aBigrams, bBigrams)
+    if (st.hits < minOverlapHits) return false
+    return st.coeff >= threshold
+  }
+
+  function chooseRepresentative (a, b, keep) {
+    if (!a) return b
+    if (!b) return a
+    const aAction = typeof a.action === 'string' ? a.action : ''
+    const bAction = typeof b.action === 'string' ? b.action : ''
+    const aLen = aAction.length
+    const bLen = bAction.length
+    const aTs = Number(a.updatedAt) || Number(a.createdAt) || 0
+    const bTs = Number(b.updatedAt) || Number(b.createdAt) || 0
+
+    if (keep === 'latest') {
+      if (aTs !== bTs) return aTs >= bTs ? a : b
+      if (aLen !== bLen) return aLen <= bLen ? a : b
+      return a
+    }
+    if (keep === 'longest') {
+      if (aLen !== bLen) return aLen >= bLen ? a : b
+      if (aTs !== bTs) return aTs >= bTs ? a : b
+      return a
+    }
+    // shortest (default)
+    if (aLen !== bLen) return aLen <= bLen ? a : b
+    if (aTs !== bTs) return aTs >= bTs ? a : b
+    return a
+  }
+
+  function dedupeCommitments ({
+    mode = 'pending',
+    player,
+    match,
+    keep = 'shortest',
+    threshold = 0.72,
+    minOverlapHits = 4,
+    minCommonSubstrLen = 14,
+    persist: shouldPersist = true,
+    previewLimit = 12
+  } = {}) {
+    load()
+    const slice = ensureState()
+    if (!slice) return { ok: false, reason: 'no_state' }
+
+    const supportedMode = new Set(['pending', 'closed', 'all'])
+    const chosenMode = String(mode || '').trim().toLowerCase() || 'pending'
+    if (!supportedMode.has(chosenMode)) return { ok: false, reason: 'bad_mode' }
+
+    const keepMode = String(keep || '').trim().toLowerCase() || 'shortest'
+    const keepSupported = new Set(['shortest', 'longest', 'latest'])
+    const chosenKeep = keepSupported.has(keepMode) ? keepMode : 'shortest'
+
+    const th = parseFloatClamped(threshold, 0.72, 0.4, 0.98)
+    const minHits = Math.max(1, Math.min(20, Number.parseInt(String(minOverlapHits), 10) || 4))
+    const minLcs = Math.max(0, Math.min(60, Number.parseInt(String(minCommonSubstrLen), 10) || 10))
+    const playerNeedle = foldKey(player || '')
+    const matchNeedle = String(match || '').trim().toLowerCase()
+
+    const raw = safeArray(slice.commitments)
+    const before = raw.length
+
+    const candidates = []
+    for (let i = 0; i < raw.length; i++) {
+      const rec = raw[i]
+      if (!rec || typeof rec !== 'object') continue
+      const name = normalizeName(rec.player || rec.name || rec.playerName || rec.playerKey || '')
+      const resolvedKey = resolveKey(slice.profiles, name) || normalizeKey(rec.playerKey || name)
+      const playerKey = resolvedKey || normalizeKey(name)
+      const action = typeof rec.action === 'string' ? rec.action.replace(/\s+/g, ' ').trim() : ''
+      if (!playerKey || !action) continue
+      const status = normalizeCommitmentStatus(rec.status)
+      if (chosenMode === 'pending' && status !== 'pending') continue
+      if (chosenMode === 'closed' && status === 'pending') continue
+      if (playerNeedle && foldKey(playerKey) !== playerNeedle && foldKey(name) !== playerNeedle) continue
+      if (matchNeedle && !action.toLowerCase().includes(matchNeedle)) continue
+
+      const actionKey = normalizeActionKey(action)
+      const bigrams = actionKey && actionKey.length >= 4 ? buildBigrams(actionKey) : null
+      candidates.push({
+        idx: i,
+        rec,
+        player: name || normalizeName(playerKey),
+        playerKey,
+        action,
+        actionKey,
+        bigrams,
+        status,
+        createdAt: Number(rec.createdAt) || null,
+        updatedAt: Number(rec.updatedAt) || null
+      })
+    }
+
+    if (candidates.length < 2) {
+      return {
+        ok: true,
+        changed: false,
+        before,
+        after: before,
+        removed: 0,
+        kept: candidates.length,
+        previewRemoved: [],
+        previewKept: candidates.slice(0, previewLimit).map(x => `${x.playerKey}：${x.action}`)
+      }
+    }
+
+    const byPlayer = new Map()
+    for (const it of candidates) {
+      const key = foldKey(it.playerKey) || foldKey(it.player) || ''
+      if (!key) continue
+      if (!byPlayer.has(key)) byPlayer.set(key, [])
+      byPlayer.get(key).push(it)
+    }
+
+    const keptIdx = new Set()
+    const removedIdx = new Set()
+
+    for (const items of byPlayer.values()) {
+      items.sort((a, b) => {
+        const at = Number(a.updatedAt) || Number(a.createdAt) || 0
+        const bt = Number(b.updatedAt) || Number(b.createdAt) || 0
+        return bt - at
+      })
+
+      const clusters = []
+      for (const item of items) {
+        let matched = null
+        for (const c of clusters) {
+          const rep = c.rep
+          if (isSimilarAction(item.actionKey, rep.actionKey, item.bigrams, rep.bigrams, { threshold: th, minOverlapHits: minHits, minCommonSubstrLen: minLcs })) {
+            matched = c
+            break
+          }
+        }
+        if (!matched) {
+          clusters.push({ rep: item, members: [item] })
+          continue
+        }
+
+        matched.members.push(item)
+        matched.rep = chooseRepresentative(matched.rep, item, chosenKeep)
+      }
+
+      for (const c of clusters) {
+        keptIdx.add(c.rep.idx)
+        for (const m of c.members) {
+          if (m.idx !== c.rep.idx) removedIdx.add(m.idx)
+        }
+      }
+    }
+
+    if (!removedIdx.size) {
+      return {
+        ok: true,
+        changed: false,
+        before,
+        after: before,
+        removed: 0,
+        kept: keptIdx.size,
+        previewRemoved: [],
+        previewKept: candidates.slice(0, previewLimit).map(x => `${x.playerKey}：${x.action}`)
+      }
+    }
+
+    const next = raw.filter((_, idx) => !removedIdx.has(idx))
+    const after = next.length
+    const changed = after !== before
+
+    const persisted = (() => {
+      if (!changed) return false
+      if (!shouldPersist) return false
+      slice.commitments = next
+      return persist()
+    })()
+
+    const previewRemoved = []
+    const previewKept = []
+    for (const it of candidates) {
+      if (removedIdx.has(it.idx) && previewRemoved.length < previewLimit) {
+        previewRemoved.push(`${it.playerKey}：${it.action}`)
+      } else if (!removedIdx.has(it.idx) && previewKept.length < previewLimit) {
+        previewKept.push(`${it.playerKey}：${it.action}`)
+      }
+      if (previewRemoved.length >= previewLimit && previewKept.length >= previewLimit) break
+    }
+
+    return {
+      ok: true,
+      changed,
+      before,
+      after,
+      removed: removedIdx.size,
+      kept: candidates.length - removedIdx.size,
+      persisted,
+      mode: chosenMode,
+      keep: chosenKeep,
+      threshold: th,
+      previewRemoved,
+      previewKept
+    }
+  }
+
   function upsertCommitment ({ id, player, action, status, deadlineMs, source, persist: shouldPersist = true } = {}) {
     load()
     const slice = ensureState()
@@ -468,6 +739,7 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     buildAllCommitmentsContext,
     setProfile,
     upsertCommitment,
+    dedupeCommitments,
     applyPatch,
     dumpForLLM,
     debugTrace

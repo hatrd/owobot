@@ -1,6 +1,6 @@
 module.exports = function registerInventory (ctx) {
   const { bot, register, ok, fail, assertCanEquipHand, isMainHandLocked } = ctx
-  const { extractBookInfo, isBookItem } = require('../lib/book')
+  const { extractBookInfo, extractBookMeta, isBookItem } = require('../lib/book')
 
   function normalizeName (name) {
     const n = String(name || '').toLowerCase().trim()
@@ -373,6 +373,15 @@ module.exports = function registerInventory (ctx) {
     const name = args.name ?? args.item
     const wantTitle = String(args.title ?? args.label ?? '').trim()
     const wantLoose = String(args.match ?? '').trim()
+    const parseBoolLike = (v) => {
+      if (v === true) return true
+      const s = String(v ?? '').trim().toLowerCase()
+      if (!s) return false
+      return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === 'on'
+    }
+    const listOnly = parseBoolLike(args.list) || String(args.mode || '').toLowerCase() === 'list'
+    const indexRaw = args.index ?? args.idx ?? args.i
+    const index = indexRaw == null ? null : parseInt(String(indexRaw), 10)
 
     function bookCandidates () {
       try {
@@ -395,22 +404,63 @@ module.exports = function registerInventory (ctx) {
       }
     }
 
+    async function listBooks () {
+      const books = bookCandidates()
+      if (!books.length) return fail('我身上没有找到书（书与笔/成书）')
+      const metas = await Promise.all(books.map(async (it) => {
+        try {
+          const m = await extractBookMeta(it, { probePages: 2 })
+          return m && m.ok && m.data ? m.data : { title: it?.displayName || it?.name || 'unknown', type: it?.name || 'unknown', slot: it?.slot ?? null, totalPages: 0, hasContent: false }
+        } catch {
+          return { title: it?.displayName || it?.name || 'unknown', type: it?.name || 'unknown', slot: it?.slot ?? null, totalPages: 0, hasContent: false }
+        }
+      }))
+      const lines = metas.map((m, i) => {
+        const parts = []
+        parts.push(`${i + 1})`)
+        if (m.slot != null) parts.push(`slot=${m.slot}`)
+        if (m.title) parts.push(`书=${m.title}`)
+        if (m.author) parts.push(`作者=${m.author}`)
+        parts.push(`type=${m.type}`)
+        if (Number.isFinite(m.totalPages)) parts.push(`pages=${m.totalPages}`)
+        if (m.hasContent) parts.push('有内容')
+        return parts.join(' ')
+      })
+      const hint = '用 slot=<槽位> / index=<序号> / title=<书名> 选择要读哪本。'
+      return ok(`我身上有 ${metas.length} 本书：\n${lines.join('\n')}\n${hint}`, { data: { books: metas } })
+    }
+
+    if (listOnly) return await listBooks()
+
     async function pickBookByTitle (needle) {
       const q = String(needle || '').trim().toLowerCase()
       if (!q) return null
       const books = bookCandidates()
       for (const it of books) {
         try {
-          const meta = await extractBookInfo(it, { maxPages: 1, maxCharsPerPage: 1, pageFrom: 1, pageTo: 1 })
-          const title = String(meta?.data?.title || '').trim().toLowerCase()
-          if (!title) continue
-          if (title === q || title.includes(q) || q.includes(title)) return it
+          const meta = await extractBookMeta(it, { probePages: 0 })
+          const candidates = []
+          const main = String(meta?.data?.title || '').trim()
+          const content = String(meta?.data?.contentTitle || '').trim()
+          const custom = String(meta?.data?.customName || '').trim()
+          if (main) candidates.push(main)
+          if (content) candidates.push(content)
+          if (custom) candidates.push(custom)
+          for (const c of candidates) {
+            const t = c.toLowerCase()
+            if (!t) continue
+            if (t === q || t.includes(q) || q.includes(t)) return it
+          }
         } catch {}
       }
       return null
     }
 
     let item = null
+    if (!item && Number.isFinite(index) && index > 0) {
+      const books = bookCandidates()
+      item = books[index - 1] || null
+    }
     if (wantTitle) item = await pickBookByTitle(wantTitle)
     if (!item && wantLoose) item = await pickBookByTitle(wantLoose)
 
@@ -423,7 +473,17 @@ module.exports = function registerInventory (ctx) {
       if (picked && isBookItem(picked)) item = picked
       if (!item) item = await pickBookByTitle(name)
     }
-    if (!item) item = findAnyBook()
+    if (!item) {
+      const books = bookCandidates()
+      if (books.length > 1) {
+        try {
+          const metas = await Promise.all(books.map(it => extractBookMeta(it, { probePages: 2 })))
+          const bestIdx = metas.findIndex(m => Boolean(m?.data?.hasContent))
+          if (bestIdx >= 0) item = books[bestIdx]
+        } catch {}
+      }
+      if (!item) item = books[0] || null
+    }
     if (!item) return fail('我身上没有找到书（书与笔/成书）')
     const res = await extractBookInfo(item, args)
     return res.ok ? ok(res.msg, { data: res.data }) : fail(res.msg || '读取失败')

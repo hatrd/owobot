@@ -314,7 +314,7 @@ async function handleCtlRequest (req) {
     if (!allowlist.includes(tool)) return { id, ok: false, error: `tool not allowlisted: ${tool}` }
 
     if (op === 'tool.dry') {
-      const r = actions.dry ? actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported' }
+      const r = actions.dry ? await actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported' }
       return { id, ok: true, result: r }
     }
 

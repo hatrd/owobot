@@ -47,8 +47,9 @@ Args:
 
 Notes:
 
-- `.tool dry ...` currently uses the actions-layer dry-run MVP (`validate_only`).
-  It returns JSON and does not probe the world state.
+- `.tool dry ...` defaults to the actions-layer dry-run MVP (`validate_only`).
+  It returns JSON and usually does not probe world state.
+  - Exception: a small set of read-only tools (e.g. `read_book`) may run in dry mode to fetch data without side effects.
 
 ## Script Control Plane (UDS): `.mcbot.sock`
 
@@ -139,4 +140,3 @@ Restart helper (local/dev):
 
 - Bot is running but `hello` says `hasBot: false`
   - The process started but the Mineflayer bot is not created yet, or crashed early. Check stdout/logfile.
-
