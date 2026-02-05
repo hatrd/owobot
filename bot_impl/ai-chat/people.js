@@ -104,17 +104,20 @@ function migrateCommitments (rawCommitments, profiles) {
     const player = normalizeName(rec.player || rec.name || rec.playerName || rec.playerKey || '')
     const playerKey = player ? (resolveKey(profiles, player) || player) : ''
     const action = typeof rec.action === 'string' ? rec.action.trim() : ''
+    const status = normalizeCommitmentStatus(rec.status)
 
     const normalized = {
       ...rec,
       ...(player ? { player } : null),
       ...(playerKey ? { playerKey } : null),
-      ...(action ? { action } : null)
+      ...(action ? { action } : null),
+      ...(status ? { status } : null)
     }
 
     if (player && typeof rec.player === 'string' && rec.player !== player) changed = true
     if (playerKey && typeof rec.playerKey === 'string' && rec.playerKey !== playerKey) changed = true
     if (action && typeof rec.action === 'string' && rec.action !== action) changed = true
+    if (status && normalizeCommitmentStatus(rec.status) !== status) changed = true
 
     const foldPlayer = playerKey ? foldKey(playerKey) : foldKey(player)
     const foldAction = action ? action.toLowerCase() : (typeof rec.action === 'string' ? rec.action.trim().toLowerCase() : '')
@@ -154,9 +157,13 @@ function migrateCommitments (rawCommitments, profiles) {
 function normalizeCommitmentStatus (raw) {
   const v = String(raw || '').trim().toLowerCase()
   if (!v) return 'pending'
-  if (['pending', 'todo', 'open'].includes(v)) return 'pending'
-  if (['done', 'fulfilled', 'complete', 'completed'].includes(v)) return 'done'
-  if (['failed', 'fail', 'canceled', 'cancelled', 'abandoned'].includes(v)) return 'failed'
+  if (['pending', 'todo', 'open', '未完成', '待办', '待做', '进行中'].includes(v)) return 'pending'
+  if (['done', 'fulfilled', 'complete', 'completed', 'ok', '完成', '已完成', '搞定', '做到了', '完成了'].includes(v)) return 'done'
+  if (['failed', 'fail', 'canceled', 'cancelled', 'abandoned', '失败', '没做到', '未做到', '取消', '放弃'].includes(v)) return 'failed'
+  if (['ongoing', 'active', '长期', '长期有效', '持续', '永久', '永远'].includes(v)) return 'ongoing'
+  if (v.includes('完成')) return 'done'
+  if (v.includes('失败') || v.includes('取消') || v.includes('放弃')) return 'failed'
+  if (v.includes('永远') || v.includes('永久') || v.includes('长期')) return 'ongoing'
   return 'pending'
 }
 
@@ -305,7 +312,21 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     return { ok: true, key }
   }
 
-  function upsertCommitment ({ player, action, status, deadlineMs, source, persist: shouldPersist = true } = {}) {
+  function normalizeActionKey (text) {
+    const s = String(text || '')
+    if (!s) return ''
+    try {
+      return s.normalize('NFKC')
+        .replace(/\s+/g, ' ')
+        .replace(/[，。！？、,.!?\u00b7'"“”‘’`~@#$%^&*()_+\-=[\]{}\\|;:/<>]/g, '')
+        .trim()
+        .toLowerCase()
+    } catch {
+      return s.replace(/\s+/g, ' ').trim().toLowerCase()
+    }
+  }
+
+  function upsertCommitment ({ id, player, action, status, deadlineMs, source, persist: shouldPersist = true } = {}) {
     load()
     const slice = ensureState()
     if (!slice) return { ok: false, reason: 'no_state' }
@@ -317,17 +338,41 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     const st = normalizeCommitmentStatus(status)
     const nowTs = now()
     const list = safeArray(slice.commitments)
+    const wantedId = (typeof id === 'string' && id.trim()) ? id.trim() : ''
     const needle = `${foldKey(playerKey)}::${act.toLowerCase()}`
+    const actKey = normalizeActionKey(act)
     let existing = null
-    for (const c of list) {
-      if (!c || typeof c !== 'object') continue
-      const k = foldKey(c.playerKey || c.player || c.name || '')
-      const a = typeof c.action === 'string' ? c.action.trim().toLowerCase() : ''
-      if (!k || !a) continue
-      if (`${k}::${a}` === needle) { existing = c; break }
+    if (wantedId) {
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue
+        if (typeof c.id === 'string' && c.id === wantedId) { existing = c; break }
+      }
+    }
+    if (!existing) {
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue
+        const k = foldKey(c.playerKey || c.player || c.name || '')
+        const a = typeof c.action === 'string' ? c.action.trim().toLowerCase() : ''
+        if (!k || !a) continue
+        if (`${k}::${a}` === needle) { existing = c; break }
+      }
+    }
+    if (!existing && actKey) {
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue
+        const k = foldKey(c.playerKey || c.player || c.name || '')
+        if (k !== foldKey(playerKey)) continue
+        const aRaw = typeof c.action === 'string' ? c.action.trim() : ''
+        const aKey = normalizeActionKey(aRaw)
+        if (!aKey) continue
+        const aStatus = normalizeCommitmentStatus(c.status)
+        if (aStatus !== 'pending' && st === 'pending') continue
+        if (aKey === actKey || aKey.includes(actKey) || actKey.includes(aKey)) { existing = c; break }
+      }
     }
     if (!existing) {
       const id = (() => {
+        if (wantedId) return wantedId
         try { return randomUUID() } catch { return `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` }
       })()
       const rec = {
@@ -347,6 +392,7 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
       return { ok: true, id }
     }
 
+    if (wantedId && typeof existing.id !== 'string') existing.id = wantedId
     existing.player = name
     existing.playerKey = playerKey
     existing.action = act
@@ -379,11 +425,12 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
 
     for (const c of comArr) {
       if (!c || typeof c !== 'object') continue
+      const id = c.id
       const player = c.player || c.name
       const action = c.action || c.text
       const status = c.status
       const deadlineMs = c.deadlineMs ?? c.deadline_ms ?? c.deadline
-      const res = upsertCommitment({ player, action, status, deadlineMs, source, persist: false })
+      const res = upsertCommitment({ id, player, action, status, deadlineMs, source, persist: false })
       if (res.ok) changed = true
     }
 
@@ -395,7 +442,13 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
 
   function dumpForLLM () {
     const profiles = listProfiles().map(p => ({ player: p.name, profile: p.profile }))
-    const commitments = listCommitments().map(c => ({ player: c.player, action: c.action, status: c.status }))
+    const commitments = listCommitments().map(c => ({
+      ...(c.id ? { id: c.id } : null),
+      player: c.player,
+      action: c.action,
+      status: c.status,
+      ...(Number.isFinite(c.deadlineMs) ? { deadlineMs: c.deadlineMs } : null)
+    }))
     return { profiles, commitments }
   }
 

@@ -16,13 +16,15 @@ const PEOPLE_INSPECTOR_SYSTEM_PROMPT = [
   '2) bot承诺 commitments：bot明确答应将来要为玩家做的事（非立即执行的动作）。',
   '',
   '请只输出严格 JSON，且只包含以下字段：',
-  '{"profiles":[{"player":"玩家名","profile":"一句画像（覆盖写入）"}],"commitments":[{"player":"玩家名","action":"承诺内容","status":"pending|done|failed","deadlineMs":1700000000000}]}',
+  '{"profiles":[{"player":"玩家名","profile":"一句画像（覆盖写入）"}],"commitments":[{"id":"已有承诺id(可省略)","player":"玩家名","action":"承诺内容","status":"pending|ongoing|done|failed","deadlineMs":1700000000000}]}',
   '',
   '规则：',
   '- 只记录“确定无疑”的信息，不要编造。',
   '- 你会收到“当前已知画像/承诺”。profile 是覆盖写入：若本段聊天出现该玩家画像信息更新，请在旧画像基础上更新并输出“完整新画像”字符串，默认保留旧画像中的要点，除非本段聊天明确否定/修改；否则不要输出该玩家。',
-  '- commitments 只记录 bot 自己对玩家的承诺/答应（不是工具调用即时完成的动作）；默认 status=pending；deadlineMs 可省略。',
-  '- 如果没有任何更新，输出 {"profiles":[],"commitments":[]}。',
+  '- commitments：优先“更新已有承诺”，避免重复新增。你会收到 JSON 快照，其中每条承诺都有 id；若你要修改某条承诺（比如把 pending 改为 done/failed/ongoing），必须输出同一个 id。',
+  '- 当聊天明确显示承诺已完成/兑现（bot 或玩家明确确认完成），将其 status 设为 done；明确无法做到/取消/失败则设为 failed。',
+  '- 对于“长期/持续/永远/一直”的承诺（不是可完成的一次性任务），用 status=ongoing（不要用 pending）。',
+  '- deadlineMs 可省略；如果没有任何更新，输出 {"profiles":[],"commitments":[]}。',
   '- 只输出 JSON，不要输出 Markdown，不要输出解释。'
 ].join('\n')
 
@@ -2248,6 +2250,14 @@ function createMemoryService ({
     if (['pending', 'todo', 'open'].includes(v)) return 'pending'
     if (['done', 'fulfilled', 'complete', 'completed'].includes(v)) return 'done'
     if (['failed', 'fail', 'canceled', 'cancelled', 'abandoned'].includes(v)) return 'failed'
+    if (['ongoing', 'active'].includes(v)) return 'ongoing'
+    if (['未完成', '待办', '待做', '进行中'].includes(v)) return 'pending'
+    if (['完成', '已完成', '搞定', '做到了', '完成了', 'ok'].includes(v)) return 'done'
+    if (['失败', '没做到', '未做到', '取消', '放弃'].includes(v)) return 'failed'
+    if (['长期', '长期有效', '持续', '永久', '永远'].includes(v)) return 'ongoing'
+    if (v.includes('完成')) return 'done'
+    if (v.includes('失败') || v.includes('取消') || v.includes('放弃')) return 'failed'
+    if (v.includes('永远') || v.includes('永久') || v.includes('长期')) return 'ongoing'
     return 'pending'
   }
 
@@ -2289,10 +2299,11 @@ function createMemoryService ({
     const seenCommitments = new Set()
     for (const raw of commitments) {
       if (!raw || typeof raw !== 'object') continue
+      const id = typeof raw.id === 'string' ? raw.id.trim().slice(0, 80) : ''
       const player = normalizeActorName(raw.player || raw.name || '')
       const action = normalizeMemoryText(raw.action ?? raw.text ?? '')
       if (!player || !action) continue
-      const key = `${player.toLowerCase()}::${action.toLowerCase()}`
+      const key = id ? `id::${id}` : `${player.toLowerCase()}::${action.toLowerCase()}`
       if (seenCommitments.has(key)) continue
       seenCommitments.add(key)
       const status = normalizeInspectorStatus(raw.status)
@@ -2300,6 +2311,7 @@ function createMemoryService ({
         ? raw.deadlineMs
         : (Number.isFinite(raw.deadline) ? raw.deadline : (Number.isFinite(raw.deadline_ms) ? raw.deadline_ms : null))
       out.commitments.push({
+        ...(id ? { id } : null),
         player,
         action: action.slice(0, 180),
         status,
@@ -2391,7 +2403,8 @@ function createMemoryService ({
         if (!player || !action) continue
         const status = normalizeInspectorStatus(c?.status)
         if (status !== 'pending') continue
-        out.push(`- ${player}: ${action}`)
+        const id = normalizeMemoryText(c?.id || '').slice(0, 80)
+        out.push(`- ${id ? `id=${id} ` : ''}${player}: ${action}`)
       }
       return out.length ? out.join('\n') : '(empty)'
     })()
