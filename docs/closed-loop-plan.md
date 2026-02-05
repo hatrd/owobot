@@ -11,6 +11,7 @@
 - 部分内部 CLI 已存在：例如 AI 相关 `.ai ...` 见 `bot_impl/ai-chat/cli.js`。
 - 统一工具 CLI：`.tool ...` 见 `bot_impl/tool-cli.js`（已按“list/dry/run 否则默认执行工具”路由）。
 - 热重载闸门：`touch open_fire` 触发（见 `docs/hot-reload.md`）。
+- 使用说明：`docs/interaction.md`
 
 ## 拆分计划
 
