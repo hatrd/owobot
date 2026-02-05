@@ -75,17 +75,6 @@ const DEBUG = parseBool(process.env.MC_DEBUG, false)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
 function ts () { return formatDateTimeTz() }
 
-// Control plane config (UDS). Disable via --ctl off or MCBOT_CTL=off.
-try {
-  const ctlFlag = argv.args.ctl != null ? String(argv.args.ctl) : (process.env.MCBOT_CTL != null ? String(process.env.MCBOT_CTL) : 'on')
-  ctl.enabled = parseBool(ctlFlag, true)
-} catch {}
-try {
-  const tokenArg = argv.args['ctl-token'] != null ? String(argv.args['ctl-token']) : null
-  const tokenEnv = process.env.MCBOT_CTL_TOKEN != null ? String(process.env.MCBOT_CTL_TOKEN) : null
-  ctl.token = (tokenArg || tokenEnv || '').trim() || null
-} catch {}
-
 console.log('Starting bot with config:', {
   host: options.host,
   port: options.port,
@@ -191,6 +180,17 @@ const ctl = {
   token: null,
   enabled: true
 }
+
+// Control plane config (UDS). Disable via --ctl off or MCBOT_CTL=off.
+try {
+  const ctlFlag = argv.args.ctl != null ? String(argv.args.ctl) : (process.env.MCBOT_CTL != null ? String(process.env.MCBOT_CTL) : 'on')
+  ctl.enabled = parseBool(ctlFlag, true)
+} catch {}
+try {
+  const tokenArg = argv.args['ctl-token'] != null ? String(argv.args['ctl-token']) : null
+  const tokenEnv = process.env.MCBOT_CTL_TOKEN != null ? String(process.env.MCBOT_CTL_TOKEN) : null
+  ctl.token = (tokenArg || tokenEnv || '').trim() || null
+} catch {}
 
 function safeUnlink (p) {
   try { fs.unlinkSync(p) } catch {}

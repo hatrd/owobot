@@ -6,3 +6,6 @@ data/
 models/
 .worktrees/
 plan/
+.mcbot.sock
+.mcbot.pid
+open_fire
