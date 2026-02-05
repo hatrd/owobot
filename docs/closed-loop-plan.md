@@ -80,6 +80,8 @@
   - `cli.line`：可选，传 `{ line: ".status" }` 复用现有 CLI 语义（人类命令行的子集）。
 - 输出规范：响应统一 `{ id, ok, result, error }`；stdout 仍保留稳定前缀（`[CLI]`/`[AICTL]`）给人看，但机器以 socket 响应为准。
 - 安全隔离：socket 文件权限尽量收紧（同用户可读写），并在握手响应中回传 `cwd/pid/startedAt`，避免串台。
+  - 可选鉴权：支持 `MCBOT_CTL_TOKEN`（或 `--ctl-token`）作为共享密钥；启用后每个请求必须带 `token` 字段匹配才执行。
+  - 建议：若工作目录可被其他用户写入（group/other writable），强烈建议启用 `MCBOT_CTL_TOKEN`，避免被同机其他用户通过删除/替换 socket 文件造成误控/劫持脚本连接。
 
 交付：
 - 1 个脚本化控制入口（例如 `node scripts/botctl.js ...`）可连接 UDS 并执行 `tool.dry/tool.run`。

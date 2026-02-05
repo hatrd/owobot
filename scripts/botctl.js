@@ -8,6 +8,7 @@
 //   node scripts/botctl.js run <tool> [key=value ...]
 // Options:
 //   --sock <path>   override socket path (default: $PWD/.mcbot.sock)
+//   --token <token> optional shared secret (or env MCBOT_CTL_TOKEN)
 
 const net = require('net')
 const path = require('path')
@@ -79,6 +80,7 @@ function request (sockPath, payload) {
 async function main () {
   const argv = parseArgv()
   const sockPath = argv.flags.sock ? path.resolve(String(argv.flags.sock)) : path.resolve(process.cwd(), '.mcbot.sock')
+  const token = argv.flags.token != null ? String(argv.flags.token) : (process.env.MCBOT_CTL_TOKEN != null ? String(process.env.MCBOT_CTL_TOKEN) : '')
   const [cmd, ...rest] = argv.rest
 
   if (!cmd) {
@@ -104,6 +106,7 @@ async function main () {
     process.exit(2)
   }
 
+  if (token && payload) payload.token = token
   const res = await request(sockPath, payload)
   process.stdout.write(JSON.stringify(res, null, 2) + '\n')
   if (!res || res.ok !== true) process.exit(1)
@@ -113,4 +116,3 @@ main().catch((err) => {
   process.stderr.write(String(err?.message || err) + '\n')
   process.exit(1)
 })
-

@@ -75,6 +75,17 @@ const DEBUG = parseBool(process.env.MC_DEBUG, false)
 function dlog (...args) { if (DEBUG) console.log('[DEBUG]', ...args) }
 function ts () { return formatDateTimeTz() }
 
+// Control plane config (UDS). Disable via --ctl off or MCBOT_CTL=off.
+try {
+  const ctlFlag = argv.args.ctl != null ? String(argv.args.ctl) : (process.env.MCBOT_CTL != null ? String(process.env.MCBOT_CTL) : 'on')
+  ctl.enabled = parseBool(ctlFlag, true)
+} catch {}
+try {
+  const tokenArg = argv.args['ctl-token'] != null ? String(argv.args['ctl-token']) : null
+  const tokenEnv = process.env.MCBOT_CTL_TOKEN != null ? String(process.env.MCBOT_CTL_TOKEN) : null
+  ctl.token = (tokenArg || tokenEnv || '').trim() || null
+} catch {}
+
 console.log('Starting bot with config:', {
   host: options.host,
   port: options.port,
@@ -176,7 +187,9 @@ const ctl = {
   startedAt: Date.now(),
   pidPath: path.resolve(process.cwd(), '.mcbot.pid'),
   sockPath: path.resolve(process.cwd(), '.mcbot.sock'),
-  server: null
+  server: null,
+  token: null,
+  enabled: true
 }
 
 function safeUnlink (p) {
@@ -184,6 +197,7 @@ function safeUnlink (p) {
 }
 
 function startControlPlane () {
+  if (!ctl.enabled) return
   if (ctl.server) return
   // Best-effort cleanup from previous runs.
   safeUnlink(ctl.sockPath)
@@ -194,6 +208,11 @@ function startControlPlane () {
     let buf = ''
     socket.on('data', (chunk) => {
       buf += chunk
+      // Defensive: limit buffered input (NDJSON). Prevents unbounded memory growth on malformed clients.
+      if (buf.length > 256 * 1024) {
+        try { socket.end() } catch {}
+        return
+      }
       while (true) {
         const idx = buf.indexOf('\n')
         if (idx < 0) break
@@ -213,12 +232,22 @@ function startControlPlane () {
   })
   ctl.server = server
 
+  // Ensure the socket is created with restrictive permissions from the start.
+  const oldUmask = (() => { try { return process.umask(0o077) } catch { return null } })()
+  server.once('listening', () => {
+    try { if (oldUmask != null) process.umask(oldUmask) } catch {}
+  })
   server.listen(ctl.sockPath, () => {
     try { fs.chmodSync(ctl.sockPath, 0o600) } catch {}
+    try {
+      const st = fs.lstatSync(ctl.sockPath)
+      if (!st.isSocket()) console.error('[CTL] warning: path is not a socket:', ctl.sockPath)
+    } catch {}
     console.log('[CTL] listening on', ctl.sockPath)
   })
   server.on('error', (err) => {
     console.error('[CTL] server error:', err?.message || err)
+    try { if (oldUmask != null) process.umask(oldUmask) } catch {}
   })
 }
 
@@ -234,6 +263,11 @@ async function handleCtlRequest (req) {
   const id = req && req.id != null ? req.id : null
   const op = req && req.op ? String(req.op) : ''
   if (!op) return { id, ok: false, error: 'missing op' }
+
+  if (ctl.token) {
+    const provided = req && req.token != null ? String(req.token) : ''
+    if (!provided || provided !== ctl.token) return { id, ok: false, error: 'unauthorized' }
+  }
 
   if (op === 'hello') {
     return {
@@ -276,6 +310,8 @@ async function handleCtlRequest (req) {
     const tool = req && req.tool != null ? String(req.tool) : ''
     const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
     if (!tool) return { id, ok: false, error: 'missing tool' }
+    const allowlist = Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : []
+    if (!allowlist.includes(tool)) return { id, ok: false, error: `tool not allowlisted: ${tool}` }
 
     if (op === 'tool.dry') {
       const r = actions.dry ? actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported' }
