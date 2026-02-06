@@ -18,9 +18,39 @@
 
 ## 交互优先验证（强制）
 - `docs/interaction.md` 是本项目一等公民（first-class）交互契约；涉及交互行为的改动必须先对齐该文档。
-- 所有行为改动默认执行“先 dry interaction、后可选实跑”：先跑 `npm run interaction:dry`，再决定是否执行 `tool.run` 或服内实操。
+- AI 仅允许执行 dry interaction 验证：先跑 `npm run interaction:dry`，并用 `node scripts/botctl.js dry ...` 做定向验证。
+- 实跑（`tool.run`、服内真实操作）永远只能由真人手动执行；AI 不得代替执行。
 - 验证脚本优先走控制面（`scripts/botctl.js` / `scripts/interaction-dry-run.js`），避免只靠人工终端观察。
 - 若 `interaction:dry` 失败，不得宣称改动已验证通过；先修复契约不一致再继续。
+
+## 新功能验证工作流（必须遵守）
+- 以后新增功能（尤其是观察/交互/工具调用相关）必须按以下顺序验证，缺一不可。
+
+1) **静态检查先过**
+- 对改动文件执行 `node --check ...`，先保证语法无误再进入运行时验证。
+
+2) **热重载后再测**
+- 执行 `npm run bot:reload`（或 `touch open_fire`），确保测试的是最新逻辑。
+
+3) **AI 仅 dry，不可实跑**
+- 先执行 `npm run interaction:dry`。
+- 再用 `node scripts/botctl.js dry ...` 针对新功能做定向验证。
+- `tool.run` 与服内实操由真人自行执行，AI 不参与。
+
+4) **观察类能力必须走 read-only dry 取证**
+- 统一通过 `node scripts/botctl.js dry observe_detail ...` 验证。
+- 示例：
+  - 附近实体：`node scripts/botctl.js dry observe_detail what=entities radius=32 max=20`
+  - 附近猫名：`node scripts/botctl.js dry observe_detail what=cats radius=32 max=10`
+  - 容器内容：`node scripts/botctl.js dry observe_detail what=containers radius=20 max=8`
+
+5) **失败必须带可诊断信息**
+- 禁止只报“失败/不行”。
+- 观察容器失败时必须输出 `error/openErrors` 等字段并继续定位，不可跳过。
+
+6) **玩家观察源约束（固定）**
+- `observe_players` 禁止依赖 `MAP_API_URL`。
+- 仅允许使用 mineflayer 运行时近邻玩家信息（`bot.players` + 实体位置）。
 
 ## AI 协作
 - 提供上下文时遵循“切片”思维：只给模型必要的输入，避免堆 dump。
