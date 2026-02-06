@@ -127,7 +127,7 @@ Observer endpoints are read-only by design and are intended for low-cost verific
 
 - `observe.snapshot`: returns structured runtime snapshot (position, vitals, nearby, inventory summary, current task).
 - `observe.prompt`: returns `{ prompt, snapshot }` using the same prompt shape consumed by AI context assembly.
-- `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cows|containers`, with `radius`, `max`).
+- `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cats|cows|containers|signs|space_snapshot|environment|room_probe`, with `radius`, `max`).
 
 Container inspection (`what=containers`) supports all nearby container categories:
 
@@ -150,6 +150,8 @@ node scripts/botctl.js observe prompt hostileRange=24
 node scripts/botctl.js observe detail what=players radius=24 max=12
 node scripts/botctl.js observe detail what=containers radius=20 max=8
 node scripts/botctl.js observe detail what=containers containerType=barrel radius=20 max=8
+node scripts/botctl.js observe detail what=signs radius=24 max=20
+node scripts/botctl.js dry observe_detail what=environment radius=12
 ```
 
 ## Dry Interaction Observer

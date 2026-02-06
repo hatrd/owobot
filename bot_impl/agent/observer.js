@@ -312,7 +312,7 @@ function collectNearbySigns (bot, { radius = 20, max = 20 } = {}) {
 
 function blockIsPassable (block) {
   try {
-    if (!block) return true
+    if (!block) return false
     const name = String(block.name || '').toLowerCase()
     if (!name || name === 'air' || name === 'cave_air' || name === 'void_air') return true
     if (name.includes('water') || name.includes('lava')) return true
@@ -334,6 +334,34 @@ function blockIsSolidSupport (block) {
   }
 }
 
+function classifyBlockState (block) {
+  try {
+    if (!block) return { state: 'unknown', name: 'unknown' }
+    const name = String(block.name || '').toLowerCase()
+    if (!name) return { state: 'unknown', name: 'unknown' }
+    if (name === 'air' || name === 'cave_air' || name === 'void_air') return { state: 'passable', name }
+    if (name.includes('water') || name.includes('lava')) return { state: 'passable', name }
+    const bb = String(block.boundingBox || '').toLowerCase()
+    if (bb === 'empty') return { state: 'passable', name }
+    return { state: 'blocked', name }
+  } catch {
+    return { state: 'unknown', name: 'unknown' }
+  }
+}
+
+function clamp01 (n) {
+  if (!Number.isFinite(n)) return 0
+  if (n <= 0) return 0
+  if (n >= 1) return 1
+  return n
+}
+
+function isDoorLikeName (name) {
+  const s = String(name || '').toLowerCase()
+  if (!s) return false
+  return s.includes('door') || s.includes('gate') || s.includes('trapdoor')
+}
+
 function collectSpaceProfile (bot, args = {}) {
   try {
     const me = bot.entity?.position
@@ -341,105 +369,208 @@ function collectSpaceProfile (bot, args = {}) {
     const center = me.floored()
     const radiusRaw = parseInt(args.radius || '8', 10)
     const r = Math.max(3, Math.min(12, Number.isFinite(radiusRaw) ? radiusRaw : 8))
+    const key = (dx, dz) => `${dx},${dz}`
+    const inBounds = (dx, dz) => dx >= -r && dx <= r && dz >= -r && dz <= r
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    const grid = new Map()
 
-    const readCell = (x, y, z) => {
-      const p = center.offset(x, y, z)
-      const block = bot.blockAt(p)
-      return { p, block }
+    const readState = (dx, y, dz) => {
+      const p = center.offset(dx, y, dz)
+      return classifyBlockState(bot.blockAt(p))
     }
 
-    const stats = {
-      samples: 0,
-      walkable: 0,
-      withRoof: 0,
-      boundary: { total: 0, blocked: 0 }
-    }
+    let totalCells = 0
+    let walkableCells = 0
+    let unknownCells = 0
 
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
-        const floor = readCell(dx, -1, dz).block
-        const feet = readCell(dx, 0, dz).block
-        const head = readCell(dx, 1, dz).block
-        const roof = readCell(dx, 2, dz).block
-        const walkable = blockIsSolidSupport(floor) && blockIsPassable(feet) && blockIsPassable(head)
-        stats.samples += 1
-        if (walkable) stats.walkable += 1
-        if (!blockIsPassable(roof)) stats.withRoof += 1
+        const floor = readState(dx, -1, dz)
+        const feet = readState(dx, 0, dz)
+        const head = readState(dx, 1, dz)
+        const roof = readState(dx, 2, dz)
+        const unknown = floor.state === 'unknown' || feet.state === 'unknown' || head.state === 'unknown'
+        const walkable = !unknown && floor.state === 'blocked' && feet.state === 'passable' && head.state === 'passable'
+        const roofCovered = roof.state === 'blocked'
+        const sample = { dx, dz, floor, feet, head, roof, unknown, walkable, roofCovered }
+        grid.set(key(dx, dz), sample)
+        totalCells += 1
+        if (unknown) unknownCells += 1
+        if (walkable) walkableCells += 1
+      }
+    }
 
-        if (Math.abs(dx) === r || Math.abs(dz) === r) {
-          stats.boundary.total += 1
-          if (!blockIsPassable(feet) || !blockIsPassable(head)) stats.boundary.blocked += 1
+    let seed = null
+    const centerCell = grid.get(key(0, 0))
+    if (centerCell && centerCell.walkable) {
+      seed = { dx: 0, dz: 0 }
+    } else {
+      const candidates = []
+      for (const sample of grid.values()) {
+        if (!sample.walkable) continue
+        const md = Math.abs(sample.dx) + Math.abs(sample.dz)
+        candidates.push({ dx: sample.dx, dz: sample.dz, md })
+      }
+      candidates.sort((a, b) => a.md - b.md)
+      if (candidates.length) seed = { dx: candidates[0].dx, dz: candidates[0].dz }
+    }
+
+    const visited = new Set()
+    if (seed) {
+      const queue = [seed]
+      let qIdx = 0
+      while (qIdx < queue.length) {
+        const cur = queue[qIdx++]
+        const ck = key(cur.dx, cur.dz)
+        if (visited.has(ck)) continue
+        const cell = grid.get(ck)
+        if (!cell || !cell.walkable) continue
+        visited.add(ck)
+        for (const [sx, sz] of dirs) {
+          const nx = cur.dx + sx
+          const nz = cur.dz + sz
+          if (!inBounds(nx, nz)) continue
+          const nk = key(nx, nz)
+          if (visited.has(nk)) continue
+          const nc = grid.get(nk)
+          if (!nc || !nc.walkable) continue
+          queue.push({ dx: nx, dz: nz })
         }
       }
     }
 
-    const ray = (dx, dz) => {
-      for (let i = 1; i <= r; i++) {
-        const feet = readCell(dx * i, 0, dz * i).block
-        const head = readCell(dx * i, 1, dz * i).block
-        if (!blockIsPassable(feet) || !blockIsPassable(head)) {
-          return {
-            distance: i,
-            block: String((!blockIsPassable(feet) ? feet?.name : head?.name) || 'unknown')
-          }
+    const reachable = []
+    let roofCoveredReachable = 0
+    let blockedEdges = 0
+    let frontierEdges = 0
+    let doorwayEdges = 0
+    let minDx = Infinity
+    let maxDx = -Infinity
+    let minDz = Infinity
+    let maxDz = -Infinity
+
+    for (const k of visited.values()) {
+      const cell = grid.get(k)
+      if (!cell) continue
+      reachable.push(cell)
+      if (cell.roofCovered) roofCoveredReachable += 1
+      if (cell.dx < minDx) minDx = cell.dx
+      if (cell.dx > maxDx) maxDx = cell.dx
+      if (cell.dz < minDz) minDz = cell.dz
+      if (cell.dz > maxDz) maxDz = cell.dz
+
+      for (const [sx, sz] of dirs) {
+        const nx = cell.dx + sx
+        const nz = cell.dz + sz
+        if (!inBounds(nx, nz)) {
+          frontierEdges += 1
+          continue
+        }
+        const nCell = grid.get(key(nx, nz))
+        if (!nCell || nCell.unknown) {
+          frontierEdges += 1
+          continue
+        }
+        if (!nCell.walkable) {
+          blockedEdges += 1
+          const nName = nCell.feet?.name || nCell.head?.name || nCell.floor?.name || ''
+          if (isDoorLikeName(nName)) doorwayEdges += 1
         }
       }
-      return { distance: null, block: null }
     }
 
-    const walls = {
-      east: ray(1, 0),
-      west: ray(-1, 0),
-      south: ray(0, 1),
-      north: ray(0, -1)
+    const reachableCount = reachable.length
+    const unknownRatio = totalCells > 0 ? unknownCells / totalCells : 1
+    const roofRatio = reachableCount > 0 ? roofCoveredReachable / reachableCount : 0
+    const boundaryTotal = blockedEdges + frontierEdges
+    const enclosureRatio = boundaryTotal > 0 ? blockedEdges / boundaryTotal : 0
+    const frontierRatio = boundaryTotal > 0 ? frontierEdges / boundaryTotal : 1
+    const reachableWalkableRatio = walkableCells > 0 ? reachableCount / walkableCells : 0
+
+    const width = reachableCount > 0 ? (maxDx - minDx + 1) : null
+    const depth = reachableCount > 0 ? (maxDz - minDz + 1) : null
+    const bboxArea = (Number.isFinite(width) && Number.isFinite(depth)) ? (width * depth) : 0
+    const rectangularity = bboxArea > 0 ? (reachableCount / bboxArea) : 0
+    const aspectRatio = (Number.isFinite(width) && Number.isFinite(depth) && width > 0 && depth > 0)
+      ? (Math.max(width, depth) / Math.min(width, depth))
+      : 1
+
+    const sideOpen = { east: false, west: false, south: false, north: false }
+    for (const cell of reachable) {
+      if (cell.dx === maxDx) {
+        const n = grid.get(key(cell.dx + 1, cell.dz))
+        if (!inBounds(cell.dx + 1, cell.dz) || !n || n.unknown || n.walkable) sideOpen.east = true
+      }
+      if (cell.dx === minDx) {
+        const n = grid.get(key(cell.dx - 1, cell.dz))
+        if (!inBounds(cell.dx - 1, cell.dz) || !n || n.unknown || n.walkable) sideOpen.west = true
+      }
+      if (cell.dz === maxDz) {
+        const n = grid.get(key(cell.dx, cell.dz + 1))
+        if (!inBounds(cell.dx, cell.dz + 1) || !n || n.unknown || n.walkable) sideOpen.south = true
+      }
+      if (cell.dz === minDz) {
+        const n = grid.get(key(cell.dx, cell.dz - 1))
+        if (!inBounds(cell.dx, cell.dz - 1) || !n || n.unknown || n.walkable) sideOpen.north = true
+      }
     }
+    const openingSides = Object.entries(sideOpen).filter(([, v]) => v).map(([k]) => k)
+    const openSideCount = openingSides.length
+    const squareLike = Boolean(
+      Number.isFinite(width) && Number.isFinite(depth) &&
+      width >= 4 && depth >= 4 &&
+      aspectRatio <= 1.25 && rectangularity >= 0.72 && enclosureRatio >= 0.58
+    )
 
-    const wallDistances = Object.values(walls).map(w => w.distance).filter(Number.isFinite)
-    const nearestWall = wallDistances.length ? Math.min(...wallDistances) : null
-    const wallKnownRaw = Object.values(walls).every(w => Number.isFinite(w.distance))
-    // If all "walls" are within 1 block, it's usually nearby furniture/utility blocks, not real room boundaries.
-    const wallKnown = wallKnownRaw && Number.isFinite(nearestWall) && nearestWall >= 2
-    const width = wallKnown ? (walls.east.distance + walls.west.distance - 1) : null
-    const depth = wallKnown ? (walls.north.distance + walls.south.distance - 1) : null
-    const squareLike = (Number.isFinite(width) && Number.isFinite(depth))
-      ? (Math.abs(width - depth) <= 1 && width >= 4 && depth >= 4)
-      : false
-
-    const walkableRatio = stats.samples > 0 ? stats.walkable / stats.samples : 0
-    const roofRatio = stats.samples > 0 ? stats.withRoof / stats.samples : 0
-    const boundaryBlockedRatio = stats.boundary.total > 0 ? stats.boundary.blocked / stats.boundary.total : 0
-
-    const enclosureScore = Math.max(0, Math.min(1,
-      (wallKnown ? 0.35 : 0) +
-      (boundaryBlockedRatio * 0.35) +
-      (roofRatio * 0.30)
-    ))
+    const roomScore = clamp01((enclosureRatio * 0.45) + (roofRatio * 0.25) + (rectangularity * 0.2) + ((1 - unknownRatio) * 0.1))
+    const corridorAspect = clamp01((aspectRatio - 1.5) / 2.5)
+    const corridorScore = clamp01((enclosureRatio * 0.35) + (roofRatio * 0.2) + (corridorAspect * 0.35) + ((1 - unknownRatio) * 0.1))
+    const outdoorScore = clamp01(((1 - enclosureRatio) * 0.45) + ((1 - roofRatio) * 0.25) + ((openSideCount / 4) * 0.2) + ((1 - unknownRatio) * 0.1))
+    const semiScore = clamp01((1 - Math.abs(enclosureRatio - 0.5)) * 0.55 + (1 - Math.abs(roofRatio - 0.45)) * 0.3 + (1 - unknownRatio) * 0.15)
+    const roomEnclosedScore = clamp01(roomScore + (squareLike ? 0.12 : 0))
 
     let kind = 'semi_enclosed'
-    let label = '半开放区域'
-    let confidence = Math.max(0.35, enclosureScore)
+    let label = '半封闭空间'
+    let subtype = 'mixed'
+    let confidence = semiScore
 
-    if (enclosureScore >= 0.68 && squareLike) {
-      kind = 'square_room'
-      label = '近似正方形室内空间'
-      confidence = Math.max(confidence, 0.82)
-    } else if (enclosureScore >= 0.62) {
-      kind = 'room'
-      label = '室内空间'
-      confidence = Math.max(confidence, 0.72)
-    } else if (boundaryBlockedRatio < 0.25 && roofRatio < 0.25) {
-      kind = 'open_outdoor'
-      label = '开阔室外区域'
-      confidence = Math.max(confidence, 0.7)
+    if (reachableCount < Math.max(6, r) || walkableCells <= 0) {
+      kind = 'semi_enclosed'
+      label = '样本不足（空间不确定）'
+      subtype = 'low_evidence'
+      confidence = clamp01((1 - unknownRatio) * 0.45)
     } else {
-      const longX = (Number.isFinite(width) && Number.isFinite(depth)) ? (width >= depth * 1.8) : false
-      const longZ = (Number.isFinite(width) && Number.isFinite(depth)) ? (depth >= width * 1.8) : false
-      if ((longX || longZ) && enclosureScore >= 0.45) {
-        kind = 'corridor_like'
+      const scored = [
+        { kind: 'room_enclosed', score: roomEnclosedScore },
+        { kind: 'corridor_like', score: corridorScore },
+        { kind: 'open_outdoor', score: outdoorScore },
+        { kind: 'semi_enclosed', score: semiScore }
+      ].sort((a, b) => b.score - a.score)
+      const top = scored[0]
+      const next = scored[1] || { score: 0 }
+      kind = top.kind
+      confidence = clamp01(top.score - (next.score * 0.18))
+
+      if (kind === 'room_enclosed') {
+        subtype = squareLike ? 'square_room' : 'room'
+        label = squareLike ? '封闭房间（近似正方形）' : '室内封闭空间'
+      } else if (kind === 'corridor_like') {
+        subtype = 'corridor'
         label = '走廊状空间'
-        confidence = Math.max(confidence, 0.66)
+      } else if (kind === 'open_outdoor') {
+        subtype = 'open'
+        label = '开阔室外区域'
+      } else {
+        subtype = 'mixed'
+        label = '半封闭空间'
       }
     }
+
+    const notes = []
+    if (!centerCell?.walkable) notes.push('机器人脚下并非标准可行走单元，使用最近可达单元作为种子。')
+    if (unknownRatio >= 0.3) notes.push('样本未知比例偏高，结论置信度受影响。')
+    if (doorwayEdges > 0) notes.push('检测到门/门类边界，可能存在可开闭出入口。')
+    if (reachableWalkableRatio < 0.55) notes.push('可达连通域占比偏低，附近障碍较多。')
 
     const signs = collectNearbySigns(bot, { radius: r, max: 64 })
     const containerPos = bot.findBlocks({
@@ -451,27 +582,67 @@ function collectSpaceProfile (bot, args = {}) {
     return {
       center: { x: center.x, y: center.y, z: center.z },
       probeRadius: r,
-      environment: { kind, label, confidence: Number(confidence.toFixed(2)) },
+      environment: {
+        kind,
+        subtype,
+        label,
+        confidence: Number(confidence.toFixed(2))
+      },
+      mapState: {
+        totalCells,
+        walkableCells,
+        unknownCells,
+        reachableCells: reachableCount,
+        reachableWalkableRatio: Number(reachableWalkableRatio.toFixed(3)),
+        seed: seed ? { dx: seed.dx, dz: seed.dz } : null,
+        centerWalkable: Boolean(centerCell && centerCell.walkable)
+      },
       geometry: {
-        wallKnown,
-        wallKnownRaw,
-        nearestWall,
+        bbox: {
+          minDx: Number.isFinite(minDx) ? minDx : null,
+          maxDx: Number.isFinite(maxDx) ? maxDx : null,
+          minDz: Number.isFinite(minDz) ? minDz : null,
+          maxDz: Number.isFinite(maxDz) ? maxDz : null,
+          width,
+          depth,
+          aspectRatio: Number(aspectRatio.toFixed(3)),
+          rectangularity: Number(rectangularity.toFixed(3))
+        },
+        spanFromBot: {
+          east: Number.isFinite(maxDx) ? maxDx : null,
+          west: Number.isFinite(minDx) ? Math.abs(minDx) : null,
+          south: Number.isFinite(maxDz) ? maxDz : null,
+          north: Number.isFinite(minDz) ? Math.abs(minDz) : null
+        },
         squareLike,
-        width,
-        depth,
-        walls
+        openingSides,
+        openSideCount
       },
       metrics: {
-        walkableRatio: Number(walkableRatio.toFixed(3)),
-        roofRatio: Number(roofRatio.toFixed(3)),
-        boundaryBlockedRatio: Number(boundaryBlockedRatio.toFixed(3)),
-        enclosureScore: Number(enclosureScore.toFixed(3))
+        enclosureRatio: Number(enclosureRatio.toFixed(3)),
+        roofCoverage: Number(roofRatio.toFixed(3)),
+        frontierRatio: Number(frontierRatio.toFixed(3)),
+        unknownRatio: Number(unknownRatio.toFixed(3)),
+        doorwayEdgeRatio: Number((boundaryTotal > 0 ? doorwayEdges / boundaryTotal : 0).toFixed(3))
+      },
+      evidence: {
+        enclosure_ratio: Number(enclosureRatio.toFixed(3)),
+        opening_count: openSideCount,
+        rectangularity_score: Number(rectangularity.toFixed(3)),
+        ceiling_coverage: Number(roofRatio.toFixed(3)),
+        unknown_ratio: Number(unknownRatio.toFixed(3))
       },
       anchors: {
         signCount: signs.length,
         signWithTextCount: signs.filter(x => x.text).length,
-        containerCount: containerPos.length
-      }
+        containerCount: containerPos.length,
+        doorwayEdges,
+        boundaryEdges: {
+          blocked: blockedEdges,
+          frontier: frontierEdges
+        }
+      },
+      notes
     }
   } catch {
     return null
@@ -1020,8 +1191,9 @@ function detail (bot, args = {}) {
     if (!profile) return { ok: false, msg: '空间探测失败', data: null }
     const env = profile.environment || {}
     const geo = profile.geometry || {}
+    const bbox = geo.bbox || {}
     const m = profile.metrics || {}
-    const msg = `环境=${env.label || env.kind || '未知'} 置信=${Math.round((env.confidence || 0) * 100)}% 封闭=${Math.round((m.enclosureScore || 0) * 100)}% 顶盖=${Math.round((m.roofRatio || 0) * 100)}% 边界阻挡=${Math.round((m.boundaryBlockedRatio || 0) * 100)}% ${Number.isFinite(geo.width) && Number.isFinite(geo.depth) ? `尺寸≈${geo.width}x${geo.depth}` : ''}`.trim()
+    const msg = `环境=${env.label || env.kind || '未知'} 置信=${Math.round((env.confidence || 0) * 100)}% 封闭=${Math.round((m.enclosureRatio || 0) * 100)}% 顶盖=${Math.round((m.roofCoverage || 0) * 100)}% 未知=${Math.round((m.unknownRatio || 0) * 100)}% ${Number.isFinite(bbox.width) && Number.isFinite(bbox.depth) ? `尺寸≈${bbox.width}x${bbox.depth}` : ''}`.trim()
     return { ok: true, msg, data: profile }
   }
   if (what === 'inventory' || what === 'inv' || what === 'bag') {

@@ -178,7 +178,7 @@ const ACTION_TOOL_DEFINITIONS = [
       properties: {
         what: {
           type: 'string',
-          description: 'Inspection target: players|hostiles|entities|animals|cows|inventory|blocks|containers.'
+          description: 'Inspection target: players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
         },
         radius: { type: 'number', description: 'Search radius around bot.' },
         max: { type: 'number', description: 'Max entities/containers returned.' },
