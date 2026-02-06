@@ -54,6 +54,11 @@ async function ensureBestWeapon (bot) {
 async function ensureShieldEquipped (bot) {
   try {
     const off = bot.inventory?.slots?.[45]
+    if (off && String(off.name || '').toLowerCase() === 'totem_of_undying') {
+      const hp = Number(bot.health)
+      const keepAt = Number(process.env.AUTO_TOTEM_HEALTH_AT || 10)
+      if (Number.isFinite(hp) && hp <= keepAt) return false
+    }
     if (off && String(off.name || '').toLowerCase() === 'shield') return true
     const shield = findItemByName(bot, 'shield')
     if (!shield) return false

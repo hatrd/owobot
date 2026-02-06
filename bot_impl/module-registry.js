@@ -8,6 +8,7 @@ const MODULES = [
   { id: 'log-control', path: './log-control', logger: 'log', kind: 'infrastructure', description: 'Runtime log level control via CLI' },
   { id: 'auto-counter', path: './auto-counter', logger: 'pvp', kind: 'feature', description: 'Counterattack behaviour when hurt' },
   { id: 'auto-gear', path: './auto-gear', logger: 'gear', kind: 'feature', description: 'Equip best armor and weapons' },
+  { id: 'auto-totem', path: './auto-totem', logger: 'totem', kind: 'feature', description: 'Equip totem in off-hand when near death after damage' },
   { id: 'auto-armor-craft', path: './auto-armor-craft', logger: 'autoarmor', kind: 'feature', description: 'Craft iron armor when materials are available' },
   { id: 'auto-fish', path: './auto-fish', logger: 'fish', kind: 'feature', description: 'Fishing automation near water' },
   { id: 'auto-swim', path: './auto-swim', logger: 'swim', kind: 'feature', description: 'Prevent drowning by surfacing when in water' },
