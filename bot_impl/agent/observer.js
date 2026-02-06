@@ -179,25 +179,72 @@ function collectHostiles (bot, range = 24) {
   } catch { return { count: 0, nearest: null } }
 }
 
-  function collectAnimals (bot, range = 16, species = null) {
+function entityText (v) {
+  try {
+    let s = ''
+    if (typeof v === 'string') s = v
+    else if (v && typeof v === 'object') s = toPlainTextSafe(v)
+    else if (v != null) s = String(v)
+    if ((!s || s === '[object Object]') && v && typeof v.toString === 'function') s = String(v.toString())
+    s = stripColorCodes(String(s || '')).trim()
+    if (s === '[object Object]') return ''
+    return s
+  } catch {
+    return ''
+  }
+}
+
+function entityNameProfile (e) {
+  try {
+    const base = entityText(e?.name)
+    const display = entityText(e?.displayName)
+    const username = entityText(e?.username)
+    const candidates = [e?.customName, e?.metadata?.customName, e?.metadata?.CustomName]
+    const meta = e?.metadata
+    if (Array.isArray(meta)) {
+      for (const idx of [2, 3, 4, 5, 6, 7, 8, 9]) candidates.push(meta[idx])
+    } else if (meta && typeof meta === 'object') {
+      for (const key of ['2', '3', '4', '5', '6']) candidates.push(meta[key])
+    }
+    let custom = ''
+    for (const c of candidates) {
+      const t = entityText(c)
+      if (t && t !== 'null' && t !== 'undefined') { custom = t; break }
+    }
+    const title = custom || username || display || base || 'unknown'
+    const searchable = [base, display, username, custom, title, String(e?.type || ''), String(e?.kind || '')]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return { base, display, username, custom, title, searchable }
+  } catch {
+    return { base: '', display: '', username: '', custom: '', title: 'unknown', searchable: '' }
+  }
+}
+
+function collectAnimals (bot, range = 16, species = null) {
   try {
     const me = bot.entity?.position
     if (!me) return { count: 0, nearest: null, list: [] }
     const want = species ? String(species).toLowerCase() : null
-    const matches = (nm) => {
-      const s = String(nm || '').toLowerCase()
+    const matches = (s) => {
+      const text = String(s || '').toLowerCase()
+      if (!text) return false
+      if (want === 'cat' || want === 'cats' || want === '猫') {
+        return text.includes('cat') || text.includes('猫')
+      }
       if (!s) return false
       if (want) {
         if (want === 'cow' || want === 'cows') {
           // English + common Chinese aliases
-          return s.includes('cow') || s.includes('mooshroom') || s.includes('奶牛') || s.includes('蘑菇牛') || s.includes('牛')
+          return text.includes('cow') || text.includes('mooshroom') || text.includes('奶牛') || text.includes('蘑菇牛') || text.includes('牛')
         }
-        return s.includes(want)
+        return text.includes(want)
       }
       // broad passive set (common farm animals)
       const en = ['cow','mooshroom','sheep','pig','chicken','horse','donkey','mule','llama','camel','goat','cat','wolf','fox','rabbit']
       const cn = ['奶牛','蘑菇牛','牛','绵羊','羊','猪','鸡','马','驴','骡','羊驼','骆驼','山羊','猫','狼','狐狸','兔','兔子']
-      return en.some(t => s.includes(t)) || cn.some(t => s.includes(t))
+      return en.some(t => text.includes(t)) || cn.some(t => text.includes(t))
     }
     const list = []
     for (const e of Object.values(bot.entities || {})) {
@@ -206,11 +253,21 @@ function collectHostiles (bot, range = 24) {
         // Exclude players; accept all other types (animal/passive/mob/object variants)
         const et = String(e.type || '').toLowerCase()
         if (et === 'player') continue
-        const raw = e.name || (e.displayName && e.displayName.toString && e.displayName.toString()) || ''
-        const nm = String(raw).replace(/\u00a7./g, '').toLowerCase()
-        if (!matches(nm)) continue
+        const info = entityNameProfile(e)
+        if (!matches(info.searchable)) continue
         const d = e.position.distanceTo(me)
-        if (Number.isFinite(d) && d <= range) list.push({ name: nm, d: Number(d.toFixed(2)) })
+        if (Number.isFinite(d) && d <= range) {
+          list.push({
+            id: e.id,
+            type: e.type,
+            kind: e.kind || null,
+            name: info.title,
+            entityName: info.base || null,
+            displayName: info.display || null,
+            customName: info.custom || null,
+            d: Number(d.toFixed(2))
+          })
+        }
       } catch {}
     }
     if (!list.length) return { count: 0, nearest: null, list: [] }
@@ -655,21 +712,43 @@ function detail (bot, args = {}) {
     return { ok: true, msg: `附近敌对${list.length}个(半径${radius})`, data: list.slice(0, max) }
   }
   if (what === 'entities') {
+    const species = String(args.species || args.entity || '').trim().toLowerCase()
+    const match = String(args.match || '').trim().toLowerCase()
     const list = []
     for (const e of Object.values(bot.entities || {})) {
       try {
         if (!e?.position) continue
         const d = e.position.distanceTo(me)
         if (d > radius) continue
-        list.push({ id: e.id, type: e.type, name: e.name || e.displayName || null, kind: e.kind || null, d: Number(d.toFixed(2)) })
+        const info = entityNameProfile(e)
+        const text = info.searchable
+        if (species && !text.includes(species)) continue
+        if (match && !text.includes(match)) continue
+        list.push({
+          id: e.id,
+          type: e.type,
+          kind: e.kind || null,
+          name: info.title || null,
+          entityName: info.base || null,
+          displayName: info.display || null,
+          customName: info.custom || null,
+          d: Number(d.toFixed(2))
+        })
       } catch {}
     }
     list.sort((a, b) => a.d - b.d)
     return { ok: true, msg: `附近实体${list.length}个(半径${radius})`, data: list.slice(0, max) }
   }
+  if (what === 'nearby_entities') {
+    return detail(bot, { ...args, what: 'entities' })
+  }
   if (what === 'animals' || what === 'passives') {
     const r = collectAnimals(bot, radius, null)
     return { ok: true, msg: `附近动物${r.count}个(半径${radius})`, data: r.list.slice(0, max) }
+  }
+  if (what === 'cats' || what === 'cat') {
+    const r = collectAnimals(bot, radius, 'cat')
+    return { ok: true, msg: `附近猫${r.count}只(半径${radius})`, data: r.list.slice(0, max) }
   }
   if (what === 'inventory' || what === 'inv' || what === 'bag') {
     const inv = collectInventorySummary(bot, 999)
