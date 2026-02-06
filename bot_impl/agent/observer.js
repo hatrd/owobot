@@ -222,6 +222,262 @@ function entityNameProfile (e) {
   }
 }
 
+function isSignBlockName (name) {
+  const s = String(name || '').toLowerCase()
+  if (!s) return false
+  if (s === 'sign' || s === 'wall_sign' || s === 'standing_sign') return true
+  return s.endsWith('_sign') || s.endsWith('_wall_sign') || s.endsWith('_hanging_sign') || s.endsWith('_wall_hanging_sign')
+}
+
+function normalizeSignLines (text) {
+  try {
+    const s = stripColorCodes(String(text || '')).trim()
+    if (!s) return []
+    return s
+      .split('\n')
+      .map(x => stripColorCodes(String(x || '')).trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function extractSignText (block) {
+  const front = []
+  const back = []
+  try {
+    if (typeof block?.getSignText === 'function') {
+      const [frontText, backText] = block.getSignText()
+      front.push(...normalizeSignLines(frontText))
+      back.push(...normalizeSignLines(backText))
+    }
+  } catch {}
+  try {
+    if (!front.length && block?.signText != null) {
+      front.push(...normalizeSignLines(block.signText))
+    }
+  } catch {}
+  try {
+    if (!front.length && block?.blockEntity) {
+      const be = block.blockEntity
+      const direct = [be?.Text1, be?.Text2, be?.Text3, be?.Text4, be?.text1, be?.text2, be?.text3, be?.text4]
+      for (const v of direct) front.push(...normalizeSignLines(v))
+      const fm = be?.front_text?.messages
+      if (Array.isArray(fm)) for (const v of fm) front.push(...normalizeSignLines(v))
+      const bm = be?.back_text?.messages
+      if (Array.isArray(bm)) for (const v of bm) back.push(...normalizeSignLines(v))
+    }
+  } catch {}
+  return {
+    front: Array.from(new Set(front)),
+    back: Array.from(new Set(back))
+  }
+}
+
+function collectNearbySigns (bot, { radius = 20, max = 20 } = {}) {
+  try {
+    const me = bot.entity?.position
+    if (!me) return []
+    const count = Math.min(256, Math.max(max * 4, max))
+    const poses = bot.findBlocks({
+      matching: (b) => b && isSignBlockName(b.name),
+      maxDistance: Math.max(2, radius),
+      count
+    }) || []
+    poses.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+    const out = []
+    for (const p of poses.slice(0, max)) {
+      try {
+        const b = bot.blockAt(p)
+        if (!b || !isSignBlockName(b.name)) continue
+        const { front, back } = extractSignText(b)
+        const all = [...front, ...back]
+        out.push({
+          blockName: String(b.name || ''),
+          x: b.position.x,
+          y: b.position.y,
+          z: b.position.z,
+          d: Number(b.position.distanceTo(me).toFixed(2)),
+          front,
+          back,
+          text: all.length ? all.join(' | ') : ''
+        })
+      } catch {}
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function blockIsPassable (block) {
+  try {
+    if (!block) return true
+    const name = String(block.name || '').toLowerCase()
+    if (!name || name === 'air' || name === 'cave_air' || name === 'void_air') return true
+    if (name.includes('water') || name.includes('lava')) return true
+    const bb = String(block.boundingBox || '').toLowerCase()
+    if (bb === 'empty') return true
+    return false
+  } catch {
+    return true
+  }
+}
+
+function blockIsSolidSupport (block) {
+  try {
+    if (!block) return false
+    if (blockIsPassable(block)) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function collectSpaceProfile (bot, args = {}) {
+  try {
+    const me = bot.entity?.position
+    if (!me) return null
+    const center = me.floored()
+    const radiusRaw = parseInt(args.radius || '8', 10)
+    const r = Math.max(3, Math.min(12, Number.isFinite(radiusRaw) ? radiusRaw : 8))
+
+    const readCell = (x, y, z) => {
+      const p = center.offset(x, y, z)
+      const block = bot.blockAt(p)
+      return { p, block }
+    }
+
+    const stats = {
+      samples: 0,
+      walkable: 0,
+      withRoof: 0,
+      boundary: { total: 0, blocked: 0 }
+    }
+
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        const floor = readCell(dx, -1, dz).block
+        const feet = readCell(dx, 0, dz).block
+        const head = readCell(dx, 1, dz).block
+        const roof = readCell(dx, 2, dz).block
+        const walkable = blockIsSolidSupport(floor) && blockIsPassable(feet) && blockIsPassable(head)
+        stats.samples += 1
+        if (walkable) stats.walkable += 1
+        if (!blockIsPassable(roof)) stats.withRoof += 1
+
+        if (Math.abs(dx) === r || Math.abs(dz) === r) {
+          stats.boundary.total += 1
+          if (!blockIsPassable(feet) || !blockIsPassable(head)) stats.boundary.blocked += 1
+        }
+      }
+    }
+
+    const ray = (dx, dz) => {
+      for (let i = 1; i <= r; i++) {
+        const feet = readCell(dx * i, 0, dz * i).block
+        const head = readCell(dx * i, 1, dz * i).block
+        if (!blockIsPassable(feet) || !blockIsPassable(head)) {
+          return {
+            distance: i,
+            block: String((!blockIsPassable(feet) ? feet?.name : head?.name) || 'unknown')
+          }
+        }
+      }
+      return { distance: null, block: null }
+    }
+
+    const walls = {
+      east: ray(1, 0),
+      west: ray(-1, 0),
+      south: ray(0, 1),
+      north: ray(0, -1)
+    }
+
+    const wallDistances = Object.values(walls).map(w => w.distance).filter(Number.isFinite)
+    const nearestWall = wallDistances.length ? Math.min(...wallDistances) : null
+    const wallKnownRaw = Object.values(walls).every(w => Number.isFinite(w.distance))
+    // If all "walls" are within 1 block, it's usually nearby furniture/utility blocks, not real room boundaries.
+    const wallKnown = wallKnownRaw && Number.isFinite(nearestWall) && nearestWall >= 2
+    const width = wallKnown ? (walls.east.distance + walls.west.distance - 1) : null
+    const depth = wallKnown ? (walls.north.distance + walls.south.distance - 1) : null
+    const squareLike = (Number.isFinite(width) && Number.isFinite(depth))
+      ? (Math.abs(width - depth) <= 1 && width >= 4 && depth >= 4)
+      : false
+
+    const walkableRatio = stats.samples > 0 ? stats.walkable / stats.samples : 0
+    const roofRatio = stats.samples > 0 ? stats.withRoof / stats.samples : 0
+    const boundaryBlockedRatio = stats.boundary.total > 0 ? stats.boundary.blocked / stats.boundary.total : 0
+
+    const enclosureScore = Math.max(0, Math.min(1,
+      (wallKnown ? 0.35 : 0) +
+      (boundaryBlockedRatio * 0.35) +
+      (roofRatio * 0.30)
+    ))
+
+    let kind = 'semi_enclosed'
+    let label = '半开放区域'
+    let confidence = Math.max(0.35, enclosureScore)
+
+    if (enclosureScore >= 0.68 && squareLike) {
+      kind = 'square_room'
+      label = '近似正方形室内空间'
+      confidence = Math.max(confidence, 0.82)
+    } else if (enclosureScore >= 0.62) {
+      kind = 'room'
+      label = '室内空间'
+      confidence = Math.max(confidence, 0.72)
+    } else if (boundaryBlockedRatio < 0.25 && roofRatio < 0.25) {
+      kind = 'open_outdoor'
+      label = '开阔室外区域'
+      confidence = Math.max(confidence, 0.7)
+    } else {
+      const longX = (Number.isFinite(width) && Number.isFinite(depth)) ? (width >= depth * 1.8) : false
+      const longZ = (Number.isFinite(width) && Number.isFinite(depth)) ? (depth >= width * 1.8) : false
+      if ((longX || longZ) && enclosureScore >= 0.45) {
+        kind = 'corridor_like'
+        label = '走廊状空间'
+        confidence = Math.max(confidence, 0.66)
+      }
+    }
+
+    const signs = collectNearbySigns(bot, { radius: r, max: 64 })
+    const containerPos = bot.findBlocks({
+      matching: (b) => b && isContainerNameMatch(b.name, 'any'),
+      maxDistance: Math.max(2, r),
+      count: 64
+    }) || []
+
+    return {
+      center: { x: center.x, y: center.y, z: center.z },
+      probeRadius: r,
+      environment: { kind, label, confidence: Number(confidence.toFixed(2)) },
+      geometry: {
+        wallKnown,
+        wallKnownRaw,
+        nearestWall,
+        squareLike,
+        width,
+        depth,
+        walls
+      },
+      metrics: {
+        walkableRatio: Number(walkableRatio.toFixed(3)),
+        roofRatio: Number(roofRatio.toFixed(3)),
+        boundaryBlockedRatio: Number(boundaryBlockedRatio.toFixed(3)),
+        enclosureScore: Number(enclosureScore.toFixed(3))
+      },
+      anchors: {
+        signCount: signs.length,
+        signWithTextCount: signs.filter(x => x.text).length,
+        containerCount: containerPos.length
+      }
+    }
+  } catch {
+    return null
+  }
+}
+
 function collectAnimals (bot, range = 16, species = null) {
   try {
     const me = bot.entity?.position
@@ -749,6 +1005,24 @@ function detail (bot, args = {}) {
   if (what === 'cats' || what === 'cat') {
     const r = collectAnimals(bot, radius, 'cat')
     return { ok: true, msg: `附近猫${r.count}只(半径${radius})`, data: r.list.slice(0, max) }
+  }
+  if (what === 'signs' || what === 'sign' || what === 'signboard' || what === 'boards') {
+    const list = collectNearbySigns(bot, { radius, max })
+    const withText = list.filter(x => x.text)
+    return {
+      ok: true,
+      msg: `附近告示牌${list.length}个(半径${radius})，有内容${withText.length}个`,
+      data: list
+    }
+  }
+  if (what === 'space' || what === 'space_snapshot' || what === 'room_probe' || what === 'environment') {
+    const profile = collectSpaceProfile(bot, args)
+    if (!profile) return { ok: false, msg: '空间探测失败', data: null }
+    const env = profile.environment || {}
+    const geo = profile.geometry || {}
+    const m = profile.metrics || {}
+    const msg = `环境=${env.label || env.kind || '未知'} 置信=${Math.round((env.confidence || 0) * 100)}% 封闭=${Math.round((m.enclosureScore || 0) * 100)}% 顶盖=${Math.round((m.roofRatio || 0) * 100)}% 边界阻挡=${Math.round((m.boundaryBlockedRatio || 0) * 100)}% ${Number.isFinite(geo.width) && Number.isFinite(geo.depth) ? `尺寸≈${geo.width}x${geo.depth}` : ''}`.trim()
+    return { ok: true, msg, data: profile }
   }
   if (what === 'inventory' || what === 'inv' || what === 'bag') {
     const inv = collectInventorySummary(bot, 999)

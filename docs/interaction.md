@@ -22,6 +22,10 @@ Fast entrypoints:
 - `npm run interaction:observe`
 - `npm run interaction:dry`
 
+Related design docs:
+
+- `docs/environment-observation.md` (environment observation algorithm essence + integration roadmap)
+
 ## Human Interactive CLI (stdin)
 
 When `node bot.js` is running, type into its terminal:
