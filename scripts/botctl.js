@@ -6,6 +6,9 @@
 //   node scripts/botctl.js list
 //   node scripts/botctl.js dry <tool> [key=value ...]
 //   node scripts/botctl.js run <tool> [key=value ...]
+//   node scripts/botctl.js observe snapshot [key=value ...]
+//   node scripts/botctl.js observe prompt [key=value ...]
+//   node scripts/botctl.js observe detail [key=value ...]
 // Options:
 //   --sock <path>   override socket path (default: $PWD/.mcbot.sock)
 //   --token <token> optional shared secret (or env MCBOT_CTL_TOKEN)
@@ -84,7 +87,7 @@ async function main () {
   const [cmd, ...rest] = argv.rest
 
   if (!cmd) {
-    process.stderr.write('usage: botctl.js hello|list|dry|run ...\n')
+    process.stderr.write('usage: botctl.js hello|list|dry|run|observe ...\n')
     process.exit(2)
   }
 
@@ -101,6 +104,16 @@ async function main () {
     }
     const args = parseKeyValueArgs(rest.slice(1))
     payload = { id, op: cmd === 'dry' ? 'tool.dry' : 'tool.run', tool, args }
+  } else if (cmd === 'observe') {
+    const mode = String(rest[0] || 'snapshot').toLowerCase()
+    const args = parseKeyValueArgs(rest.slice(1))
+    if (mode === 'snapshot') payload = { id, op: 'observe.snapshot', args }
+    else if (mode === 'prompt') payload = { id, op: 'observe.prompt', args }
+    else if (mode === 'detail') payload = { id, op: 'observe.detail', args }
+    else {
+      process.stderr.write('usage: botctl.js observe snapshot|prompt|detail [key=value ...]\n')
+      process.exit(2)
+    }
   } else {
     process.stderr.write(`unknown cmd: ${cmd}\n`)
     process.exit(2)

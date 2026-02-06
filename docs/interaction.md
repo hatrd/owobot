@@ -1,4 +1,4 @@
-# Bot Interaction Guide (.tool + Control Plane)
+# Interaction Contract (First-Class) (.tool + Control Plane)
 
 This repo supports two ways to drive/verify behavior:
 
@@ -6,6 +6,21 @@ This repo supports two ways to drive/verify behavior:
 2) Scriptable control plane (Unix socket, NDJSON): `node scripts/botctl.js ...`
 
 The goal is to make changes verifiable without guessing what the bot is doing.
+
+## First-Class Verification Rule
+
+`docs/interaction.md` is the project-level interaction contract.
+
+- Any behavior change that can affect runtime interaction must be verified against this contract.
+- The default verification path is **dry interaction first**, then optional real run.
+- Prefer scriptable control-plane verification (`scripts/botctl.js`, `scripts/interaction-dry-run.js`) over manual ad-hoc checks.
+
+Fast entrypoints:
+
+- `npm run interaction:hello`
+- `npm run interaction:list`
+- `npm run interaction:observe`
+- `npm run interaction:dry`
 
 ## Human Interactive CLI (stdin)
 
@@ -69,6 +84,9 @@ node scripts/botctl.js hello
 node scripts/botctl.js list
 node scripts/botctl.js dry pickup radius=20
 node scripts/botctl.js run say text="hello from UDS"
+node scripts/botctl.js observe snapshot
+node scripts/botctl.js observe prompt
+node scripts/botctl.js observe detail what=inventory radius=12
 ```
 
 Options:
@@ -95,6 +113,48 @@ Supported ops (MVP):
 - `tool.list`
 - `tool.dry` with `{ tool, args }`
 - `tool.run` with `{ tool, args }`
+- `observe.snapshot` with `{ args }`
+- `observe.prompt` with `{ args }`
+- `observe.detail` with `{ args }`
+
+## Observer Ops (Control Plane)
+
+Observer endpoints are read-only by design and are intended for low-cost verification.
+
+- `observe.snapshot`: returns structured runtime snapshot (position, vitals, nearby, inventory summary, current task).
+- `observe.prompt`: returns `{ prompt, snapshot }` using the same prompt shape consumed by AI context assembly.
+- `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cows`, with `radius`, `max`).
+
+Examples:
+
+```bash
+node scripts/botctl.js observe snapshot invTop=8 nearPlayerRange=16
+node scripts/botctl.js observe prompt hostileRange=24
+node scripts/botctl.js observe detail what=players radius=24 max=12
+```
+
+## Dry Interaction Observer
+
+Use one command to verify the full interaction chain after each change:
+
+```bash
+npm run interaction:dry
+```
+
+It verifies, in order:
+
+1) `hello` (control plane reachable)
+2) `tool.list` (allowlist coherence)
+3) `observe.snapshot` (observer structured state)
+4) `observe.prompt` (prompt rendering)
+5) `observe.detail` (focused read path)
+6) `tool.dry` (dry-run execution path)
+
+By default, it dry-runs `pickup` with `radius=12`. Override if needed:
+
+```bash
+node scripts/interaction-dry-run.js --tool pickup --radius 20 --detail inventory
+```
 
 ## Security Model
 

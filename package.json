@@ -9,6 +9,10 @@
     "test": "node --test",
     "bot:reload": "node scripts/reload-gate.js",
     "bot:restart": "node scripts/restart-bot.js",
+    "interaction:hello": "node scripts/botctl.js hello",
+    "interaction:list": "node scripts/botctl.js list",
+    "interaction:observe": "node scripts/botctl.js observe snapshot",
+    "interaction:dry": "node scripts/interaction-dry-run.js",
     "inspect:context": "node scripts/inspect-injected-context.js",
     "wt": "bash scripts/wt"
   },

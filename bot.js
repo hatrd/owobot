@@ -285,6 +285,30 @@ async function handleCtlRequest (req) {
 
   if (!bot) return { id, ok: false, error: 'bot not ready' }
 
+  if (op === 'observe.snapshot' || op === 'observe.prompt' || op === 'observe.detail') {
+    // Require inside handler so hot reload cache clears stay consistent.
+    // eslint-disable-next-line import/no-dynamic-require
+    const observer = require(path.join(pluginRoot, 'agent', 'observer'))
+    const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
+
+    if (op === 'observe.snapshot') {
+      return { id, ok: true, result: observer.snapshot(bot, args) }
+    }
+
+    if (op === 'observe.prompt') {
+      const snap = observer.snapshot(bot, args)
+      const prompt = typeof observer.toPrompt === 'function' ? observer.toPrompt(snap) : ''
+      return { id, ok: true, result: { prompt, snapshot: snap } }
+    }
+
+    if (op === 'observe.detail') {
+      const r = typeof observer.detail === 'function'
+        ? observer.detail(bot, args)
+        : { ok: false, msg: 'observe.detail unsupported' }
+      return { id, ok: true, result: r }
+    }
+  }
+
   if (op === 'tool.list' || op === 'tool.dry' || op === 'tool.run') {
     // Require inside handler so hot reload cache clears stay consistent.
     // eslint-disable-next-line import/no-dynamic-require
