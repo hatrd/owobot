@@ -739,7 +739,7 @@ function createChatExecutor ({
         }
       }
     } catch {}
-    if (intent && intent.kind === 'info' && !['observe_detail','say'].includes(toolName)) {
+    if (intent && intent.kind === 'info' && !['observe_detail', 'observe_players', 'say'].includes(toolName)) {
       return H.trimReply('我这就看看…', replyLimit)
     }
     if (toolName === 'follow_player') {

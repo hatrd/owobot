@@ -171,6 +171,42 @@ const ACTION_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'observe_detail',
+    description: 'Read-only world inspection. Use this for information requests before taking action.',
+    parameters: {
+      type: 'object',
+      properties: {
+        what: {
+          type: 'string',
+          description: 'Inspection target: players|hostiles|entities|animals|cows|inventory|blocks|containers.'
+        },
+        radius: { type: 'number', description: 'Search radius around bot.' },
+        max: { type: 'number', description: 'Max entities/containers returned.' },
+        containerType: {
+          type: 'string',
+          description: 'When what=containers: any|chest|barrel|ender_chest|shulker_box (Chinese aliases also accepted).'
+        },
+        itemMax: { type: 'number', description: 'When what=containers: max item kinds returned for each container.' },
+        full: { type: 'boolean', description: 'When what=containers: include all aggregated items via allItems.' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
+    name: 'observe_players',
+    description: 'Read-only nearby player inspection from mineflayer runtime state (no external API).',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Single player name filter.' },
+        names: { type: 'array', items: { type: 'string' }, description: 'Multiple player names.' },
+        radius: { type: 'number', description: 'Nearby scan radius from bot.' },
+        max: { type: 'number', description: 'Max rows returned.' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
     name: 'pickup',
     description: 'Collect nearby dropped items.',
     parameters: {
