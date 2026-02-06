@@ -303,7 +303,7 @@ async function handleCtlRequest (req) {
 
     if (op === 'observe.detail') {
       const r = typeof observer.detail === 'function'
-        ? observer.detail(bot, args)
+        ? await Promise.resolve(observer.detail(bot, args))
         : { ok: false, msg: 'observe.detail unsupported' }
       return { id, ok: true, result: r }
     }

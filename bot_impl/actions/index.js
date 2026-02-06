@@ -110,7 +110,8 @@ function install (bot, options = {}) {
 
       // Read-only dry-run: allow a small set of safe, non-side-effect tools to probe runtime state.
       // This is primarily for data-fetch tools where "validate_only" is not useful.
-      if (name === 'read_book') {
+      const readOnlyDryTools = new Set(['read_book', 'observe_detail', 'observe_players'])
+      if (readOnlyDryTools.has(name)) {
         try {
           const r = await Promise.resolve(fn(safeArgs))
           if (r && typeof r === 'object') {

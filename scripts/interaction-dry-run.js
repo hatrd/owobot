@@ -96,7 +96,7 @@ async function main () {
   const token = argv.flags.token != null ? String(argv.flags.token) : (process.env.MCBOT_CTL_TOKEN != null ? String(process.env.MCBOT_CTL_TOKEN) : '')
   const dryTool = String(argv.flags.tool || 'pickup')
   const radius = parseNum(argv.flags.radius, 12)
-  const detailWhat = String(argv.flags.detail || 'inventory')
+  const detailWhat = String(argv.flags.detail || 'containers')
 
   const checks = []
 
@@ -182,6 +182,22 @@ async function main () {
     }
   })
 
+  const dryObserveDetail = await call(sockPath, token, 'tool.dry', {
+    tool: 'observe_detail',
+    args: { what: detailWhat, radius, max: 24 }
+  })
+  ensureCtlOk('tool.dry observe_detail', dryObserveDetail.res)
+  checks.push({
+    check: 'tool.dry.observe_detail',
+    ok: true,
+    durationMs: dryObserveDetail.durationMs,
+    result: {
+      dryOk: Boolean(dryObserveDetail.res?.result?.ok),
+      capability: dryObserveDetail.res?.result?.capability?.level || null,
+      msg: dryObserveDetail.res?.result?.msg || ''
+    }
+  })
+
   const summary = {
     ok: true,
     generatedAt: new Date().toISOString(),
@@ -196,4 +212,3 @@ main().catch((err) => {
   process.stderr.write(`interaction dry-run failed: ${String(err?.message || err)}\n`)
   process.exit(1)
 })
-

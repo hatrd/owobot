@@ -123,7 +123,20 @@ Observer endpoints are read-only by design and are intended for low-cost verific
 
 - `observe.snapshot`: returns structured runtime snapshot (position, vitals, nearby, inventory summary, current task).
 - `observe.prompt`: returns `{ prompt, snapshot }` using the same prompt shape consumed by AI context assembly.
-- `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cows`, with `radius`, `max`).
+- `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cows|containers`, with `radius`, `max`).
+
+Container inspection (`what=containers`) supports all nearby container categories:
+
+- `chest` / `trapped_chest`（普通箱子）
+- `barrel`（木桶）
+- `ender_chest`（末影箱）
+- `*_shulker_box`（潜影箱）
+
+Optional args for containers:
+
+- `containerType=any|chest|barrel|ender_chest|shulker_box`
+- `itemMax=<N>` per-container max item kinds returned
+- `full=true` include full aggregated item list (`allItems`)
 
 Examples:
 
@@ -131,6 +144,8 @@ Examples:
 node scripts/botctl.js observe snapshot invTop=8 nearPlayerRange=16
 node scripts/botctl.js observe prompt hostileRange=24
 node scripts/botctl.js observe detail what=players radius=24 max=12
+node scripts/botctl.js observe detail what=containers radius=20 max=8
+node scripts/botctl.js observe detail what=containers containerType=barrel radius=20 max=8
 ```
 
 ## Dry Interaction Observer
@@ -147,13 +162,17 @@ It verifies, in order:
 2) `tool.list` (allowlist coherence)
 3) `observe.snapshot` (observer structured state)
 4) `observe.prompt` (prompt rendering)
-5) `observe.detail` (focused read path)
+5) `observe.detail` (focused read path; default `containers`)
 6) `tool.dry` (dry-run execution path)
+7) `tool.dry observe_detail` (read-only dry output, includes nearby container contents)
 
 By default, it dry-runs `pickup` with `radius=12`. Override if needed:
 
 ```bash
-node scripts/interaction-dry-run.js --tool pickup --radius 20 --detail inventory
+node scripts/interaction-dry-run.js --tool pickup --radius 20 --detail containers
+
+# direct dry-read of nearby container contents via action dry path
+node scripts/botctl.js dry observe_detail what=containers radius=20 max=8
 ```
 
 ## Security Model

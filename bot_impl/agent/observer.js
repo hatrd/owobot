@@ -375,12 +375,256 @@ function toPrompt (snap) {
   } catch { return '' }
 }
 
+function normalizeContainerType (raw) {
+  const s = String(raw ?? '').trim().toLowerCase()
+  if (!s) return 'any'
+  if (['any', 'auto', 'default', 'all', '任意', '随便'].includes(s)) return 'any'
+  if (['chest', 'box', '箱子', '箱'].includes(s)) return 'chest'
+  if (['barrel', '木桶', '桶'].includes(s)) return 'barrel'
+  if (['ender_chest', 'enderchest', 'ender-chest', 'ender chest', 'ender', '末影箱', '末影'].includes(s)) return 'ender_chest'
+  if (['shulker_box', 'shulkerbox', 'shulker-box', 'shulker box', 'shulker', '潜影箱', '潜影盒', '潜影'].includes(s)) return 'shulker_box'
+  return 'any'
+}
+
+function containerGroupFromName (name) {
+  const s = String(name || '').toLowerCase()
+  if (s === 'chest' || s === 'trapped_chest') return 'chest'
+  if (s === 'barrel') return 'barrel'
+  if (s === 'ender_chest') return 'ender_chest'
+  if (s === 'shulker_box' || s.endsWith('_shulker_box')) return 'shulker_box'
+  return 'other'
+}
+
+function containerTypeLabel (type) {
+  if (type === 'chest') return '箱子'
+  if (type === 'barrel') return '木桶'
+  if (type === 'ender_chest') return '末影箱'
+  if (type === 'shulker_box') return '潜影箱'
+  return '容器'
+}
+
+function isContainerNameMatch (name, containerType = 'any') {
+  const s = String(name || '').toLowerCase()
+  if (containerType === 'chest') return (s === 'chest' || s === 'trapped_chest')
+  if (containerType === 'barrel') return s === 'barrel'
+  if (containerType === 'ender_chest') return s === 'ender_chest'
+  if (containerType === 'shulker_box') return (s === 'shulker_box' || s.endsWith('_shulker_box'))
+  return (s === 'chest' || s === 'trapped_chest' || s === 'barrel' || s === 'ender_chest' || s === 'shulker_box' || s.endsWith('_shulker_box'))
+}
+
+function containerItems (container) {
+  try {
+    if (typeof container?.containerItems === 'function') {
+      const items = container.containerItems()
+      if (Array.isArray(items)) return items.filter(it => it && Number(it.count) > 0)
+    }
+  } catch {}
+  const out = []
+  try {
+    const invStart = Number(container?.inventoryStart)
+    const limit = Number.isFinite(invStart) ? Math.max(0, invStart) : 0
+    const slots = Array.isArray(container?.slots) ? container.slots : []
+    for (let i = 0; i < limit; i++) {
+      const it = slots[i]
+      if (it && Number(it.count) > 0) out.push(it)
+    }
+  } catch {}
+  return out
+}
+
+function summarizeItems (bot, items, maxKinds = 24) {
+  const byKey = new Map()
+  for (const it of (Array.isArray(items) ? items : [])) {
+    try {
+      if (!it || Number(it.count) <= 0) continue
+      const name = String(it.name || it.type || 'unknown')
+      const label = itemCustomLabel(bot, it)
+      const key = `${name}\u0000${label || ''}`
+      const prev = byKey.get(key) || { name, label: label || null, count: 0 }
+      prev.count += Number(it.count) || 0
+      byKey.set(key, prev)
+    } catch {}
+  }
+  const all = Array.from(byKey.values()).sort((a, b) => (b.count || 0) - (a.count || 0))
+  return {
+    total: all.reduce((sum, it) => sum + (it.count || 0), 0),
+    kinds: all.length,
+    items: all.slice(0, Math.max(1, maxKinds)),
+    all
+  }
+}
+
+async function openContainerReadOnly (bot, block) {
+  if (!block) return { container: null, error: 'missing_block', method: null }
+
+  async function wait (ms) {
+    return await new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  async function withTimeout (label, fn, timeoutMs = 3500) {
+    let timer = null
+    try {
+      return await Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`timeout:${label}:${timeoutMs}ms`)), timeoutMs)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  const errors = []
+  const blockName = String(block.name || '').toLowerCase()
+  if (blockName === 'ender_chest' && typeof bot.openEnderChest !== 'function') {
+    errors.push('openEnderChest API unavailable on this bot version')
+  }
+  const openers = []
+  if (blockName === 'ender_chest' && typeof bot.openEnderChest === 'function') {
+    openers.push({ method: 'openEnderChest(block)', fn: async () => await bot.openEnderChest(block) })
+    openers.push({ method: 'openEnderChest()', fn: async () => await bot.openEnderChest() })
+  }
+  if (typeof bot.openContainer === 'function') {
+    openers.push({ method: 'openContainer(block)', fn: async () => await bot.openContainer(block) })
+  }
+  if (typeof bot.openChest === 'function') {
+    openers.push({ method: 'openChest(block)', fn: async () => await bot.openChest(block) })
+  }
+  if (typeof bot.activateBlock === 'function') {
+    openers.push({
+      method: 'activateBlock+currentWindow',
+      fn: async () => {
+        await bot.activateBlock(block)
+        await wait(260)
+        const win = bot.currentWindow
+        if (!win || !Array.isArray(win.slots)) throw new Error('currentWindow_unavailable')
+        if (typeof win.close !== 'function') {
+          win.close = () => {
+            try {
+              if (typeof bot.closeWindow === 'function') bot.closeWindow(win)
+            } catch {}
+          }
+        }
+        return win
+      }
+    })
+  }
+  if (!openers.length) return { container: null, error: 'no_open_api', method: null }
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (bot.currentWindow && typeof bot.closeWindow === 'function') {
+        try { bot.closeWindow(bot.currentWindow) } catch {}
+        await wait(60)
+      }
+      try { await bot.lookAt?.(block.position.offset(0.5, 0.5, 0.5), true) } catch {}
+      if (attempt >= 2 && typeof bot.activateBlock === 'function') {
+        try { await bot.activateBlock(block) } catch (e) { errors.push(`activateBlock:${String(e?.message || e)}`) }
+        await wait(140)
+      }
+
+      for (const opener of openers) {
+        try {
+          const container = await withTimeout(opener.method, opener.fn, 3500)
+          if (container) return { container, error: null, method: opener.method }
+          errors.push(`${opener.method}:empty_result`)
+        } catch (e) {
+          errors.push(`${opener.method}:${String(e?.message || e)}`)
+        }
+      }
+    } catch (e) {
+      errors.push(`attempt_${attempt}:${String(e?.message || e)}`)
+    }
+    await wait(120)
+  }
+
+  return {
+    container: null,
+    method: null,
+    error: errors.length ? errors[errors.length - 1] : 'open_failed',
+    errors
+  }
+}
+
+async function detailContainers (bot, args = {}) {
+  const me = bot.entity?.position
+  if (!me) return { ok: false, msg: '未就绪', data: null }
+  const radius = Math.max(1, parseInt(args.radius || '16', 10))
+  const max = Math.max(1, parseInt(args.max || '12', 10))
+  const itemMax = Math.max(1, parseInt(args.itemMax || args.items || '24', 10))
+  const full = String(args.full || '').toLowerCase() === 'true'
+  const containerType = normalizeContainerType(args.containerType ?? args.container ?? args.type)
+  const count = Math.max(max * 4, max)
+  const positions = bot.findBlocks({
+    matching: (b) => b && isContainerNameMatch(b.name, containerType),
+    maxDistance: Math.max(2, radius),
+    count: Math.min(128, count)
+  }) || []
+
+  if (!positions.length) return { ok: true, msg: `附近没有${containerTypeLabel(containerType)}(半径${radius})`, data: [] }
+
+  positions.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+  const rows = []
+
+  for (const pos of positions.slice(0, max)) {
+    const block = bot.blockAt(pos)
+    if (!block || !isContainerNameMatch(block.name, containerType)) continue
+    const row = {
+      containerType: containerGroupFromName(block.name),
+      blockName: String(block.name || ''),
+      x: block.position.x,
+      y: block.position.y,
+      z: block.position.z,
+      d: Number(block.position.distanceTo(me).toFixed(2)),
+      ok: false,
+      kinds: 0,
+      total: 0,
+      items: []
+    }
+    let container = null
+    let openMeta = null
+    try {
+      openMeta = await openContainerReadOnly(bot, block)
+      container = openMeta?.container || null
+      if (!container) {
+        row.error = openMeta?.error || 'open_failed'
+        if (Array.isArray(openMeta?.errors) && openMeta.errors.length) row.openErrors = openMeta.errors
+        rows.push(row)
+        continue
+      }
+      row.openMethod = openMeta?.method || null
+      const items = containerItems(container)
+      const summarized = summarizeItems(bot, items, itemMax)
+      row.ok = true
+      row.kinds = summarized.kinds
+      row.total = summarized.total
+      row.items = summarized.items
+      if (full) row.allItems = summarized.all
+      rows.push(row)
+    } catch (e) {
+      row.error = String(e?.message || e)
+      rows.push(row)
+    } finally {
+      try { container?.close?.() } catch {}
+    }
+  }
+
+  const okCount = rows.filter(r => r.ok).length
+  const failCount = rows.length - okCount
+  const msg = `附近${containerTypeLabel(containerType)}${rows.length}个(半径${radius})，读取成功${okCount}个${failCount > 0 ? `，失败${failCount}个` : ''}`
+  return { ok: true, msg, data: rows }
+}
+
 function detail (bot, args = {}) {
   const what = String(args.what || 'entities').toLowerCase()
   const radius = Math.max(1, parseInt(args.radius || '16', 10))
   const max = Math.max(1, parseInt(args.max || '24', 10))
   const me = bot.entity?.position
   if (!me) return { ok: false, msg: '未就绪', data: null }
+  if (what === 'containers' || what === 'container' || what === 'chests' || what === 'boxes' || what === 'container_contents' || what === 'chest_contents') {
+    return detailContainers(bot, args)
+  }
   if (what === 'players') {
     const list = []
     for (const [name, rec] of Object.entries(bot.players || {})) {
