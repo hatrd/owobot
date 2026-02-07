@@ -29,6 +29,8 @@
     └── LLM 调用: classifyIntent → callAI → 工具执行或文本回复
 ```
 
+补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。
+
 ## 3. 会话激活与跟进
 
 - `activateSession(username)`: 触发后保持 60s 活跃窗口
@@ -107,6 +109,12 @@
 - `registerCleanup` 清理所有监听器和定时器
 - `state.aiContextBus/state.aiRecent/...` 都在 shared state 内，跨热重载保持；进程重启会丢失 `state.aiContextBus/state.aiRecent`
 - AbortController 防止异步泄漏
+
+## 8. 进程守护（推荐）
+
+- 推荐通过 `npm run bot:watch` 启动（`scripts/bot-watch.js`）。
+- watcher 负责拉起 `bot.js`（继承 stdin/stdout）并在进程异常退出时自动重启。
+- 当 `bot.js` 运行在 watcher 下时，控制面 `proc.restart` 只会优雅退出当前进程，由 watcher 完成重拉起，避免“自重启脱离原终端”。
 
 ---
 

@@ -313,6 +313,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     buildGameContext,
     contextBus
   })
+  try { bot._aiChatExecutor = executor } catch {}
 
   memory.setMessenger(pulse.sendDirectReply)
 
@@ -752,6 +753,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     introspection.stop()
     mind.stop()
     executor.abortActive()
+    try {
+      if (bot && bot._aiChatExecutor === executor) delete bot._aiChatExecutor
+    } catch {}
   })
 }
 

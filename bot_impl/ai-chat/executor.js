@@ -30,7 +30,7 @@ function createChatExecutor ({
   buildGameContext,
   contextBus = null
 }) {
-  const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false, lastUser: null }
+  const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false, lastUser: null, pendingInterruptSeq: 0 }
   const actions = actionsMod.install(bot, { log })
 
   const estTokensFromText = H.estTokensFromText
@@ -60,6 +60,13 @@ function createChatExecutor ({
     return Math.max(8000, timeoutMs + 2000)
   }
 
+  function requestPendingInterrupt (reason = 'pending_interrupt') {
+    ctrl.pendingInterruptSeq = Number(ctrl.pendingInterruptSeq || 0) + 1
+    if (ctrl.abort && typeof ctrl.abort.abort === 'function') {
+      try { ctrl.abort.abort(reason) } catch {}
+    }
+  }
+
   function queuePending (username, content, raw, source) {
     const text = String(content || '').trim()
     if (!text || !username) return
@@ -80,6 +87,7 @@ function createChatExecutor ({
           ctrl.pending.push(existing)
         }
       } catch {}
+      if (ctrl.busy) requestPendingInterrupt('pending_interrupt')
       return
     }
     ctrl.pending.push({
@@ -90,6 +98,7 @@ function createChatExecutor ({
       firstAt: nowTs,
       lastAt: nowTs
     })
+    if (ctrl.busy) requestPendingInterrupt('pending_interrupt')
   }
 
   function takePendingBatch () {
@@ -123,6 +132,20 @@ function createChatExecutor ({
       '如果某个玩家在消息里明确要求“记住/记一下/记下来…”，请调用 write_memory 工具保存，不要只口头答应。'
     ].join(''))
     return lines.join('\n')
+  }
+
+  function buildPendingInterruptNote (batch) {
+    try {
+      const body = buildPendingBatchText(batch)
+      if (!body) return ''
+      return [
+        '【实时插入：收到新的玩家消息】',
+        body,
+        '请优先基于最新消息调整后续动作；如原计划不再适用，请立即停止旧计划并给出新回复。'
+      ].join('\n')
+    } catch {
+      return ''
+    }
   }
 
   async function processPendingBatch (batch) {
@@ -491,8 +514,21 @@ function createChatExecutor ({
     })()
     const metaCtx = buildMetaContext()
     const inlineUserContent = options?.inlineUserContent === true
+    const withTools = options?.withTools !== false
+    const maxToolCalls = (() => {
+      const raw = Number(options?.maxToolCalls ?? state.ai?.maxToolCallsPerTurn ?? state.ai?.maxToolCalls ?? 6)
+      if (!Number.isFinite(raw)) return 6
+      return Math.max(1, Math.min(16, Math.floor(raw)))
+    })()
+    const dryRun = options?.dryRun === true
+    const dryEvents = Array.isArray(options?.dryEvents) ? options.dryEvents : []
+    const finish = (replyText) => {
+      const out = { reply: replyText, memoryRefs }
+      if (dryRun) out.dryEvents = dryEvents.slice()
+      return out
+    }
     const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
-    const messages = [
+    const baseMessages = [
       { role: 'system', content: systemPrompt() },
       metaCtx ? { role: 'system', content: metaCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
@@ -511,78 +547,149 @@ function createChatExecutor ({
         log.info('memoryCtx ->', memoryCtx)
       } catch {}
     }
-    const estIn = estTokensFromText(messages.map(m => m.content).join(' '))
-    const afford = canAfford(estIn)
-    if (state.ai.trace && log?.info) log.info('precheck inTok~=', estIn, 'projCost~=', (afford.proj || 0).toFixed(4), 'rem=', afford.rem)
-    if (!afford.ok) {
-      const msg = state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : ''
-      throw new Error(msg || 'budget_exceeded')
-    }
     const maxOut = Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 1024))
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
-    const body = useResponses
-      ? {
-          model: model || defaults.DEFAULT_MODEL,
-          input: messages,
-          max_output_tokens: maxOut,
-          tools: TOOL_FUNCTIONS,
-          ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
-        }
-      : {
-          model: model || defaults.DEFAULT_MODEL,
-          messages,
-          temperature: 0.2,
-          max_tokens: maxOut,
-          stream: false,
-          tools: TOOL_FUNCTIONS
-        }
-    const ac = new AbortController()
-    ctrl.abort = ac
-    const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
-      ? state.ai.timeoutMs
-      : defaults.DEFAULT_TIMEOUT_MS
-    const timeout = setTimeout(() => ac.abort('timeout'), timeoutMs)
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-        body: JSON.stringify(body),
-        signal: ac.signal
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => String(res.status))
-        throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+
+    async function requestModel (requestMessages, allowTools) {
+      const estIn = estTokensFromText(requestMessages.map(m => m.content).join(' '))
+      const afford = canAfford(estIn)
+      if (state.ai.trace && log?.info) log.info('precheck inTok~=', estIn, 'projCost~=', (afford.proj || 0).toFixed(4), 'rem=', afford.rem)
+      if (!afford.ok) {
+        const msg = state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : ''
+        throw new Error(msg || 'budget_exceeded')
       }
-      const data = await res.json()
-      const reply = typeof H.extractAssistantTextFromApiResponse === 'function'
-        ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false })
-        : H.extractAssistantText(data?.choices?.[0]?.message || {}, { allowReasoning: false })
-      const usage = typeof H.extractUsageFromApiResponse === 'function' ? H.extractUsageFromApiResponse(data) : { inTok: null, outTok: null }
-      const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estIn
-      const outTok = Number.isFinite(usage.outTok) ? usage.outTok : estTokensFromText(reply)
-      applyUsage(inTok, outTok)
-      if (state.ai.trace && log?.info) {
-        const delta = (inTok / 1000) * (state.ai.priceInPerKT || 0) + (outTok / 1000) * (state.ai.priceOutPerKT || 0)
-        log.info('usage inTok=', inTok, 'outTok=', outTok, 'cost+=', delta.toFixed(4))
-      }
-      const toolCalls = typeof H.extractToolCallsFromApiResponse === 'function' ? H.extractToolCallsFromApiResponse(data) : []
-      if (toolCalls.length) {
-        let speech = reply ? H.trimReply(reply, replyLimit) : ''
-        let finalText = ''
-        for (const call of toolCalls) {
-          const payload = normalizeToolPayload(call)
-          if (!payload || !payload.tool) continue
-          const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen, memoryRefs })
-          if (handled) finalText = handled
-          speech = ''
+
+      const body = useResponses
+        ? {
+            model: model || defaults.DEFAULT_MODEL,
+            input: requestMessages,
+            max_output_tokens: maxOut,
+            ...(allowTools ? { tools: TOOL_FUNCTIONS } : null),
+            ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
+          }
+        : {
+            model: model || defaults.DEFAULT_MODEL,
+            messages: requestMessages,
+            temperature: 0.2,
+            max_tokens: maxOut,
+            stream: false,
+            ...(allowTools ? { tools: TOOL_FUNCTIONS } : null)
+          }
+
+      const ac = new AbortController()
+      ctrl.abort = ac
+      const timeoutMs = Number.isFinite(state.ai?.timeoutMs) && state.ai.timeoutMs > 0
+        ? state.ai.timeoutMs
+        : defaults.DEFAULT_TIMEOUT_MS
+      const timeout = setTimeout(() => ac.abort('timeout'), timeoutMs)
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify(body),
+          signal: ac.signal
+        })
+        if (!res.ok) {
+          const text = await res.text().catch(() => String(res.status))
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
         }
-        return { reply: finalText, memoryRefs }
+        const data = await res.json()
+        const reply = typeof H.extractAssistantTextFromApiResponse === 'function'
+          ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false })
+          : H.extractAssistantText(data?.choices?.[0]?.message || {}, { allowReasoning: false })
+        const usage = typeof H.extractUsageFromApiResponse === 'function' ? H.extractUsageFromApiResponse(data) : { inTok: null, outTok: null }
+        const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estIn
+        const outTok = Number.isFinite(usage.outTok) ? usage.outTok : estTokensFromText(reply)
+        applyUsage(inTok, outTok)
+        if (state.ai.trace && log?.info) {
+          const delta = (inTok / 1000) * (state.ai.priceInPerKT || 0) + (outTok / 1000) * (state.ai.priceOutPerKT || 0)
+          log.info('usage inTok=', inTok, 'outTok=', outTok, 'cost+=', delta.toFixed(4))
+        }
+        const toolCalls = allowTools && typeof H.extractToolCallsFromApiResponse === 'function'
+          ? H.extractToolCallsFromApiResponse(data)
+          : []
+        return { reply: H.trimReply(reply, replyLimit), toolCalls, interrupted: false }
+      } catch (err) {
+        const abortReason = String(ac.signal?.reason || '')
+        if (ac.signal?.aborted && abortReason === 'pending_interrupt') {
+          if (state.ai.trace && log?.info) log.info('ai request interrupted by new pending input')
+          return { reply: '', toolCalls: [], interrupted: true }
+        }
+        throw err
+      } finally {
+        clearTimeout(timeout)
+        ctrl.abort = null
       }
-      return { reply: H.trimReply(reply, replyLimit), memoryRefs }
-    } finally {
-      clearTimeout(timeout)
-      ctrl.abort = null
     }
+
+    const loopNotes = []
+    const loopOutputs = []
+    let totalToolCalls = 0
+    let lastReply = ''
+    let fallbackReply = ''
+
+    while (true) {
+      const pendingBatch = takePendingBatch()
+      if (pendingBatch && pendingBatch.length) {
+        const pendingNote = buildPendingInterruptNote(pendingBatch)
+        if (pendingNote) loopNotes.push(pendingNote)
+      }
+
+      const requestMessages = [...baseMessages, ...loopNotes.map(note => ({ role: 'system', content: note }))]
+      const allowTools = withTools && totalToolCalls < maxToolCalls
+      const step = await requestModel(requestMessages, allowTools)
+      if (step && step.interrupted === true) continue
+
+      lastReply = step.reply || ''
+      if (!allowTools || !Array.isArray(step.toolCalls) || !step.toolCalls.length) {
+        const finalReply = String(lastReply || '').trim()
+        if (finalReply) return finish(finalReply)
+        return finish(H.trimReply(fallbackReply || '', replyLimit))
+      }
+
+      const remaining = Math.max(0, maxToolCalls - totalToolCalls)
+      if (remaining <= 0) break
+      const selectedCalls = step.toolCalls.slice(0, remaining)
+      const roundEntries = []
+      let speech = lastReply
+
+      for (const call of selectedCalls) {
+        if (Array.isArray(ctrl.pending) && ctrl.pending.length) break
+
+        const payload = normalizeToolPayload(call)
+        if (!payload || !payload.tool) continue
+        const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun, dryEvents })
+        speech = ''
+        totalToolCalls += 1
+
+        if (handled && handled.halt) {
+          return finish('')
+        }
+        const handledText = shortText(handled?.result || 'ok', 220)
+        const handledFallback = String(handled?.fallbackReply || '').trim()
+        if (handledFallback) fallbackReply = handledFallback
+        roundEntries.push({
+          tool: payload.tool,
+          args: payload.args || {},
+          result: handledText || 'ok'
+        })
+
+        if (Array.isArray(ctrl.pending) && ctrl.pending.length) break
+      }
+
+      if (!roundEntries.length) {
+        if (Array.isArray(ctrl.pending) && ctrl.pending.length) continue
+        return finish(lastReply)
+      }
+
+      loopOutputs.push(...roundEntries)
+      loopNotes.push(buildToolLoopContextNote({ round: loopNotes.length + 1, maxToolCalls, entries: roundEntries }))
+
+      if (totalToolCalls >= maxToolCalls) break
+    }
+
+    const capped = buildToolLoopCapReply(loopOutputs, fallbackReply)
+    return finish(H.trimReply(capped || lastReply || '我先做到这里，后面你再提醒我继续~', replyLimit))
   }
 
   function normalizeToolPayload (toolCall) {
@@ -621,11 +728,173 @@ function createChatExecutor ({
     return LONG_TASK_TOOLS.has(String(toolName || '').toLowerCase())
   }
 
-  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs }) {
+  function shortText (value, limit = 64) {
+    const n = Number.isFinite(Number(limit)) ? Math.max(8, Math.floor(Number(limit))) : 64
+    const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim()
+    if (!s) return ''
+    if (s.length <= n) return s
+    return `${s.slice(0, n - 1)}…`
+  }
+
+  function compactJsonValue (value, depth = 0) {
+    if (value == null) return null
+    if (depth > 2) return null
+    if (typeof value === 'string') return shortText(value, 80)
+    if (typeof value === 'number' || typeof value === 'boolean') return value
+    if (Array.isArray(value)) {
+      const out = []
+      for (const item of value.slice(0, 6)) {
+        const compact = compactJsonValue(item, depth + 1)
+        if (compact == null) continue
+        out.push(compact)
+      }
+      return out
+    }
+    if (typeof value === 'object') {
+      const out = {}
+      const preferred = [
+        'observeLabel', 'name', 'customName', 'displayName', 'entityName', 'type', 'kind', 'named',
+        'x', 'y', 'z', 'd', 'dim',
+        'ok', 'error', 'openErrors', 'count', 'total', 'kinds', 'text', 'items'
+      ]
+      const keys = Object.keys(value)
+      const ordered = []
+      for (const k of preferred) {
+        if (keys.includes(k)) ordered.push(k)
+      }
+      for (const k of keys) {
+        if (!ordered.includes(k)) ordered.push(k)
+      }
+      for (const key of ordered.slice(0, 10)) {
+        const compact = compactJsonValue(value[key], depth + 1)
+        if (compact == null) continue
+        out[key] = compact
+      }
+      return out
+    }
+    return shortText(String(value), 80)
+  }
+
+  function formatObserveEntityBrief (row = {}) {
+    try {
+      const name = shortText(row.observeLabel || row.name || row.customName || row.displayName || row.entityName || row.type || row.kind || 'unknown', 20)
+      const kindParts = []
+      const entityName = shortText(row.entityName || row.type || '', 14)
+      const kind = shortText(row.kind || '', 10)
+      if (entityName && entityName !== name) kindParts.push(entityName)
+      if (kind && kind !== name && kind !== entityName) kindParts.push(`#${kind}`)
+      const d = Number(row.d)
+      const dist = Number.isFinite(d) ? `${d.toFixed(1)}m` : ''
+      const head = kindParts.length ? `${name}[${kindParts.join('/')}]` : name
+      return [head, dist].filter(Boolean).join(' ')
+    } catch {
+      return ''
+    }
+  }
+
+  function buildObserveContextLine ({ toolName, args, res }) {
+    try {
+      const what = shortText(args?.what || (toolName === 'observe_players' ? 'players' : 'unknown'), 16)
+      const msg = shortText(res?.msg || '', 80)
+      const rows = Array.isArray(res?.data) ? res.data : []
+      const top = rows.slice(0, 4).map(formatObserveEntityBrief).filter(Boolean).join(';')
+      const parts = [
+        `tool=${toolName}`,
+        `what=${what}`,
+        `ok=${res?.ok === true ? 1 : 0}`,
+        msg ? `msg=${msg}` : '',
+        top ? `top=${top}` : ''
+      ].filter(Boolean)
+      return parts.join(' ')
+    } catch {
+      return ''
+    }
+  }
+
+  function buildToolLoopContextNote ({ round, maxToolCalls, entries }) {
+    try {
+      const normalized = Array.isArray(entries) ? entries.slice(0, 6) : []
+      const rows = normalized.map(entry => ({
+        tool: shortText(entry?.tool || '', 32),
+        args: compactJsonValue(entry?.args || {}, 0),
+        result: shortText(entry?.result || '', 220)
+      }))
+      let rowsJson = JSON.stringify(rows)
+      if (rowsJson.length > 1800) rowsJson = `${rowsJson.slice(0, 1800)}…`
+      return [
+        `【工具循环回放 ${round}/${Math.max(1, Number(maxToolCalls) || 1)}】`,
+        `本轮执行: ${rows.length} 次工具调用`,
+        `结果: ${rowsJson}`,
+        '如果任务已完成请直接给玩家最终回复；仅在确实需要进一步动作时继续调用工具。'
+      ].join('\n')
+    } catch {
+      return '【工具循环回放】本轮已执行工具，请基于结果继续。'
+    }
+  }
+
+  function buildToolLoopCapReply (loopOutputs, fallbackReply = '') {
+    const fallback = String(fallbackReply || '').trim()
+    if (fallback) return fallback
+    try {
+      const rows = Array.isArray(loopOutputs) ? loopOutputs.slice(-3) : []
+      const summary = rows
+        .map((entry) => `${shortText(entry?.tool || '', 20)}:${shortText(entry?.result || '', 40)}`)
+        .filter(Boolean)
+        .join('；')
+      if (summary) return `我这轮已经连续执行了很多步骤，当前进展是：${summary}。如果要继续，我下一轮接着做~`
+    } catch {}
+    return '我这轮工具调用次数已经到上限啦，你再提醒我一句我就继续~'
+  }
+
+  function buildActionResultSummary ({ toolName, res }) {
+    try {
+      const status = res?.ok === true ? 'ok' : (res?.ok === false ? 'fail' : 'done')
+      const msg = shortText(res?.msg || res?.error || '', 140)
+      const count = Array.isArray(res?.data) ? `data=${res.data.length}` : ''
+      return [shortText(toolName || '', 24), status, msg, count].filter(Boolean).join(' | ')
+    } catch {
+      return `${String(toolName || 'tool')} | done`
+    }
+  }
+
+  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun = false, dryEvents = null }) {
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
-    const toolName = String(payload.tool)
-    const toolLower = toolName.toLowerCase()
-    if (toolLower === 'skip') return ''
+    const result = (resultText, fallbackReply = '') => ({ result: String(resultText || 'ok'), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
+    const halt = (resultText = 'halt') => ({ halt: true, result: String(resultText) })
+    const appendDry = (type, data = {}) => {
+      if (!dryRun || !Array.isArray(dryEvents)) return
+      dryEvents.push({ t: now(), type: String(type || ''), ...data })
+    }
+
+    let toolName = String(payload.tool)
+    let toolLower = toolName.toLowerCase()
+    if (toolLower === 'skip') return result('skip')
+
+    if (dryRun) {
+      appendDry('tool.call', { tool: toolName, args: payload.args || {} })
+      if (toolLower === 'say') {
+        appendDry('tool.say', { args: payload.args || {}, fallbackText: speech || '' })
+        return result('say_dry_preview', speech || '')
+      }
+      if (!isActionToolAllowed(toolName)) return result('tool_unknown', '这个我还不会哟~')
+      let dryRes
+      try {
+        dryRes = actions.dry ? await actions.dry(toolName, payload.args || {}) : { ok: false, msg: 'dry-run unsupported' }
+      } catch (err) {
+        dryRes = { ok: false, msg: 'dry-run failed', error: String(err?.message || err) }
+      }
+      if (state.ai.trace && log?.info) log.info('tool(dry) ->', toolName, payload.args, dryRes)
+      const isObserveTool = toolLower === 'observe_detail' || toolLower === 'observe_players'
+      if (isObserveTool) {
+        try {
+          const line = buildObserveContextLine({ toolName, args: payload.args || {}, res: dryRes })
+          if (line) contextBus?.pushTool?.(line)
+        } catch {}
+      }
+      const summary = buildActionResultSummary({ toolName, res: dryRes })
+      appendDry('tool.result', { tool: toolName, result: compactJsonValue(dryRes, 0), summary })
+      return result(summary)
+    }
     if (toolLower === 'stop_listen') {
       const rawMessage = payload.args?.message ?? payload.args?.text ?? payload.args?.publicMessage
       const fromArgs = typeof rawMessage === 'string' ? H.trimReply(rawMessage, replyLimit) : ''
@@ -638,7 +907,7 @@ function createChatExecutor ({
       try { pulse.resetActiveSessions?.() } catch {}
       const outward = fromArgs || fallback
       if (outward) pulse.sendDirectReply(username, outward, { reason: 'stop_listen', from: 'LLM', toolUsed: 'stop_listen', memoryRefs })
-      return ''
+      return halt('stop_listen')
     }
     if (toolLower === 'feedback') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
@@ -653,7 +922,7 @@ function createChatExecutor ({
         contextBus,
         state
       })
-      if (!saved.ok) return H.trimReply('我刚才没把这句话记住…你再说一遍？', replyLimit)
+      if (!saved.ok) return result('feedback_save_failed', '我刚才没把这句话记住…你再说一遍？')
       try { contextBus?.pushEvent('feedback.saved', String(saved.capturedAt || '')) } catch {}
       const inPlanContext = Boolean(ctrl.plan && ctrl.plan.owner === username && (intent?.topic === 'plan' || ctrl.planDriving))
       const terminatePlan = terminatePlanRaw === true ? true : (terminatePlanRaw === false ? false : inPlanContext)
@@ -664,30 +933,31 @@ function createChatExecutor ({
       if (outward) pulse.sendChatReply(username, outward, { reason: 'feedback_public', memoryRefs })
       if (terminatePlan) clearPlan('feedback')
 
-      return (speech || outward) ? '' : H.trimReply('我记下来了，回头我研究研究。', replyLimit)
+      const fallbackReply = (speech || outward) ? '' : '我记下来了，回头我研究研究。'
+      return result('feedback_saved', fallbackReply)
     }
     if (toolLower === 'plan_mode') {
       const ok = startPlanMode({ username, goal: payload.args?.goal || content, steps: payload.args?.steps || [] })
-      if (!ok) return H.trimReply('需要提供可执行的计划步骤哦~', replyLimit)
-      return ''
+      if (!ok) return result('plan_mode_invalid', '需要提供可执行的计划步骤哦~')
+      return result('plan_mode_started')
     }
     if (toolName === 'write_memory') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const normalized = memory.longTerm.normalizeText(payload.args?.text || '')
-      if (!normalized) return H.trimReply('没听懂要记什么呢~', replyLimit)
+      if (!normalized) return result('write_memory_invalid', '没听懂要记什么呢~')
       const importanceRaw = Number(payload.args?.importance)
       const importance = Number.isFinite(importanceRaw) ? importanceRaw : 1
       const author = payload.args?.author ? String(payload.args.author) : username
       const source = payload.args?.source ? String(payload.args.source) : 'ai'
       const added = memory.longTerm.addEntry({ text: normalized, author, source, importance })
       if (state.ai.trace && log?.info) log.info('tool write_memory ->', { text: normalized, author, source, importance, ok: added.ok })
-      if (!added.ok) return H.trimReply('记忆没有保存下来~', replyLimit)
-      return speech ? '' : H.trimReply('记住啦~', replyLimit)
+      if (!added.ok) return result('write_memory_failed', '记忆没有保存下来~')
+      return result('write_memory_saved', speech ? '' : '记住啦~')
     }
     if (toolName === 'add_commitment') {
       const actionRaw = payload.args?.action
       const action = typeof actionRaw === 'string' ? actionRaw.trim() : ''
-      if (!action) return H.trimReply('没听懂要承诺什么呢~', replyLimit)
+      if (!action) return result('add_commitment_invalid', '没听懂要承诺什么呢~')
       const player = payload.args?.player ? String(payload.args.player) : username
       const deadlineRaw = payload.args?.deadlineMs
       const deadlineMs = Number.isFinite(deadlineRaw) ? deadlineRaw : null
@@ -705,7 +975,7 @@ function createChatExecutor ({
         } catch { return null }
       })()
       if (!storedInPeople && !commitment) {
-        return H.trimReply('现在记不住承诺呢~', replyLimit)
+        return result('add_commitment_failed', '现在记不住承诺呢~')
       }
       if (contextBus) {
         try { contextBus.pushEvent('commitment.add', `${player}:${action}`) } catch {}
@@ -713,7 +983,7 @@ function createChatExecutor ({
       if (state.ai.trace && log?.info) log.info('commitment ->', commitment)
       const reply = speech || H.trimReply(`好，我记下了承诺: ${action}`, replyLimit)
       if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:add', memoryRefs })
-      return ''
+      return result('add_commitment_saved')
     }
     if (toolLower === 'say') {
       const ok = pulse.say(username, payload.args || {}, {
@@ -726,7 +996,7 @@ function createChatExecutor ({
       if (!ok && speech) {
         pulse.sendChatReply(username, speech, { reason: 'tool_say_fallback', from: 'LLM', memoryRefs })
       }
-      return ''
+      return result(ok ? 'say_sent' : 'say_fallback')
     }
     try {
       if (toolName === 'mount_player') {
@@ -740,13 +1010,17 @@ function createChatExecutor ({
       }
     } catch {}
     if (intent && intent.kind === 'info' && !['observe_detail', 'observe_players', 'say'].includes(toolName)) {
-      return H.trimReply('我这就看看…', replyLimit)
+      return result('tool_blocked_info_only', '我这就看看…')
     }
     if (toolName === 'follow_player') {
       const raw = String(content || '')
       if (/(空手|右键|右击|坐我|骑我|骑乘|乘坐|mount)/i.test(raw)) {
         const name = String(payload.args?.name || username || '').trim()
-        if (name) payload = { tool: 'mount_player', args: { name } }
+        if (name) {
+          payload = { tool: 'mount_player', args: { name } }
+          toolName = payload.tool
+          toolLower = toolName.toLowerCase()
+        }
       }
     }
     if (['reset', 'stop', 'stop_all'].includes(toolLower)) {
@@ -762,16 +1036,16 @@ function createChatExecutor ({
         try { contextBus.pushEvent('tool.afk', toolLower) } catch {}
       }
     }
-    if (!isActionToolAllowed(toolName)) return H.trimReply('这个我还不会哟~', replyLimit)
+    if (!isActionToolAllowed(toolName)) return result('tool_unknown', '这个我还不会哟~')
     const busy = Boolean(state?.externalBusy)
     const canOverrideBusy = canToolBypassBusy(toolName, payload)
     if (busy && !canOverrideBusy) {
-      return H.trimReply('我还在执行其他任务，先等我完成或者说“重置”哦~', replyLimit)
+      return result('tool_busy', '我还在执行其他任务，先等我完成或者说“重置”哦~')
     }
     const actionScore = gateActionWithIdentity(toolName)
     if (actionScore && Number.isFinite(actionScore.score) && actionScore.score < 0.45) {
       const scoreStr = actionScore.score.toFixed(2)
-      return H.trimReply(`这个动作我信心不高（评分${scoreStr}），要不要换个？`, replyLimit)
+      return result('tool_low_confidence', `这个动作我信心不高（评分${scoreStr}），要不要换个？`)
     }
     const hadSpeech = Boolean(speech)
     if (hadSpeech) {
@@ -779,25 +1053,53 @@ function createChatExecutor ({
     } else if (shouldAutoAckTool(toolName, hadSpeech)) {
       pulse.sendChatReply(username, '收到，开始执行~', { reason: 'tool_ack', memoryRefs })
     }
-    const runTool = async () => {
-      try { bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
-      let res
-      try {
-        res = await actions.run(payload.tool, payload.args || {})
-      } catch (err) {
-        log?.warn && log.warn('tool error', err?.message || err)
-        res = { ok: false, msg: '执行失败，请稍后再试~' }
-      } finally {
-        try { bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
-      }
-      if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
-      const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
-      const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
-      const finalText = H.trimReply(baseMsg || fallback, replyLimit)
-      if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
+    try { bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
+    let res
+    try {
+      res = await actions.run(payload.tool, payload.args || {})
+    } catch (err) {
+      log?.warn && log.warn('tool error', err?.message || err)
+      res = { ok: false, msg: '执行失败，请稍后再试~', error: String(err?.message || err) }
+    } finally {
+      try { bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
     }
-    runTool().catch((err) => { log?.warn && log.warn('tool async failure', err?.message || err) })
-    return ''
+    if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
+    const isObserveTool = toolLower === 'observe_detail' || toolLower === 'observe_players'
+    if (isObserveTool) {
+      try {
+        const line = buildObserveContextLine({ toolName, args: payload.args || {}, res })
+        if (line) contextBus?.pushTool?.(line)
+      } catch {}
+    }
+    const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
+    const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
+    const finalText = H.trimReply(baseMsg || fallback, replyLimit)
+    if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
+    return result(buildActionResultSummary({ toolName, res }))
+  }
+
+  async function dryDialogue (username, content, options = {}) {
+    const actor = String(username || 'dry_user').trim() || 'dry_user'
+    const text = String(content || '').trim()
+    if (!text) return { ok: false, error: 'missing content' }
+    const dryEvents = []
+    const intent = (options && typeof options.intent === 'object' && options.intent)
+      ? options.intent
+      : classifyIntent(text)
+    const withTools = options?.withTools !== false
+    const maxToolCalls = Number(options?.maxToolCalls)
+    const callOptions = { withTools, dryRun: true, dryEvents, inlineUserContent: true }
+    if (Number.isFinite(maxToolCalls)) callOptions.maxToolCalls = maxToolCalls
+    const res = await callAI(actor, text, intent, callOptions)
+    return {
+      ok: true,
+      username: actor,
+      content: text,
+      intent,
+      reply: String(res?.reply || ''),
+      memoryRefs: Array.isArray(res?.memoryRefs) ? res.memoryRefs : [],
+      dryEvents: Array.isArray(res?.dryEvents) ? res.dryEvents : dryEvents
+    }
   }
 
   function classifyStopCommand (text) {
@@ -886,8 +1188,8 @@ function createChatExecutor ({
       pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
       return
     }
-    // Pending rule: while an AI request is in-flight, accumulate all new chat and handle them in one batch
-    // only after the previous request completes.
+    // Pending rule: while an AI request is in-flight, accumulate incoming chat;
+    // pending input can interrupt the current model request and is injected into the ongoing tool loop.
     if (ctrl.busy) {
       try { state.aiPulse.lastFlushAt = now() } catch {}
       queuePending(username, text, raw, source)
@@ -990,6 +1292,7 @@ function createChatExecutor ({
     buildMetaContext,
     triggerWord,
     callAI,
+    dryDialogue,
     processChatContent,
     shouldAutoFollowup,
     abortActive

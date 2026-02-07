@@ -5,6 +5,7 @@ const readline = require('readline')
 const net = require('net')
 const fs = require('fs')
 const path = require('path')
+const { spawn } = require('child_process')
 const fileLogger = require('./bot_impl/file-logger')
 const { formatDateTimeTz } = require('./bot_impl/time-utils')
 
@@ -180,6 +181,7 @@ const ctl = {
   token: null,
   enabled: true
 }
+let restartPending = false
 
 // Control plane config (UDS). Disable via --ctl off or MCBOT_CTL=off.
 try {
@@ -259,6 +261,62 @@ function stopControlPlane () {
   safeUnlink(ctl.pidPath)
 }
 
+function scheduleProcessRestart ({ mode = 'detached', delayMs = 200, reason = 'unknown' } = {}) {
+  if (restartPending) return false
+  const underWatcher = String(process.env.MCBOT_WATCHER || '').trim() === '1'
+  if (underWatcher) {
+    restartPending = true
+    const waitMs = Number.isFinite(Number(delayMs)) ? Math.max(50, Math.min(10_000, Math.floor(Number(delayMs)))) : 200
+    setTimeout(() => {
+      try { shuttingDown = true } catch {}
+      console.log(`[CTL] watcher-managed restart requested (reason=${reason}); exiting current process`)
+      try { stopControlPlane() } catch {}
+      try { if (plugin && plugin.deactivate) plugin.deactivate() } catch {}
+      try { closeAllWatchers() } catch {}
+      try { if (gateWatcher) gateWatcher.close() } catch {}
+      try { rl.close() } catch {}
+      try { bot && bot.end('Restart requested by control plane') } catch {}
+      setTimeout(() => process.exit(0), 120)
+    }, waitMs)
+    return true
+  }
+  restartPending = true
+  const useMode = String(mode || '').toLowerCase() === 'inherit' ? 'inherit' : 'detached'
+  const waitMs = Number.isFinite(Number(delayMs)) ? Math.max(50, Math.min(10_000, Math.floor(Number(delayMs)))) : 200
+  setTimeout(() => {
+    try { shuttingDown = true } catch {}
+    const childArgs = process.argv.slice(1)
+    let nextPid = null
+    try {
+      const child = spawn(process.execPath, childArgs, {
+        cwd: process.cwd(),
+        env: process.env,
+        detached: useMode === 'detached',
+        stdio: useMode === 'inherit' ? 'inherit' : 'ignore'
+      })
+      if (useMode === 'detached') child.unref()
+      nextPid = child?.pid
+      if (Number.isFinite(nextPid)) {
+        try { fs.writeFileSync(ctl.pidPath, String(nextPid) + '\n') } catch {}
+      }
+      console.log(`[CTL] restarting process (${useMode}, reason=${reason}) -> pid=${nextPid || 'unknown'}`)
+    } catch (err) {
+      restartPending = false
+      try { shuttingDown = false } catch {}
+      console.error('[CTL] restart failed:', err?.message || err)
+      return
+    }
+    try { stopControlPlane() } catch {}
+    try { if (plugin && plugin.deactivate) plugin.deactivate() } catch {}
+    try { closeAllWatchers() } catch {}
+    try { if (gateWatcher) gateWatcher.close() } catch {}
+    try { rl.close() } catch {}
+    try { bot && bot.end('Restart requested by control plane') } catch {}
+    setTimeout(() => process.exit(0), 120)
+  }, waitMs)
+  return true
+}
+
 async function handleCtlRequest (req) {
   const id = req && req.id != null ? req.id : null
   const op = req && req.op ? String(req.op) : ''
@@ -283,7 +341,43 @@ async function handleCtlRequest (req) {
     }
   }
 
+  if (op === 'proc.restart' || op === 'process.restart') {
+    const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
+    const mode = String(args.mode || 'detached').toLowerCase() === 'inherit' ? 'inherit' : 'detached'
+    const delayParsed = parseDurationMs(args.delayMs ?? args.delay)
+    const delayMs = Number.isFinite(delayParsed) ? delayParsed : 200
+    const scheduled = scheduleProcessRestart({ mode, delayMs, reason: 'ctl' })
+    if (!scheduled) return { id, ok: false, error: 'restart already pending' }
+    return {
+      id,
+      ok: true,
+      result: {
+        scheduled: true,
+        mode,
+        delayMs,
+        pid: process.pid
+      }
+    }
+  }
+
   if (!bot) return { id, ok: false, error: 'bot not ready' }
+
+  if (op === 'ai.chat.dry' || op === 'chat.dry') {
+    const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
+    const username = String(args.username || args.user || args.player || 'dry_user').trim() || 'dry_user'
+    const content = String(args.content || args.message || args.text || '').trim()
+    if (!content) return { id, ok: false, error: 'missing content' }
+    const executor = bot && bot._aiChatExecutor
+    if (!executor || typeof executor.dryDialogue !== 'function') {
+      return { id, ok: false, error: 'ai chat executor not ready' }
+    }
+    const withTools = args.withTools == null ? true : parseBool(args.withTools, true)
+    const maxToolCallsRaw = Number(args.maxToolCalls)
+    const options = { withTools }
+    if (Number.isFinite(maxToolCallsRaw)) options.maxToolCalls = maxToolCallsRaw
+    const result = await executor.dryDialogue(username, content, options)
+    return { id, ok: true, result }
+  }
 
   if (op === 'observe.snapshot' || op === 'observe.prompt' || op === 'observe.detail') {
     // Require inside handler so hot reload cache clears stay consistent.

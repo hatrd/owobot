@@ -9,6 +9,8 @@
 //   node scripts/botctl.js observe snapshot [key=value ...]
 //   node scripts/botctl.js observe prompt [key=value ...]
 //   node scripts/botctl.js observe detail [key=value ...]
+//   node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" [withTools=true] [maxToolCalls=6]
+//   node scripts/botctl.js restart [mode=detached|inherit] [delayMs=200ms]
 // Options:
 //   --sock <path>   override socket path (default: $PWD/.mcbot.sock)
 //   --token <token> optional shared secret (or env MCBOT_CTL_TOKEN)
@@ -87,7 +89,7 @@ async function main () {
   const [cmd, ...rest] = argv.rest
 
   if (!cmd) {
-    process.stderr.write('usage: botctl.js hello|list|dry|run|observe ...\n')
+    process.stderr.write('usage: botctl.js hello|list|dry|run|observe|chatdry|restart ...\n')
     process.exit(2)
   }
 
@@ -96,6 +98,10 @@ async function main () {
 
   if (cmd === 'hello') payload = { id, op: 'hello' }
   else if (cmd === 'list') payload = { id, op: 'tool.list' }
+  else if (cmd === 'restart') {
+    const args = parseKeyValueArgs(rest)
+    payload = { id, op: 'proc.restart', args }
+  }
   else if (cmd === 'dry' || cmd === 'run') {
     const tool = rest[0]
     if (!tool) {
@@ -104,6 +110,13 @@ async function main () {
     }
     const args = parseKeyValueArgs(rest.slice(1))
     payload = { id, op: cmd === 'dry' ? 'tool.dry' : 'tool.run', tool, args }
+  } else if (cmd === 'chatdry' || cmd === 'ai-dry') {
+    const args = parseKeyValueArgs(rest)
+    if (!args.content && !args.message && !args.text) {
+      process.stderr.write('usage: botctl.js chatdry username=<name> content=<text> [withTools=true] [maxToolCalls=6]\n')
+      process.exit(2)
+    }
+    payload = { id, op: 'ai.chat.dry', args }
   } else if (cmd === 'observe') {
     const mode = String(rest[0] || 'snapshot').toLowerCase()
     const args = parseKeyValueArgs(rest.slice(1))

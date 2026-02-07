@@ -91,6 +91,7 @@ node scripts/botctl.js run say text="hello from UDS"
 node scripts/botctl.js observe snapshot
 node scripts/botctl.js observe prompt
 node scripts/botctl.js observe detail what=inventory radius=12
+node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" withTools=true maxToolCalls=6
 ```
 
 Options:
@@ -128,6 +129,8 @@ Observer endpoints are read-only by design and are intended for low-cost verific
 - `observe.snapshot`: returns structured runtime snapshot (position, vitals, nearby, inventory summary, current task).
 - `observe.prompt`: returns `{ prompt, snapshot }` using the same prompt shape consumed by AI context assembly.
 - `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cats|cows|containers|signs|space_snapshot|environment|room_probe`, with `radius`, `max`).
+  - For `players|hostiles|entities|animals|cats|cows`, `result.msg` now includes a short top-N preview (name/type/distance) to reduce repetitive count-only replies.
+  - For `what=containers`, optional `openAttempts` / `openTimeoutMs` can tune read-only container open retries/timeout in slow servers.
 
 Container inspection (`what=containers`) supports all nearby container categories:
 
@@ -176,9 +179,14 @@ By default, it dry-runs `pickup` with `radius=12`. Override if needed:
 
 ```bash
 node scripts/interaction-dry-run.js --tool pickup --radius 20 --detail containers
+node scripts/interaction-dry-run.js --tool pickup --radius 20 --detail containers --timeout-ms 12000
 
 # direct dry-read of nearby container contents via action dry path
 node scripts/botctl.js dry observe_detail what=containers radius=20 max=8
+
+# restart current bot process from control plane (detached by default)
+node scripts/botctl.js restart
+node scripts/botctl.js restart mode=inherit delayMs=500ms
 ```
 
 ## Security Model
@@ -212,6 +220,14 @@ Restart helper (local/dev):
   - Sends SIGINT to pid from `./.mcbot.pid`
   - Waits briefly
   - Starts a new `node bot.js` in the foreground
+
+Recommended resilient mode (auto-restart + inherited stdin/stdout):
+
+- `npm run bot:watch`
+  - Starts `scripts/bot-watch.js` as the long-lived parent process.
+  - The watcher starts `bot.js` with `stdio: inherit`, so interactive stdin still goes to the running bot child.
+  - If `bot.js` exits unexpectedly, watcher restarts it with bounded exponential backoff.
+  - If an existing pid from `./.mcbot.pid` is alive, watcher takeover stops it first (`--takeover=true`).
 
 ## Troubleshooting
 

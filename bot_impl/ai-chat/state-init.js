@@ -95,6 +95,8 @@ function prepareAiState (state, opts = {}) {
   }
   if (typeof state.ai.listenEnabled !== 'boolean') state.ai.listenEnabled = true
   if (!Number.isFinite(state.ai.timeoutMs) || state.ai.timeoutMs <= 0) state.ai.timeoutMs = DEFAULT_TIMEOUT_MS
+  if (!Number.isFinite(state.ai.maxToolCalls)) state.ai.maxToolCalls = 6
+  if (!Number.isFinite(state.ai.maxToolCallsPerTurn)) state.ai.maxToolCallsPerTurn = state.ai.maxToolCalls
   if (!state.ai.context) state.ai.context = DEF_CTX
   else state.ai.context = {
     ...DEF_CTX,

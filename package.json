@@ -4,7 +4,9 @@
   "description": "Simple mineflayer echo bot",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
+    "start": "node scripts/bot-watch.js --takeover=true",
+    "bot:watch": "node scripts/bot-watch.js --takeover=true",
+    "bot:start:direct": "node bot.js",
     "dev": "nodemon",
     "test": "node --test",
     "bot:reload": "node scripts/reload-gate.js",

@@ -194,6 +194,32 @@ function entityText (v) {
   }
 }
 
+function sanitizeObserveCustomNameCandidate (value) {
+  try {
+    if (value == null) return ''
+    if (typeof value === 'boolean') return ''
+    if (typeof value === 'number' || typeof value === 'bigint') return ''
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const nested = sanitizeObserveCustomNameCandidate(item)
+        if (nested) return nested
+      }
+      return ''
+    }
+    if (typeof value === 'object' && value && Object.prototype.hasOwnProperty.call(value, 'value')) {
+      const nested = sanitizeObserveCustomNameCandidate(value.value)
+      if (nested) return nested
+    }
+    const text = entityText(value)
+    if (!text) return ''
+    const low = String(text).trim().toLowerCase()
+    if (low === 'false' || low === 'true' || low === 'null' || low === 'undefined' || low === 'unknown') return ''
+    return text
+  } catch {
+    return ''
+  }
+}
+
 function entityNameProfile (e) {
   try {
     const base = entityText(e?.name)
@@ -208,8 +234,8 @@ function entityNameProfile (e) {
     }
     let custom = ''
     for (const c of candidates) {
-      const t = entityText(c)
-      if (t && t !== 'null' && t !== 'undefined') { custom = t; break }
+      const t = sanitizeObserveCustomNameCandidate(c)
+      if (t) { custom = t; break }
     }
     const title = custom || username || display || base || 'unknown'
     const searchable = [base, display, username, custom, title, String(e?.type || ''), String(e?.kind || '')]
@@ -219,6 +245,44 @@ function entityNameProfile (e) {
     return { base, display, username, custom, title, searchable }
   } catch {
     return { base: '', display: '', username: '', custom: '', title: 'unknown', searchable: '' }
+  }
+}
+
+function buildEntityObserveRow (e, d, info = null) {
+  const profile = info && typeof info === 'object' ? info : entityNameProfile(e)
+  const customName = profile?.custom || null
+  const entityName = profile?.base || null
+  const displayName = profile?.display || null
+  const resolvedName = profile?.title || displayName || entityName || 'unknown'
+  const customLow = String(customName || '').trim().toLowerCase()
+  const entityLow = String(entityName || '').trim().toLowerCase()
+  const displayLow = String(displayName || '').trim().toLowerCase()
+  const hasNamedTag = Boolean(
+    customLow &&
+    customLow !== 'unknown' &&
+    customLow !== 'false' &&
+    customLow !== 'true' &&
+    customLow !== 'null' &&
+    customLow !== 'undefined' &&
+    customLow !== entityLow &&
+    customLow !== displayLow
+  )
+  const typeLabel = String(entityName || e?.type || displayName || 'entity')
+  const observeLabel = hasNamedTag
+    ? `${typeLabel}「${customName}」`
+    : String(resolvedName)
+
+  return {
+    id: e?.id,
+    type: e?.type,
+    kind: e?.kind || null,
+    name: resolvedName,
+    entityName,
+    displayName,
+    customName,
+    named: hasNamedTag,
+    observeLabel,
+    d: Number(Number.isFinite(d) ? d.toFixed(2) : d)
   }
 }
 
@@ -684,16 +748,7 @@ function collectAnimals (bot, range = 16, species = null) {
         if (!matches(info.searchable)) continue
         const d = e.position.distanceTo(me)
         if (Number.isFinite(d) && d <= range) {
-          list.push({
-            id: e.id,
-            type: e.type,
-            kind: e.kind || null,
-            name: info.title,
-            entityName: info.base || null,
-            displayName: info.display || null,
-            customName: info.custom || null,
-            d: Number(d.toFixed(2))
-          })
+          list.push(buildEntityObserveRow(e, d, info))
         }
       } catch {}
     }
@@ -701,6 +756,50 @@ function collectAnimals (bot, range = 16, species = null) {
     list.sort((a, b) => a.d - b.d)
     return { count: list.length, nearest: list[0], list }
   } catch { return { count: 0, nearest: null, list: [] } }
+}
+
+function firstValidObserveText (...candidates) {
+  for (const c of candidates) {
+    const text = String(c == null ? '' : c).trim()
+    if (!text) continue
+    const low = text.toLowerCase()
+    if (low === 'false' || low === 'true' || low === 'null' || low === 'undefined' || low === 'unknown') continue
+    return text
+  }
+  return ''
+}
+
+function formatObserveRowBrief (row = {}) {
+  try {
+    const name = firstValidObserveText(row.observeLabel, row.name, row.customName, row.displayName, row.entityName, row.type, row.kind, 'unknown')
+    const type = firstValidObserveText(row.entityName, row.type)
+    const kind = firstValidObserveText(row.kind)
+    const tags = []
+    const lowName = String(name || '').toLowerCase()
+    const lowType = String(type || '').toLowerCase()
+    const headAlreadyCarriesType = lowType && (lowName === lowType || lowName.startsWith(`${lowType}「`))
+    if (type && type !== name && !headAlreadyCarriesType) tags.push(type)
+    if (kind && kind !== name && kind !== type) tags.push(`#${kind}`)
+    const d = Number(row.d)
+    const dist = Number.isFinite(d) ? `${d.toFixed(1)}m` : ''
+    const head = tags.length ? `${name}[${tags.join('/')}]` : name
+    return [head, dist].filter(Boolean).join(' ')
+  } catch {
+    return ''
+  }
+}
+
+function attachObservePreview (msg, list, limit = 6) {
+  const arr = Array.isArray(list) ? list : []
+  if (!arr.length) return msg
+  const cap = Math.max(1, Math.min(8, Math.floor(Number(limit) || 6)))
+  const parts = []
+  for (const row of arr.slice(0, cap)) {
+    const brief = formatObserveRowBrief(row)
+    if (brief) parts.push(brief)
+  }
+  if (!parts.length) return msg
+  return `${msg}: ${parts.join('；')}`
 }
 
 function collectInventorySummary (bot, top = 6) {
@@ -938,8 +1037,19 @@ function summarizeItems (bot, items, maxKinds = 24) {
   }
 }
 
-async function openContainerReadOnly (bot, block) {
+async function openContainerReadOnly (bot, block, opts = {}) {
   if (!block) return { container: null, error: 'missing_block', method: null }
+
+  const openAttempts = (() => {
+    const raw = parseInt(opts.openAttempts ?? opts.attempts ?? '3', 10)
+    if (!Number.isFinite(raw)) return 3
+    return Math.max(1, Math.min(6, raw))
+  })()
+  const openTimeoutMs = (() => {
+    const raw = parseInt(opts.openTimeoutMs ?? opts.openTimeout ?? opts.timeoutMs ?? '3500', 10)
+    if (!Number.isFinite(raw)) return 3500
+    return Math.max(500, Math.min(15_000, raw))
+  })()
 
   async function wait (ms) {
     return await new Promise(resolve => setTimeout(resolve, ms))
@@ -996,7 +1106,7 @@ async function openContainerReadOnly (bot, block) {
   }
   if (!openers.length) return { container: null, error: 'no_open_api', method: null }
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= openAttempts; attempt++) {
     try {
       if (bot.currentWindow && typeof bot.closeWindow === 'function') {
         try { bot.closeWindow(bot.currentWindow) } catch {}
@@ -1010,7 +1120,7 @@ async function openContainerReadOnly (bot, block) {
 
       for (const opener of openers) {
         try {
-          const container = await withTimeout(opener.method, opener.fn, 3500)
+          const container = await withTimeout(opener.method, opener.fn, openTimeoutMs)
           if (container) return { container, error: null, method: opener.method }
           errors.push(`${opener.method}:empty_result`)
         } catch (e) {
@@ -1038,6 +1148,8 @@ async function detailContainers (bot, args = {}) {
   const max = Math.max(1, parseInt(args.max || '12', 10))
   const itemMax = Math.max(1, parseInt(args.itemMax || args.items || '24', 10))
   const full = String(args.full || '').toLowerCase() === 'true'
+  const openAttempts = Math.max(1, Math.min(6, parseInt(args.openAttempts || args.attempts || '3', 10) || 3))
+  const openTimeoutMs = Math.max(500, Math.min(15000, parseInt(args.openTimeoutMs || args.openTimeout || args.timeoutMs || '3500', 10) || 3500))
   const containerType = normalizeContainerType(args.containerType ?? args.container ?? args.type)
   const count = Math.max(max * 4, max)
   const positions = bot.findBlocks({
@@ -1069,7 +1181,7 @@ async function detailContainers (bot, args = {}) {
     let container = null
     let openMeta = null
     try {
-      openMeta = await openContainerReadOnly(bot, block)
+      openMeta = await openContainerReadOnly(bot, block, { openAttempts, openTimeoutMs })
       container = openMeta?.container || null
       if (!container) {
         row.error = openMeta?.error || 'open_failed'
@@ -1120,23 +1232,29 @@ function detail (bot, args = {}) {
       } catch {}
     }
     list.sort((a, b) => a.d - b.d)
-    return { ok: true, msg: `附近玩家${list.length}个(半径${radius})`, data: list.slice(0, max) }
+    const out = list.slice(0, max)
+    const msg = attachObservePreview(`附近玩家${list.length}个(半径${radius})`, out, 6)
+    return { ok: true, msg, data: out }
   }
   if (what === 'hostiles') {
     const hs = hostileSet()
+    const hostileTokens = Array.from(hs)
     const list = []
     for (const e of Object.values(bot.entities || {})) {
       try {
         if (e?.type !== 'mob' || !e.position) continue
-        const nm = (e.name || e.displayName || '').toLowerCase()
-        if (!hs.has(nm)) continue
+        const info = entityNameProfile(e)
+        const searchable = String(info.searchable || '')
+        if (!hostileTokens.some(token => searchable.includes(String(token)))) continue
         const d = e.position.distanceTo(me)
         if (d > radius) continue
-        list.push({ name: nm, d: Number(d.toFixed(2)) })
+        list.push(buildEntityObserveRow(e, d, info))
       } catch {}
     }
     list.sort((a, b) => a.d - b.d)
-    return { ok: true, msg: `附近敌对${list.length}个(半径${radius})`, data: list.slice(0, max) }
+    const out = list.slice(0, max)
+    const msg = attachObservePreview(`附近敌对${list.length}个(半径${radius})`, out, 6)
+    return { ok: true, msg, data: out }
   }
   if (what === 'entities') {
     const species = String(args.species || args.entity || '').trim().toLowerCase()
@@ -1151,31 +1269,28 @@ function detail (bot, args = {}) {
         const text = info.searchable
         if (species && !text.includes(species)) continue
         if (match && !text.includes(match)) continue
-        list.push({
-          id: e.id,
-          type: e.type,
-          kind: e.kind || null,
-          name: info.title || null,
-          entityName: info.base || null,
-          displayName: info.display || null,
-          customName: info.custom || null,
-          d: Number(d.toFixed(2))
-        })
+        list.push(buildEntityObserveRow(e, d, info))
       } catch {}
     }
     list.sort((a, b) => a.d - b.d)
-    return { ok: true, msg: `附近实体${list.length}个(半径${radius})`, data: list.slice(0, max) }
+    const out = list.slice(0, max)
+    const msg = attachObservePreview(`附近实体${list.length}个(半径${radius})`, out, 6)
+    return { ok: true, msg, data: out }
   }
   if (what === 'nearby_entities') {
     return detail(bot, { ...args, what: 'entities' })
   }
   if (what === 'animals' || what === 'passives') {
     const r = collectAnimals(bot, radius, null)
-    return { ok: true, msg: `附近动物${r.count}个(半径${radius})`, data: r.list.slice(0, max) }
+    const out = r.list.slice(0, max)
+    const msg = attachObservePreview(`附近动物${r.count}个(半径${radius})`, out, 6)
+    return { ok: true, msg, data: out }
   }
   if (what === 'cats' || what === 'cat') {
     const r = collectAnimals(bot, radius, 'cat')
-    return { ok: true, msg: `附近猫${r.count}只(半径${radius})`, data: r.list.slice(0, max) }
+    const out = r.list.slice(0, max)
+    const msg = attachObservePreview(`附近猫${r.count}只(半径${radius})`, out, 6)
+    return { ok: true, msg, data: out }
   }
   if (what === 'signs' || what === 'sign' || what === 'signboard' || what === 'boards') {
     const list = collectNearbySigns(bot, { radius, max })
@@ -1204,7 +1319,9 @@ function detail (bot, args = {}) {
   }
   if (what === 'cows' || what === 'cow') {
     const r = collectAnimals(bot, radius, 'cow')
-    return { ok: true, msg: `附近奶牛${r.count}头(半径${radius})`, data: r.list.slice(0, max) }
+    const out = r.list.slice(0, max)
+    const msg = attachObservePreview(`附近奶牛${r.count}头(半径${radius})`, out, 6)
+    return { ok: true, msg, data: out }
   }
   if (what === 'blocks') {
     const list = []

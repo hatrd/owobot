@@ -74,11 +74,11 @@ function request (sockPath, payload, timeoutMs = 6000) {
   })
 }
 
-async function call (sockPath, token, op, extra = {}) {
+async function call (sockPath, token, op, extra = {}, timeoutMs = 6000) {
   const payload = { id: makeId(op.replace(/\./g, '_')), op, ...(extra || {}) }
   if (token) payload.token = token
   const startedAt = Date.now()
-  const res = await request(sockPath, payload)
+  const res = await request(sockPath, payload, timeoutMs)
   const durationMs = Date.now() - startedAt
   return { res, durationMs }
 }
@@ -97,14 +97,16 @@ async function main () {
   const dryTool = String(argv.flags.tool || 'pickup')
   const radius = parseNum(argv.flags.radius, 12)
   const detailWhat = String(argv.flags.detail || 'containers')
+  const timeoutMs = Math.max(2000, parseNum(argv.flags['timeout-ms'], 6000))
+  const detailTimeoutMs = Math.max(timeoutMs, String(detailWhat).toLowerCase() === 'containers' ? 45000 : timeoutMs)
 
   const checks = []
 
-  const hello = await call(sockPath, token, 'hello')
+  const hello = await call(sockPath, token, 'hello', {}, timeoutMs)
   ensureCtlOk('hello', hello.res)
   checks.push({ check: 'hello', ok: true, durationMs: hello.durationMs, result: hello.res.result })
 
-  const list = await call(sockPath, token, 'tool.list')
+  const list = await call(sockPath, token, 'tool.list', {}, timeoutMs)
   ensureCtlOk('tool.list', list.res)
   const allowlist = Array.isArray(list.res?.result?.allowlist) ? list.res.result.allowlist : []
   if (!allowlist.includes(dryTool)) {
@@ -123,7 +125,7 @@ async function main () {
 
   const snapshot = await call(sockPath, token, 'observe.snapshot', {
     args: { invTop: 8, nearPlayerRange: 16, nearPlayerMax: 8, dropsRange: 8, dropsMax: 8 }
-  })
+  }, timeoutMs)
   ensureCtlOk('observe.snapshot', snapshot.res)
   checks.push({
     check: 'observe.snapshot',
@@ -138,7 +140,7 @@ async function main () {
 
   const prompt = await call(sockPath, token, 'observe.prompt', {
     args: { nearPlayerRange: 16, hostileRange: 24 }
-  })
+  }, timeoutMs)
   ensureCtlOk('observe.prompt', prompt.res)
   const promptText = String(prompt.res?.result?.prompt || '')
   checks.push({
@@ -152,8 +154,15 @@ async function main () {
   })
 
   const detail = await call(sockPath, token, 'observe.detail', {
-    args: { what: detailWhat, radius, max: 24 }
-  })
+    args: {
+      what: detailWhat,
+      radius,
+      max: 24,
+      ...(String(detailWhat).toLowerCase() === 'containers'
+        ? { openAttempts: 1, openTimeoutMs: 1200 }
+        : {})
+    }
+  }, detailTimeoutMs)
   ensureCtlOk('observe.detail', detail.res)
   checks.push({
     check: 'observe.detail',
@@ -168,7 +177,7 @@ async function main () {
   const dry = await call(sockPath, token, 'tool.dry', {
     tool: dryTool,
     args: { radius }
-  })
+  }, timeoutMs)
   ensureCtlOk('tool.dry', dry.res)
   checks.push({
     check: 'tool.dry',
@@ -184,8 +193,15 @@ async function main () {
 
   const dryObserveDetail = await call(sockPath, token, 'tool.dry', {
     tool: 'observe_detail',
-    args: { what: detailWhat, radius, max: 24 }
-  })
+    args: {
+      what: detailWhat,
+      radius,
+      max: 24,
+      ...(String(detailWhat).toLowerCase() === 'containers'
+        ? { openAttempts: 1, openTimeoutMs: 1200 }
+        : {})
+    }
+  }, detailTimeoutMs)
   ensureCtlOk('tool.dry observe_detail', dryObserveDetail.res)
   checks.push({
     check: 'tool.dry.observe_detail',
