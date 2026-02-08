@@ -217,7 +217,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
           ? `<b f="${escapeXml(payload.from)}">${escapeXml(payload.content)}</b>`
           : `<b>${escapeXml(payload.content)}</b>`
       case 'tool':
-        return `<t>${escapeXml(payload.content)}</t>`
+        return `<b f="tool">${escapeXml(payload.content)}</b>`
       case 'event':
         if (DROPPED_EVENT_TYPES.has(String(payload.eventType || ''))) return ''
         return `<e t="${escapeXml(payload.eventType)}" d="${escapeXml(payload.data)}"/>`
@@ -267,7 +267,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
 
     const lines = [
       '<ctx>',
-      '<!-- p=player s=server e=event b=bot t=tool g=gap -->'
+      '<!-- p=player s=server e=event b=bot t=tool g=gap | NOTE: b and b(f=tool) lines are already sent to in-game chat; do NOT repeat them verbatim. -->'
     ]
 
     let prevTs = null

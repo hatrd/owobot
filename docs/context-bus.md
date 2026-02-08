@@ -26,7 +26,7 @@ Context Bus 是统一的上下文事件总线，将机器人运行时产生的�
 | `player` | 玩家发言 | `<p n="Steve">你好</p>` |
 | `server` | 服务器广播 | `<s>Server restarting</s>` |
 | `bot` | AI 回复 | `<b>收到</b>`（外部模型回复会带 `f="LLM"`：`<b f="LLM">好呀</b>`） |
-| `tool` | 工具输出 | `<t>挖到钻石x3</t>` |
+| `tool` | 工具输出（已发送到聊天，避免外部模型复读） | `<b f="tool">挖到钻石x3</b>` |
 | `event` | 系统事件 | `<e t="hurt.combat" d="zombie:-2"/>` |
 
 ### 系统事件类型
@@ -53,7 +53,7 @@ heal               → 治疗 (hp:+delta)
 
 ```xml
 <ctx>
-<!-- p=player s=server e=event b=bot t=tool g=gap -->
+<!-- p=player s=server e=event b=bot t=tool g=gap | NOTE: b and b(f=tool) lines are already sent to in-game chat; do NOT repeat them verbatim. -->
 <p n="Steve">来打我</p>
 <e t="hurt.combat" d="Steve:-2"/>
 <e t="hurt.combat" d="Steve:-1.5x3"/>
