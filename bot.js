@@ -8,6 +8,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 const fileLogger = require('./bot_impl/file-logger')
 const controlPlaneContract = require('./bot_impl/control-plane-contract')
+const { sanitizeOutboundText } = require('./bot_impl/outbound-text-filter')
 const { formatDateTimeTz } = require('./bot_impl/time-utils')
 
 // Simple argv parser
@@ -164,7 +165,7 @@ rl.on('line', (line) => {
     try { bot && bot.emit('cli', { cmd, args, raw }) } catch (e) { console.error('CLI dispatch error:', e) }
     return
   }
-  try { bot && bot.chat(trimmed) } catch (e) { console.error('Chat error:', e) }
+  try { bot && bot.chat(sanitizeOutboundText(trimmed)) } catch (e) { console.error('Chat error:', e) }
 })
 
 // Hot-reloadable implementation loader (directory-based)

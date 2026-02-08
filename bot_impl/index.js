@@ -6,6 +6,7 @@ const { Vec3 } = require('vec3')
 const logging = require('./logging')
 const { MODULES } = require('./module-registry')
 const { prepareSharedState } = require('./state')
+const { sanitizeOutboundText } = require('./outbound-text-filter')
 const greetings = require('./greetings')
 const watchers = require('./watchers')
 const coreLog = logging.getLogger('core')
@@ -97,6 +98,15 @@ function offAll() {
   }
 }
 
+function normalizeOutboundChatArgs (argsLike) {
+  const args = Array.isArray(argsLike) ? argsLike.slice() : []
+  if (args.length === 0) return args
+  const raw = args[0]
+  const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
+  args[0] = sanitizeOutboundText(text)
+  return args
+}
+
 function activate (botInstance, options = {}) {
   bot = botInstance
   // Raise listener limits to avoid MaxListeners warnings under heavy dig/reload cycles
@@ -126,42 +136,45 @@ function activate (botInstance, options = {}) {
     try { if (typeof fn === 'function') state.cleanups.push(fn) } catch {}
   }
 
-  if (!state.chatTeleportPatched) {
-    const tryInstallChatIntercept = () => {
-      if (state.chatTeleportPatched) return true
-      if (!bot || typeof bot.chat !== 'function') return false
-      const originalChat = bot.chat.bind(bot)
-      bot.chat = function patchedChat (...args) {
-        try {
-          const raw = args[0]
-          const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
-          if (isTeleportChatCommandText(text)) {
-            resetBeforeTeleportCommand()
-              .catch(() => {})
-              .finally(() => {
-                try { originalChat(...args) } catch (err) { try { coreLog.warn('chat send error:', err?.message || err) } catch {} }
-              })
-            return
-          }
-        } catch (err) {
-          try { coreLog.warn('chat intercept error:', err?.message || err) } catch {}
-        }
-        return originalChat(...args)
-      }
+  const tryInstallChatIntercept = () => {
+    if (!bot || typeof bot.chat !== 'function') return false
+    if (bot.chat && bot.chat.__mcbotChatIntercept === true) {
       state.chatTeleportPatched = true
       return true
     }
-    const installed = tryInstallChatIntercept()
-    if (!installed) {
-      // Mineflayer may attach chat later during startup; retry quietly before warning
-      setTimeout(() => {
-        if (state.chatTeleportPatched) return
-        if (!tryInstallChatIntercept()) {
-          try { coreLog.warn('chat intercept unavailable: bot.chat still missing') } catch {}
+    const originalChat = bot.chat.bind(bot)
+    const patchedChat = function patchedChat (...args) {
+      const sendArgs = normalizeOutboundChatArgs(args)
+      try {
+        const text = sendArgs[0] || ''
+        if (isTeleportChatCommandText(text)) {
+          resetBeforeTeleportCommand()
+            .catch(() => {})
+            .finally(() => {
+              try { originalChat(...sendArgs) } catch (err) { try { coreLog.warn('chat send error:', err?.message || err) } catch {} }
+            })
+          return
         }
-      }, 1000)
-      try { on('spawn', tryInstallChatIntercept) } catch {}
+      } catch (err) {
+        try { coreLog.warn('chat intercept error:', err?.message || err) } catch {}
+      }
+      return originalChat(...sendArgs)
     }
+    try { patchedChat.__mcbotChatIntercept = true } catch {}
+    bot.chat = patchedChat
+    state.chatTeleportPatched = true
+    return true
+  }
+
+  const installed = tryInstallChatIntercept()
+  if (!installed) {
+    // Mineflayer may attach chat later during startup; retry quietly before warning
+    setTimeout(() => {
+      if (!tryInstallChatIntercept()) {
+        try { coreLog.warn('chat intercept unavailable: bot.chat still missing') } catch {}
+      }
+    }, 1000)
+    try { on('spawn', tryInstallChatIntercept) } catch {}
   }
 
   state.greetZonesSeeded = false
