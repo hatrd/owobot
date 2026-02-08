@@ -671,6 +671,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   const decayTimer = setInterval(() => {
     try {
       memory.longTerm.decayUnused()
+      memory.dialogue.maybeRunAggregation().catch(() => {})
       if (feedbackCollector) feedbackCollector.persistState()
     } catch {}
   }, 60 * 60 * 1000) // 每小时

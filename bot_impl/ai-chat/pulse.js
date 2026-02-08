@@ -319,7 +319,7 @@ function createPulseService ({
       if (!name || name === bot.username) continue
       entry.participants.add(name)
     }
-    entry.lastSeq = Number.isFinite(state.aiRecentSeq) ? state.aiRecentSeq : entry.lastSeq
+    entry.lastSeq = Number.isFinite(state.aiRecentSeq) ? Math.max(entry.startSeq || state.aiRecentSeq, state.aiRecentSeq) : entry.lastSeq
     entry.lastAt = now()
   }
 

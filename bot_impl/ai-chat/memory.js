@@ -1844,8 +1844,7 @@ function createMemoryService ({
 
   function summarizeBucketEntries (entries) {
     const texts = entries
-      .map(e => (typeof e?.summary === 'string' ? e.summary.trim() : ''))
-      .filter(s => s && !looksLikePromptEchoSummary(s))
+      .map(e => sanitizeSummaryText(e?.summary, { maxLen: 220 }))
       .filter(Boolean)
     if (!texts.length) return `${entries.length}条对话`
     const MAX = 3
@@ -1879,6 +1878,7 @@ function createMemoryService ({
   }
 
   const aggregationCtrl = { running: false, lastCheck: 0 }
+  const summaryCtrl = { running: false, queue: [], activeKey: '' }
 
   function ensureDialogueBucketsState () {
     if (!state.aiDialogueBuckets || typeof state.aiDialogueBuckets !== 'object') state.aiDialogueBuckets = {}
@@ -1911,17 +1911,34 @@ function createMemoryService ({
     const set = new Set()
     for (const entry of entries) {
       for (const name of entry?.participants || []) {
-        if (!name) continue
-        set.add(String(name))
+        const who = normalizeActorName(name)
+        if (!who) continue
+        set.add(who)
       }
     }
     return [...set]
   }
 
+  function mergeParticipants (...groups) {
+    const out = []
+    const seen = new Set()
+    for (const group of groups) {
+      const list = Array.isArray(group) ? group : []
+      for (const raw of list) {
+        const name = normalizeActorName(raw)
+        if (!name) continue
+        const key = name.toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(name)
+      }
+    }
+    return out
+  }
+
   function summarizationFallback (entries) {
     const texts = entries
-      .map(e => typeof e?.summary === 'string' ? e.summary.trim() : '')
-      .filter(s => s && !looksLikePromptEchoSummary(s))
+      .map(e => sanitizeSummaryText(e?.summary, { maxLen: 220 }))
       .filter(Boolean)
     if (!texts.length) return `${entries.length}条对话活动`
     const sample = texts.slice(0, 3).join(' / ')
@@ -1929,27 +1946,26 @@ function createMemoryService ({
     return sample
   }
 
-  function looksLikePromptEchoSummary (text) {
-    const t = normalizeMemoryText(String(text || ''))
-    if (!t) return false
-    if (/^\d+\.\s*\*{0,2}(分析|识别)用户请求/.test(t)) return true
-    if (t.includes('分析用户请求') || t.includes('识别用户请求')) return true
-    if (t.includes('Minecraft服务器聊天总结助手') && (t.includes('长度限制') || t.includes('内容要求'))) return true
-    const needles = [
-      '角色', '语言', '长度限制', '内容要求',
-      '请输出', '不要', '禁止',
-      'json', 'JSON'
-    ]
-    let hits = 0
-    for (const n of needles) {
-      if (t.includes(n)) hits++
+  function sanitizeSummaryText (raw, { maxLen = 120 } = {}) {
+    const cleaned = normalizeMemoryText(String(raw || '')).replace(/\s+/g, ' ').trim()
+    if (!cleaned) return ''
+    if (!Number.isFinite(maxLen) || maxLen <= 0) return cleaned
+    if (cleaned.length > maxLen) return ''
+    return cleaned
+  }
+
+  function parseStructuredSummary (raw, { maxLen = 120 } = {}) {
+    if (!raw) return null
+    const jsonText = extractJsonLoose(raw) || raw
+    try {
+      const parsed = JSON.parse(jsonText)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+      const summary = sanitizeSummaryText(parsed.summary, { maxLen })
+      if (!summary) return null
+      return summary
+    } catch {
+      return null
     }
-    // Avoid false positives: require strong signal of meta prompt formatting.
-    if (hits >= 5) return true
-    if (hits >= 4 && (t.includes('Minecraft') || t.includes('服务器') || t.includes('助手'))) return true
-    // Markdown-ish prompt analysis often contains lots of bullet markers.
-    if (hits >= 4 && (t.includes('**') || t.includes('* ') || t.includes('1. '))) return true
-    return false
   }
 
   async function summarizeDialogueWindow (entries, label, tierName) {
@@ -1964,16 +1980,15 @@ function createMemoryService ({
       .filter(Boolean)
       .join(' | ')
     if (!combined) return fallback
-    const sys = '你是Minecraft服务器里的记忆整理助手。请压缩给定时间段内的对话摘要，50字以内，强调主要事件、地点和相关玩家。禁止编造。'
+    const sys = '你是Minecraft服务器里的记忆整理助手。请压缩给定时间段内的对话摘要，50字以内，强调主要事件、地点和相关玩家。禁止编造。仅输出JSON对象。'
     const messages = [
       { role: 'system', content: sys },
-      { role: 'user', content: `时间段：${label}\n层级：${tierName}\n参与者：${names.join('、') || '玩家们'}\n摘要列表：${combined}\n请输出一段≤50字总结。` }
+      { role: 'user', content: `时间段：${label}\n层级：${tierName}\n参与者：${names.join('、') || '玩家们'}\n摘要列表：${combined}\n请输出严格JSON：{"summary":"..."}` }
     ]
-    const summary = await runSummaryModel(messages, 1024, 0.2)
+    const raw = await runSummaryModel(messages, 120, 0.2)
+    const summary = parseStructuredSummary(raw, { maxLen: 80 })
     if (!summary) return fallback
-    const cleaned = summary.replace(/\s+/g, ' ').trim()
-    if (!cleaned || looksLikePromptEchoSummary(cleaned)) return fallback
-    return cleaned
+    return summary
   }
 
   async function aggregateDialogueWindow ({ sourceTier, targetTier, kind, start, end }) {
@@ -2229,19 +2244,18 @@ function createMemoryService ({
     if (!lines.length) return ''
     const fallback = fallbackConversationSummary(lines, participants)
     const joined = lines.map(l => `${l.user}: ${l.text}`).join(' | ')
-    const sys = '你是Minecraft服务器里的聊天总结助手。请用中文≤40字，概括玩家互动主题，提到参与者名字和关键行动/地点，不要编造。'
+    const sys = '你是Minecraft服务器里的聊天总结助手。请用中文≤40字，概括玩家互动主题，提到参与者名字和关键行动/地点，不要编造。仅输出JSON对象。'
     const messages = [
       { role: 'system', content: sys },
-      { role: 'user', content: `玩家：${participants.join('、') || '未知'}\n聊天摘录（旧→新）：${joined}\n请输出一句总结。` }
+      { role: 'user', content: `玩家：${participants.join('、') || '未知'}\n聊天摘录（旧→新）：${joined}\n请输出严格JSON：{"summary":"..."}` }
     ]
-    const summary = await runSummaryModel(messages, 1024, 0.3)
-    if (!summary) return fallback
-    const cleaned = summary.replace(/\s+/g, ' ').trim()
-    if (!cleaned || looksLikePromptEchoSummary(cleaned)) {
-      try { traceChat('[chat] summary filtered', cleaned || '(empty)') } catch {}
+    const raw = await runSummaryModel(messages, 96, 0.2)
+    const summary = parseStructuredSummary(raw, { maxLen: 64 })
+    if (!summary) {
+      try { traceChat('[chat] summary fallback', { reason: 'invalid_json_or_empty', raw: String(raw || '').slice(0, 120) || '(empty)' }) } catch {}
       return fallback
     }
-    return cleaned
+    return summary
   }
 
   function normalizeInspectorStatus (raw) {
@@ -2464,9 +2478,16 @@ function createMemoryService ({
 
   async function processConversationSummary (job) {
     try {
-      const lines = (state.aiRecent || []).filter(line => Number(line?.seq) > job.startSeq && Number(line?.seq) <= job.endSeq)
-      if (!lines.length) return
-      const participants = job.participants && job.participants.length ? job.participants : conversationParticipantsFromLines(lines)
+      const startSeq = Number(job.startSeq)
+      const endSeq = Number(job.endSeq)
+      const lines = (state.aiRecent || []).filter(line => {
+        const seq = Number(line?.seq)
+        if (!Number.isFinite(seq)) return false
+        return seq >= startSeq && seq <= endSeq
+      })
+      if (!lines.length) return false
+      const fromLines = conversationParticipantsFromLines(lines)
+      const participants = mergeParticipants(job.participants, fromLines)
       if (!participants.length) participants.push(job.username || '玩家')
       if (state.ai?.trace) {
         try {
@@ -2480,10 +2501,10 @@ function createMemoryService ({
         } catch {}
       }
       const summary = await summarizeConversationLines(lines, participants)
-      if (!summary) return
+      if (!summary) return false
       const record = {
         id: job.id,
-        participants: participants.map(p => String(p || '').trim()).filter(Boolean),
+        participants,
         summary,
         startedAt: job.startedAt || now(),
         endedAt: job.endedAt || now(),
@@ -2497,8 +2518,55 @@ function createMemoryService ({
         try { traceChat('[chat] summary saved', { id: record.id, summary: record.summary.slice(0, 160) }) } catch {}
       }
       try { await maybeWritePeopleMemoryFromConversation(lines, record.participants, job.username, job.reason || 'summary') } catch {}
+      return true
     } catch (e) {
       traceChat('[chat] process summary error', e?.message || e)
+      return false
+    }
+  }
+
+  function ensureSummaryQueue () {
+    if (!summaryCtrl || typeof summaryCtrl !== 'object') return []
+    if (!Array.isArray(summaryCtrl.queue)) summaryCtrl.queue = []
+    return summaryCtrl.queue
+  }
+
+  function summaryJobKey (job) {
+    const user = normalizeActorName(job?.username || '') || 'any'
+    const start = Number(job?.startSeq)
+    const end = Number(job?.endSeq)
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return ''
+    return `${user}:${start}:${end}`
+  }
+
+  async function runSummaryQueue () {
+    if (summaryCtrl.running) return
+    const queue = ensureSummaryQueue()
+    if (!queue.length) return
+    summaryCtrl.running = true
+    try {
+      while (queue.length) {
+        const job = queue.shift()
+        if (!job) continue
+        summaryCtrl.activeKey = summaryJobKey(job)
+        try {
+          const ok = await processConversationSummary(job)
+          if (typeof job._resolve === 'function') {
+            try { job._resolve(Boolean(ok)) } catch {}
+          }
+          await maybeRunDialogueAggregation()
+        } catch (err) {
+          if (typeof job._resolve === 'function') {
+            try { job._resolve(false) } catch {}
+          }
+          traceChat('[chat] summary job error', err?.message || err)
+        }
+      }
+    } catch (e) {
+      traceChat('[chat] summary queue run error', e?.message || e)
+    } finally {
+      summaryCtrl.activeKey = ''
+      summaryCtrl.running = false
     }
   }
 
@@ -2507,24 +2575,37 @@ function createMemoryService ({
       if (!entry) return
       const startSeq = Number(entry.startSeq)
       const endSeq = Number(entry.lastSeq || state.aiRecentSeq)
-      if (!Number.isFinite(startSeq) || !Number.isFinite(endSeq) || endSeq <= startSeq) return
-      const participants = entry.participants instanceof Set ? [...entry.participants] : []
+      if (!Number.isFinite(startSeq) || !Number.isFinite(endSeq) || endSeq < startSeq) return
+      const participants = entry.participants instanceof Set
+        ? [...entry.participants]
+        : (Array.isArray(entry.participants) ? entry.participants : [])
       const payload = {
         id: `conv_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
         username,
-        participants,
+        participants: mergeParticipants(participants),
         startSeq,
         endSeq,
         startedAt: entry.startedAt || now(),
         endedAt: entry.lastAt || now(),
         reason
       }
+      const key = summaryJobKey(payload)
+      if (!key) return Promise.resolve(false)
+      const queue = ensureSummaryQueue()
+      const exists = summaryCtrl.activeKey === key || queue.some(job => summaryJobKey(job) === key)
+      if (exists) return Promise.resolve(false)
       if (state.ai?.trace) {
         try { traceChat('[chat] summary queued', { id: payload.id, username, reason, seq: [startSeq, endSeq] }) } catch {}
       }
-      return processConversationSummary(payload).catch(err => traceChat('[chat] summary error', err?.message || err))
+      let resolver = null
+      const promise = new Promise(resolve => { resolver = resolve })
+      payload._resolve = resolver
+      queue.push(payload)
+      runSummaryQueue().catch(err => traceChat('[chat] summary error', err?.message || err))
+      return promise
     } catch (e) {
       traceChat('[chat] summary queue error', e?.message || e)
+      return Promise.resolve(false)
     }
   }
 
@@ -2542,11 +2623,13 @@ function createMemoryService ({
     const removedSamples = []
     state.aiDialogues = state.aiDialogues.filter(entry => {
       if (!entry || typeof entry !== 'object') return false
-      const summary = typeof entry.summary === 'string' ? entry.summary.trim() : ''
-      if (!summary) return true
-      const bad = looksLikePromptEchoSummary(summary)
-      if (bad && removedSamples.length < 2) removedSamples.push(summary.slice(0, 120))
-      return !bad
+      const summary = sanitizeSummaryText(entry.summary, { maxLen: 220 })
+      if (summary) {
+        entry.summary = summary
+        return true
+      }
+      if (removedSamples.length < 2) removedSamples.push(String(entry.summary || '').slice(0, 120))
+      return false
     })
     const changed = state.aiDialogues.length !== before
     if (changed) {
