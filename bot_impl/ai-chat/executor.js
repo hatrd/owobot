@@ -426,7 +426,7 @@ function createChatExecutor ({
       `计划模式：第${stepNo}/${plan.steps.length}步`,
       plan.goal ? `目标：${plan.goal}` : '',
       `步骤：${stepText}`,
-      '请直接调用工具完成；若暂时无需行动请使用 skip{} 工具。'
+      '请直接调用工具完成；若暂时无需行动请使用 skip{}。若你调用 say{} 说完了，也会立即结束本轮。'
     ].filter(Boolean).join('\n')
     let reply = ''
     let memoryRefs = []
@@ -647,7 +647,8 @@ function createChatExecutor ({
         totalToolCalls += 1
 
         if (handled && handled.halt) {
-          return finish('')
+          const finalReply = String(handled?.fallbackReply || '').trim()
+          return finish(finalReply)
         }
         const handledText = shortText(handled?.result || 'ok', 220)
         const handledFallback = String(handled?.fallbackReply || '').trim()
@@ -882,7 +883,7 @@ function createChatExecutor ({
   async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun = false, dryEvents = null }) {
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     const result = (resultText, fallbackReply = '') => ({ result: String(resultText || 'ok'), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
-    const halt = (resultText = 'halt') => ({ halt: true, result: String(resultText) })
+    const halt = (resultText = 'halt', fallbackReply = '') => ({ halt: true, result: String(resultText), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
     const appendDry = (type, data = {}) => {
       if (!dryRun || !Array.isArray(dryEvents)) return
       dryEvents.push({ t: now(), type: String(type || ''), ...data })
@@ -896,7 +897,7 @@ function createChatExecutor ({
       appendDry('tool.call', { tool: toolName, args: payload.args || {} })
       if (toolLower === 'say') {
         appendDry('tool.say', { args: payload.args || {}, fallbackText: speech || '' })
-        return result('say_dry_preview', speech || '')
+        return halt('say_dry_preview', speech || '')
       }
       if (!isActionToolAllowed(toolName)) return result('tool_unknown', '这个我还不会哟~')
       let dryRes
@@ -1012,7 +1013,7 @@ function createChatExecutor ({
       if (!ok && speech) {
         pulse.sendChatReply(username, speech, { reason: 'tool_say_fallback', from: 'LLM', memoryRefs })
       }
-      return result(ok ? 'say_sent' : 'say_fallback')
+      return halt(ok ? 'say_sent' : 'say_fallback')
     }
     try {
       if (toolName === 'mount_player') {
