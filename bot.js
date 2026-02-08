@@ -327,7 +327,23 @@ async function handleCtlRequest (req) {
     if (!provided || provided !== ctl.token) return { id, ok: false, error: 'unauthorized' }
   }
 
+  if (op === 'ctl.schema' || op === 'observe.schema' || op === 'tool.schema') {
+    // Require inside handler so hot reload cache clears stay consistent.
+    // eslint-disable-next-line import/no-dynamic-require
+    const schemaMod = require(path.join(pluginRoot, 'interaction-schema'))
+    if (op === 'ctl.schema') return { id, ok: true, result: schemaMod.getCtlSchema() }
+    if (op === 'observe.schema') return { id, ok: true, result: schemaMod.getObserveSchema() }
+    return { id, ok: true, result: schemaMod.getToolSchema() }
+  }
+
   if (op === 'hello') {
+    let capabilities = null
+    try {
+      // Require inside handler so hot reload cache clears stay consistent.
+      // eslint-disable-next-line import/no-dynamic-require
+      const schemaMod = require(path.join(pluginRoot, 'interaction-schema'))
+      if (typeof schemaMod.getRuntimeCapabilities === 'function') capabilities = schemaMod.getRuntimeCapabilities()
+    } catch {}
     return {
       id,
       ok: true,
@@ -336,7 +352,8 @@ async function handleCtlRequest (req) {
         pid: process.pid,
         startedAt: ctl.startedAt,
         hasBot: Boolean(bot),
-        username: bot && bot.username ? bot.username : null
+        username: bot && bot.username ? bot.username : null,
+        capabilities
       }
     }
   }
@@ -411,16 +428,22 @@ async function handleCtlRequest (req) {
 
     if (op === 'tool.list') {
       const registered = actions.list()
-      const allowlist = Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : []
-      const regSet = new Set(registered)
+      const report = typeof actionsMod.buildToolRegistryReport === 'function'
+        ? actionsMod.buildToolRegistryReport(registered)
+        : {
+            allowlist: Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : [],
+            registered,
+            missing: [],
+            extra: []
+          }
       return {
         id,
         ok: true,
         result: {
-          allowlist,
-          registered,
-          missing: allowlist.filter(n => !regSet.has(n)),
-          extra: registered.filter(n => !allowlist.includes(n))
+          allowlist: report.allowlist,
+          registered: report.registered,
+          missing: report.missing,
+          extra: report.extra
         }
       }
     }
@@ -428,8 +451,10 @@ async function handleCtlRequest (req) {
     const tool = req && req.tool != null ? String(req.tool) : ''
     const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
     if (!tool) return { id, ok: false, error: 'missing tool' }
-    const allowlist = Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : []
-    if (!allowlist.includes(tool)) return { id, ok: false, error: `tool not allowlisted: ${tool}` }
+    const isAllowlisted = typeof actionsMod.isToolAllowlisted === 'function'
+      ? actionsMod.isToolAllowlisted(tool)
+      : (Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES.includes(tool) : false)
+    if (!isAllowlisted) return { id, ok: false, error: `tool not allowlisted: ${tool}` }
 
     if (op === 'tool.dry') {
       const r = actions.dry ? await actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported' }

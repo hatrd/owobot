@@ -1,4 +1,5 @@
-const ACTION_TOOL_DEFINITIONS = [
+const actionsMod = require('../actions')
+const ACTION_TOOL_SCHEMA_OVERRIDES = [
   {
     name: 'goto',
     description: 'Pathfind to an absolute coordinate.',
@@ -680,7 +681,79 @@ const SPECIAL_TOOLS = [
   }
 ]
 
+const DEFAULT_ACTION_PARAMETERS = { type: 'object', properties: {}, additionalProperties: true }
+
+function cloneObject (value) {
+  if (!value || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(cloneObject)
+  const out = {}
+  for (const [key, item] of Object.entries(value)) out[key] = cloneObject(item)
+  return out
+}
+
+function listActionToolMetadata () {
+  if (typeof actionsMod.listToolMetadata === 'function') return actionsMod.listToolMetadata()
+  if (Array.isArray(actionsMod.TOOL_NAMES)) {
+    return actionsMod.TOOL_NAMES.map(name => ({ name, dryCapability: 'validate_only' }))
+  }
+  return []
+}
+
+function normalizeActionToolDefinition (def, fallbackName = '') {
+  const name = String(def?.name || fallbackName || '').trim()
+  const description = String(def?.description || ('Execute action tool "' + name + '".')).trim()
+  const parameters = def?.parameters && typeof def.parameters === 'object'
+    ? cloneObject(def.parameters)
+    : cloneObject(DEFAULT_ACTION_PARAMETERS)
+  return {
+    ...cloneObject(def || {}),
+    name,
+    description,
+    parameters
+  }
+}
+
+const ACTION_TOOL_OVERRIDE_MAP = new Map()
+for (const entry of ACTION_TOOL_SCHEMA_OVERRIDES) {
+  const normalized = normalizeActionToolDefinition(entry)
+  if (!normalized.name) continue
+  if (ACTION_TOOL_OVERRIDE_MAP.has(normalized.name)) throw new Error('Duplicate action tool schema: ' + normalized.name)
+  ACTION_TOOL_OVERRIDE_MAP.set(normalized.name, normalized)
+}
+
+const ACTION_TOOL_SCHEMAS_REPORT = {
+  missingSchema: [],
+  staleSchema: []
+}
+
+const ACTION_TOOL_DEFINITIONS = listActionToolMetadata().map((meta) => {
+  const name = String(meta?.name || '').trim()
+  if (!name) return null
+  const provided = ACTION_TOOL_OVERRIDE_MAP.get(name)
+  if (!provided) ACTION_TOOL_SCHEMAS_REPORT.missingSchema.push(name)
+  const normalized = normalizeActionToolDefinition(provided || { name }, name)
+  return {
+    ...normalized,
+    dryCapability: meta?.dryCapability === 'read_only' ? 'read_only' : 'validate_only'
+  }
+}).filter(Boolean)
+
+const ACTION_TOOL_NAME_SET = new Set(ACTION_TOOL_DEFINITIONS.map(def => def.name))
+ACTION_TOOL_SCHEMAS_REPORT.staleSchema = Array.from(ACTION_TOOL_OVERRIDE_MAP.keys()).filter(name => !ACTION_TOOL_NAME_SET.has(name))
+
 const ACTION_TOOL_SET = new Set(ACTION_TOOL_DEFINITIONS.map(t => t.name))
+
+function listActionToolDefinitions () {
+  return ACTION_TOOL_DEFINITIONS.map(def => normalizeActionToolDefinition(def, def.name))
+}
+
+function getActionToolSchemaReport () {
+  return {
+    allowlistCount: ACTION_TOOL_DEFINITIONS.length,
+    missingSchema: ACTION_TOOL_SCHEMAS_REPORT.missingSchema.slice(),
+    staleSchema: ACTION_TOOL_SCHEMAS_REPORT.staleSchema.slice()
+  }
+}
 
 function buildToolFunctionList () {
   const defs = ACTION_TOOL_DEFINITIONS.concat(SPECIAL_TOOLS)
@@ -695,11 +768,16 @@ function buildToolFunctionList () {
 }
 
 function isActionToolAllowed (name) {
-  return ACTION_TOOL_SET.has(String(name || ''))
+  const normalized = String(name || '')
+  if (!normalized) return false
+  if (typeof actionsMod.isToolAllowlisted === 'function') return actionsMod.isToolAllowlisted(normalized)
+  return ACTION_TOOL_SET.has(normalized)
 }
 
 module.exports = {
   ACTION_TOOL_DEFINITIONS,
+  listActionToolDefinitions,
+  getActionToolSchemaReport,
   buildToolFunctionList,
   isActionToolAllowed
 }

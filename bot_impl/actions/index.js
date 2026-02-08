@@ -4,7 +4,96 @@ const pvp = require('../pvp')
 const observer = require('../agent/observer')
 const skillRunnerMod = require('../agent/runner')
 
-const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'voice_status', 'voice_speak', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'use_item', 'toss', 'read_book', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'range_attack', 'attack_armor_stand', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests', 'query_player_stats', 'query_leaderboard', 'announce_daily_star', 'people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
+const TOOL_SPECS = [
+  { name: 'goto' },
+  { name: 'goto_block' },
+  { name: 'follow_player' },
+  { name: 'reset' },
+  { name: 'stop' },
+  { name: 'stop_all' },
+  { name: 'say' },
+  { name: 'voice_status', dryCapability: 'read_only' },
+  { name: 'voice_speak' },
+  { name: 'hunt_player' },
+  { name: 'defend_area' },
+  { name: 'defend_player' },
+  { name: 'equip' },
+  { name: 'use_item' },
+  { name: 'toss' },
+  { name: 'read_book', dryCapability: 'read_only' },
+  { name: 'break_blocks' },
+  { name: 'place_blocks' },
+  { name: 'light_area' },
+  { name: 'collect' },
+  { name: 'pickup' },
+  { name: 'gather' },
+  { name: 'harvest' },
+  { name: 'feed_animals' },
+  { name: 'cull_hostiles' },
+  { name: 'mount_near' },
+  { name: 'mount_player' },
+  { name: 'dismount' },
+  { name: 'observe_detail', dryCapability: 'read_only' },
+  { name: 'observe_players', dryCapability: 'read_only' },
+  { name: 'deposit' },
+  { name: 'deposit_all' },
+  { name: 'withdraw' },
+  { name: 'withdraw_all' },
+  { name: 'autofish' },
+  { name: 'mine_ore' },
+  { name: 'range_attack' },
+  { name: 'attack_armor_stand' },
+  { name: 'skill_start' },
+  { name: 'skill_status' },
+  { name: 'skill_cancel' },
+  { name: 'sort_chests' },
+  { name: 'query_player_stats' },
+  { name: 'query_leaderboard' },
+  { name: 'announce_daily_star' },
+  { name: 'people_commitments_list' },
+  { name: 'people_commitments_dedupe' },
+  { name: 'people_commitments_clear' }
+]
+
+const TOOL_METADATA = TOOL_SPECS.map((spec) => {
+  const name = String(spec?.name || '').trim()
+  const dryCapability = spec?.dryCapability === 'read_only' ? 'read_only' : 'validate_only'
+  return { name, dryCapability }
+})
+
+const TOOL_META_BY_NAME = new Map()
+for (const meta of TOOL_METADATA) {
+  if (!meta.name) throw new Error('Invalid tool metadata: empty name')
+  if (TOOL_META_BY_NAME.has(meta.name)) throw new Error(`Duplicate tool metadata: ${meta.name}`)
+  TOOL_META_BY_NAME.set(meta.name, meta)
+}
+
+const TOOL_NAMES = TOOL_METADATA.map(meta => meta.name)
+
+function listToolMetadata () {
+  return TOOL_METADATA.map(meta => ({ ...meta }))
+}
+
+function getToolMetadata (name) {
+  return TOOL_META_BY_NAME.get(String(name || '')) || null
+}
+
+function isToolAllowlisted (name) {
+  return TOOL_META_BY_NAME.has(String(name || ''))
+}
+
+function buildToolRegistryReport (registeredNames = []) {
+  const registered = Array.isArray(registeredNames)
+    ? registeredNames.map(name => String(name || '')).filter(Boolean)
+    : []
+  const regSet = new Set(registered)
+  return {
+    allowlist: TOOL_NAMES.slice(),
+    registered,
+    missing: TOOL_NAMES.filter(name => !regSet.has(name)),
+    extra: registered.filter(name => !TOOL_META_BY_NAME.has(name))
+  }
+}
 
 const MODULES = [
   require('./modules/movement'),
@@ -104,15 +193,13 @@ function install (bot, options = {}) {
     return Promise.resolve().then(async () => {
       const name = String(tool || '')
       if (!name) return { ok: false, msg: '缺少工具名', blocks: ['missing_tool'] }
-      if (!TOOL_NAMES.includes(name)) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
+      const toolMeta = getToolMetadata(name)
+      if (!toolMeta) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
       const fn = ctx.registry.get(name)
       if (!fn) return { ok: false, msg: '未知工具', blocks: ['unknown_tool'] }
       const safeArgs = (args && typeof args === 'object') ? args : {}
 
-      // Read-only dry-run: allow a small set of safe, non-side-effect tools to probe runtime state.
-      // This is primarily for data-fetch tools where "validate_only" is not useful.
-      const readOnlyDryTools = new Set(['read_book', 'observe_detail', 'observe_players', 'voice_status'])
-      if (readOnlyDryTools.has(name)) {
+      if (toolMeta.dryCapability === 'read_only') {
         try {
           const r = await Promise.resolve(fn(safeArgs))
           if (r && typeof r === 'object') {
@@ -160,12 +247,19 @@ function install (bot, options = {}) {
 
   if (process.env.MC_DEBUG === '1' || process.env.MC_DEBUG === 'true') {
     const names = list()
-    const missing = TOOL_NAMES.filter(n => !names.includes(n))
-    const extra = names.filter(n => !TOOL_NAMES.includes(n))
-    if (missing.length || extra.length) ctx.log?.warn && ctx.log.warn('TOOL_NAMES mismatch', { missing, extra })
+    const report = buildToolRegistryReport(names)
+    if (report.missing.length || report.extra.length) ctx.log?.warn && ctx.log.warn('tool registry mismatch', { missing: report.missing, extra: report.extra })
   }
 
   return { run, list, dry }
 }
 
-module.exports = { install, TOOL_NAMES }
+module.exports = {
+  install,
+  TOOL_NAMES,
+  TOOL_SPECS,
+  listToolMetadata,
+  getToolMetadata,
+  isToolAllowlisted,
+  buildToolRegistryReport
+}

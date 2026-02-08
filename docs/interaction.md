@@ -21,6 +21,7 @@ Fast entrypoints:
 - `npm run interaction:list`
 - `npm run interaction:observe`
 - `npm run interaction:dry`
+- `npm run interaction:docgen`
 
 Related design docs:
 
@@ -96,6 +97,9 @@ node scripts/botctl.js observe detail what=inventory radius=12
 node scripts/botctl.js run voice_status
 node scripts/botctl.js run voice_speak preset=ciallo
 node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" withTools=true maxToolCalls=6
+node scripts/botctl.js schema ctl
+node scripts/botctl.js schema observe
+node scripts/botctl.js schema tool
 ```
 
 Options:
@@ -116,38 +120,18 @@ Each request is one JSON object per line; each response is one JSON object per l
 - Request: `{ id, op, ... }`
 - Response: `{ id, ok, result?, error? }`
 
-Supported ops (MVP):
+Supported ops/what/tool coverage is generated from runtime schema; this doc keeps only workflow and examples.
 
-- `hello`
-- `tool.list`
-- `tool.dry` with `{ tool, args }`
-- `tool.run` with `{ tool, args }`
-- `observe.snapshot` with `{ args }`
-- `observe.prompt` with `{ args }`
-- `observe.detail` with `{ args }`
+- Canonical snapshot: `docs/interaction.generated.md`
+- Refresh snapshot: `npm run interaction:docgen`
+- Live schema query: `node scripts/botctl.js schema ctl|observe|tool`
+- Compatibility handshake: `node scripts/botctl.js hello` and check
+  - `result.capabilities.schema.hash`
+  - `result.capabilities.build.hash`
 
 ## Observer Ops (Control Plane)
 
-Observer endpoints are read-only by design and are intended for low-cost verification.
-
-- `observe.snapshot`: returns structured runtime snapshot (position, vitals, nearby, inventory summary, current task).
-- `observe.prompt`: returns `{ prompt, snapshot }` using the same prompt shape consumed by AI context assembly.
-- `observe.detail`: returns focused detail (`what=inventory|players|hostiles|entities|blocks|animals|cats|cows|containers|signs|space_snapshot|environment|room_probe`, with `radius`, `max`).
-  - For `players|hostiles|entities|animals|cats|cows`, `result.msg` now includes a short top-N preview (name/type/distance) to reduce repetitive count-only replies.
-  - For `what=containers`, optional `openAttempts` / `openTimeoutMs` can tune read-only container open retries/timeout in slow servers.
-
-Container inspection (`what=containers`) supports all nearby container categories:
-
-- `chest` / `trapped_chest`（普通箱子）
-- `barrel`（木桶）
-- `ender_chest`（末影箱）
-- `*_shulker_box`（潜影箱）
-
-Optional args for containers:
-
-- `containerType=any|chest|barrel|ender_chest|shulker_box`
-- `itemMax=<N>` per-container max item kinds returned
-- `full=true` include full aggregated item list (`allItems`)
+Observer endpoints are read-only by design. Exact `what` canonical list / aliases are exposed by `observe.schema` and mirrored in `docs/interaction.generated.md`.
 
 Examples:
 

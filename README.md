@@ -17,8 +17,11 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 ## Documentation Index
 
 - Interaction contract (first-class): `docs/interaction.md`
+- Interaction schema snapshot (generated): `docs/interaction.generated.md`
 - Hot reload manual: `docs/hot-reload.md`
 - Runtime shared-state map: `docs/runtime-map.md`
+- Actions contract (tool register/dry/run): `docs/actions-contract.md`
+- Observer contract (snapshot/prompt/detail): `docs/observer-contract.md`
 - AI chat pipeline: `docs/ai-chat.md`
 - Context bus design: `docs/context-bus.md`
 - Environment observation roadmap: `docs/environment-observation.md`
@@ -27,4 +30,3 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 ## Archive / Pitfalls
 
 - Deprecated Minimal Self implementation and notes: `trash/minimal-self/README.md`
-

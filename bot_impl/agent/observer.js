@@ -1306,152 +1306,240 @@ async function detailContainers (bot, args = {}) {
   return { ok: true, msg, data: rows }
 }
 
+const DETAIL_WHAT_ALIASES = Object.freeze({
+  container: 'containers',
+  chests: 'containers',
+  boxes: 'containers',
+  container_contents: 'containers',
+  chest_contents: 'containers',
+  nearby_entities: 'entities',
+  passives: 'animals',
+  cat: 'cats',
+  sign: 'signs',
+  signboard: 'signs',
+  boards: 'signs',
+  space: 'space_snapshot',
+  room_probe: 'space_snapshot',
+  environment: 'space_snapshot',
+  inv: 'inventory',
+  bag: 'inventory',
+  cow: 'cows'
+})
+
+const DETAIL_WHAT_CANONICAL = Object.freeze([
+  'containers',
+  'players',
+  'hostiles',
+  'entities',
+  'animals',
+  'cats',
+  'signs',
+  'space_snapshot',
+  'inventory',
+  'cows',
+  'blocks'
+])
+
+const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
+  containers: 'Inspect nearby containers in read-only mode with diagnostic fields on failures.',
+  players: 'Nearby players from mineflayer runtime state.',
+  hostiles: 'Nearby hostile mobs.',
+  entities: 'Nearby entities with optional species/match filters.',
+  animals: 'Nearby passive animals.',
+  cats: 'Nearby cats.',
+  signs: 'Nearby signs and extracted text.',
+  space_snapshot: 'Environment/room profile snapshot.',
+  inventory: 'Current bot inventory summary.',
+  cows: 'Nearby cows.',
+  blocks: 'Nearby non-air blocks around current position.'
+})
+
+function parsePositiveInt (value, fallback, min = 1) {
+  const n = parseInt(String(value == null ? fallback : value), 10)
+  if (!Number.isFinite(n)) return Math.max(min, fallback)
+  return Math.max(min, n)
+}
+
+function normalizeDetailWhat (value) {
+  const raw = String(value || 'entities').trim().toLowerCase()
+  return DETAIL_WHAT_ALIASES[raw] || raw
+}
+
+function getDetailSchema () {
+  const aliases = []
+  for (const [alias, canonical] of Object.entries(DETAIL_WHAT_ALIASES)) {
+    aliases.push({ alias, canonical })
+  }
+  const supported = DETAIL_WHAT_CANONICAL.map((what) => ({
+    what,
+    description: DETAIL_WHAT_DESCRIPTIONS[what] || ''
+  }))
+  return {
+    version: 1,
+    op: 'observe.detail',
+    defaultWhat: 'entities',
+    supported,
+    aliases,
+    args: {
+      what: { type: 'string', enum: DETAIL_WHAT_CANONICAL.slice(), aliases: aliases.map(entry => entry.alias) },
+      radius: { type: 'integer', minimum: 1, default: 16 },
+      max: { type: 'integer', minimum: 1, default: 24 },
+      namedOnly: { type: 'boolean', description: 'Applies to entities/animals/cats/cows.' }
+    }
+  }
+}
+
 function detail (bot, args = {}) {
-  const what = String(args.what || 'entities').toLowerCase()
-  const radius = Math.max(1, parseInt(args.radius || '16', 10))
-  const max = Math.max(1, parseInt(args.max || '24', 10))
+  const what = normalizeDetailWhat(args.what)
+  const radius = parsePositiveInt(args.radius, 16, 1)
+  const max = parsePositiveInt(args.max, 24, 1)
   const namedOnlyArg = parseObserveBoolArg(args.namedOnly ?? args.named ?? args.nametagOnly ?? args.nameTagOnly)
   const me = bot.entity?.position
   if (!me) return { ok: false, msg: '未就绪', data: null }
-  if (what === 'containers' || what === 'container' || what === 'chests' || what === 'boxes' || what === 'container_contents' || what === 'chest_contents') {
-    return detailContainers(bot, args)
-  }
-  if (what === 'players') {
-    const list = []
-    for (const [name, rec] of Object.entries(bot.players || {})) {
-      try {
-        const e = rec?.entity; if (!e || e === bot.entity) continue
-        const d = e.position.distanceTo(me)
-        if (d > radius) continue
-        list.push({ name, d: Number(d.toFixed(2)) })
-      } catch {}
-    }
-    list.sort((a, b) => a.d - b.d)
-    const out = list.slice(0, max)
-    const msg = attachObservePreview(`附近玩家${list.length}个(半径${radius})`, out, 6)
-    return { ok: true, msg, data: out }
-  }
-  if (what === 'hostiles') {
-    const hs = hostileSet()
-    const hostileTokens = Array.from(hs)
-    const list = []
-    for (const e of Object.values(bot.entities || {})) {
-      try {
-        if (e?.type !== 'mob' || !e.position) continue
-        const info = entityNameProfile(e)
-        const searchable = String(info.searchable || '')
-        if (!hostileTokens.some(token => searchable.includes(String(token)))) continue
-        const d = e.position.distanceTo(me)
-        if (d > radius) continue
-        list.push(buildEntityObserveRow(e, d, info))
-      } catch {}
-    }
-    list.sort((a, b) => a.d - b.d)
-    const out = list.slice(0, max)
-    const msg = attachObservePreview(`附近敌对${list.length}个(半径${radius})`, out, 6)
-    return { ok: true, msg, data: out }
-  }
-  if (what === 'entities') {
-    const species = String(args.species || args.entity || '').trim().toLowerCase()
-    const match = String(args.match || '').trim().toLowerCase()
-    const namedOnly = namedOnlyArg !== false
-    const list = []
-    for (const e of Object.values(bot.entities || {})) {
-      try {
-        if (!e?.position) continue
-        const d = e.position.distanceTo(me)
-        if (d > radius) continue
-        const info = entityNameProfile(e)
-        const text = info.searchable
-        if (species && !text.includes(species)) continue
-        if (match && !text.includes(match)) continue
-        const row = buildEntityObserveRow(e, d, info)
-        if (namedOnly && !row.named) continue
-        list.push(row)
-      } catch {}
-    }
-    list.sort((a, b) => a.d - b.d)
-    const out = list.slice(0, max)
-    const msg = attachObservePreview(`附近实体${list.length}个(半径${radius})`, out, 6)
-    return { ok: true, msg, data: out }
-  }
-  if (what === 'nearby_entities') {
-    return detail(bot, { ...args, what: 'entities' })
-  }
-  if (what === 'animals' || what === 'passives') {
-    const namedOnly = namedOnlyArg !== false
-    const r = collectAnimals(bot, radius, null)
-    const rows = namedOnly ? r.list.filter(row => row.named) : r.list
-    const out = rows.slice(0, max)
-    const msg = attachObservePreview(`附近动物${rows.length}个(半径${radius})`, out, 6)
-    return { ok: true, msg, data: out }
-  }
-  if (what === 'cats' || what === 'cat') {
-    const namedOnly = namedOnlyArg !== false
-    const r = collectAnimals(bot, radius, 'cat')
-    const rows = namedOnly ? r.list.filter(row => row.named) : r.list
-    const out = rows.slice(0, max)
-    const msg = attachObservePreview(`附近猫${rows.length}只(半径${radius})`, out, 6)
-    return { ok: true, msg, data: out }
-  }
-  if (what === 'signs' || what === 'sign' || what === 'signboard' || what === 'boards') {
-    const list = collectNearbySigns(bot, { radius, max })
-    const withText = list.filter(x => x.text)
-    const out = list.slice(0, Math.max(1, max))
-    const msg = attachObservePreview(`附近告示牌${list.length}个(半径${radius})，有内容${withText.length}个`, out, 6)
-    return {
-      ok: true,
-      msg,
-      data: list
-    }
-  }
-  if (what === 'space' || what === 'space_snapshot' || what === 'room_probe' || what === 'environment') {
-    const profile = collectSpaceProfile(bot, args)
-    if (!profile) return { ok: false, msg: '空间探测失败', data: null }
-    const env = profile.environment || {}
-    const geo = profile.geometry || {}
-    const bbox = geo.bbox || {}
-    const m = profile.metrics || {}
-    const msg = `环境=${env.label || env.kind || '未知'} 置信=${Math.round((env.confidence || 0) * 100)}% 封闭=${Math.round((m.enclosureRatio || 0) * 100)}% 顶盖=${Math.round((m.roofCoverage || 0) * 100)}% 未知=${Math.round((m.unknownRatio || 0) * 100)}% ${Number.isFinite(bbox.width) && Number.isFinite(bbox.depth) ? `尺寸≈${bbox.width}x${bbox.depth}` : ''}`.trim()
-    return { ok: true, msg, data: profile }
-  }
-  if (what === 'inventory' || what === 'inv' || what === 'bag') {
-    const inv = collectInventorySummary(bot, 999)
-    const all = Array.isArray(inv.all) ? inv.all : []
-    const line = all.length ? all.map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(', ') : '空'
-    return { ok: true, msg: `背包物品(${all.length}种): ${line}`, data: inv }
-  }
-  if (what === 'cows' || what === 'cow') {
-    const namedOnly = namedOnlyArg !== false
-    const r = collectAnimals(bot, radius, 'cow')
-    const rows = namedOnly ? r.list.filter(row => row.named) : r.list
-    const out = rows.slice(0, max)
-    const msg = attachObservePreview(`附近奶牛${rows.length}头(半径${radius})`, out, 6)
-    return { ok: true, msg, data: out }
-  }
-  if (what === 'blocks') {
-    const list = []
-    const center = me.floored()
-    const r = Math.min(radius, 8) // hard cap to keep it light
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -1; dy <= 2; dy++) {
-        for (let dz = -r; dz <= r; dz++) {
-          try {
-            const p = center.offset(dx, dy, dz)
-            const b = bot.blockAt(p)
-            if (!b) continue
-            const n = String(b.name || '')
-            if (!n || n === 'air') continue
-            const d = p.distanceTo(me)
-            list.push({ name: n, x: p.x, y: p.y, z: p.z, d: Number(d.toFixed(2)) })
-          } catch {}
+
+  const handlers = {
+    containers: () => detailContainers(bot, args),
+    players: () => {
+      const list = []
+      for (const [name, rec] of Object.entries(bot.players || {})) {
+        try {
+          const e = rec?.entity; if (!e || e === bot.entity) continue
+          const d = e.position.distanceTo(me)
+          if (d > radius) continue
+          list.push({ name, d: Number(d.toFixed(2)) })
+        } catch {}
+      }
+      list.sort((a, b) => a.d - b.d)
+      const out = list.slice(0, max)
+      const msg = attachObservePreview(`附近玩家${list.length}个(半径${radius})`, out, 6)
+      return { ok: true, msg, data: out }
+    },
+    hostiles: () => {
+      const hs = hostileSet()
+      const hostileTokens = Array.from(hs)
+      const list = []
+      for (const e of Object.values(bot.entities || {})) {
+        try {
+          if (e?.type !== 'mob' || !e.position) continue
+          const info = entityNameProfile(e)
+          const searchable = String(info.searchable || '')
+          if (!hostileTokens.some(token => searchable.includes(String(token)))) continue
+          const d = e.position.distanceTo(me)
+          if (d > radius) continue
+          list.push(buildEntityObserveRow(e, d, info))
+        } catch {}
+      }
+      list.sort((a, b) => a.d - b.d)
+      const out = list.slice(0, max)
+      const msg = attachObservePreview(`附近敌对${list.length}个(半径${radius})`, out, 6)
+      return { ok: true, msg, data: out }
+    },
+    entities: () => {
+      const species = String(args.species || args.entity || '').trim().toLowerCase()
+      const match = String(args.match || '').trim().toLowerCase()
+      const namedOnly = namedOnlyArg !== false
+      const list = []
+      for (const e of Object.values(bot.entities || {})) {
+        try {
+          if (!e?.position) continue
+          const d = e.position.distanceTo(me)
+          if (d > radius) continue
+          const info = entityNameProfile(e)
+          const text = info.searchable
+          if (species && !text.includes(species)) continue
+          if (match && !text.includes(match)) continue
+          const row = buildEntityObserveRow(e, d, info)
+          if (namedOnly && !row.named) continue
+          list.push(row)
+        } catch {}
+      }
+      list.sort((a, b) => a.d - b.d)
+      const out = list.slice(0, max)
+      const msg = attachObservePreview(`附近实体${list.length}个(半径${radius})`, out, 6)
+      return { ok: true, msg, data: out }
+    },
+    animals: () => {
+      const namedOnly = namedOnlyArg !== false
+      const r = collectAnimals(bot, radius, null)
+      const rows = namedOnly ? r.list.filter(row => row.named) : r.list
+      const out = rows.slice(0, max)
+      const msg = attachObservePreview(`附近动物${rows.length}个(半径${radius})`, out, 6)
+      return { ok: true, msg, data: out }
+    },
+    cats: () => {
+      const namedOnly = namedOnlyArg !== false
+      const r = collectAnimals(bot, radius, 'cat')
+      const rows = namedOnly ? r.list.filter(row => row.named) : r.list
+      const out = rows.slice(0, max)
+      const msg = attachObservePreview(`附近猫${rows.length}只(半径${radius})`, out, 6)
+      return { ok: true, msg, data: out }
+    },
+    signs: () => {
+      const list = collectNearbySigns(bot, { radius, max })
+      const withText = list.filter(x => x.text)
+      const out = list.slice(0, Math.max(1, max))
+      const msg = attachObservePreview(`附近告示牌${list.length}个(半径${radius})，有内容${withText.length}个`, out, 6)
+      return { ok: true, msg, data: list }
+    },
+    space_snapshot: () => {
+      const profile = collectSpaceProfile(bot, args)
+      if (!profile) return { ok: false, msg: '空间探测失败', data: null }
+      const env = profile.environment || {}
+      const geo = profile.geometry || {}
+      const bbox = geo.bbox || {}
+      const m = profile.metrics || {}
+      const msg = `环境=${env.label || env.kind || '未知'} 置信=${Math.round((env.confidence || 0) * 100)}% 封闭=${Math.round((m.enclosureRatio || 0) * 100)}% 顶盖=${Math.round((m.roofCoverage || 0) * 100)}% 未知=${Math.round((m.unknownRatio || 0) * 100)}% ${Number.isFinite(bbox.width) && Number.isFinite(bbox.depth) ? `尺寸≈${bbox.width}x${bbox.depth}` : ''}`.trim()
+      return { ok: true, msg, data: profile }
+    },
+    inventory: () => {
+      const inv = collectInventorySummary(bot, 999)
+      const all = Array.isArray(inv.all) ? inv.all : []
+      const line = all.length ? all.map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(', ') : '空'
+      return { ok: true, msg: `背包物品(${all.length}种): ${line}`, data: inv }
+    },
+    cows: () => {
+      const namedOnly = namedOnlyArg !== false
+      const r = collectAnimals(bot, radius, 'cow')
+      const rows = namedOnly ? r.list.filter(row => row.named) : r.list
+      const out = rows.slice(0, max)
+      const msg = attachObservePreview(`附近奶牛${rows.length}头(半径${radius})`, out, 6)
+      return { ok: true, msg, data: out }
+    },
+    blocks: () => {
+      const list = []
+      const center = me.floored()
+      const r = Math.min(radius, 8)
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -1; dy <= 2; dy++) {
+          for (let dz = -r; dz <= r; dz++) {
+            try {
+              const p = center.offset(dx, dy, dz)
+              const b = bot.blockAt(p)
+              if (!b) continue
+              const n = String(b.name || '')
+              if (!n || n === 'air') continue
+              const d = p.distanceTo(me)
+              list.push({ name: n, x: p.x, y: p.y, z: p.z, d: Number(d.toFixed(2)) })
+            } catch {}
+          }
         }
       }
+      list.sort((a, b) => a.d - b.d)
+      return { ok: true, msg: `附近方块${list.length}个(半径${r})`, data: list.slice(0, max) }
     }
-    list.sort((a, b) => a.d - b.d)
-    return { ok: true, msg: `附近方块${list.length}个(半径${r})`, data: list.slice(0, max) }
   }
-  return { ok: false, msg: '未知类别', data: null }
+
+  const handler = handlers[what]
+  if (!handler) return { ok: false, msg: '未知类别', data: null }
+  try {
+    const result = handler()
+    if (result && typeof result.then === 'function') {
+      return result.catch(() => ({ ok: false, msg: '观察失败，请稍后再试~', data: null }))
+    }
+    return result
+  } catch {
+    return { ok: false, msg: '观察失败，请稍后再试~', data: null }
+  }
 }
 
 function affordances (bot, snap = null) {
@@ -1478,4 +1566,4 @@ function affordances (bot, snap = null) {
   } catch { return [] }
 }
 
-module.exports = { snapshot, toPrompt, detail, affordances }
+module.exports = { snapshot, toPrompt, detail, affordances, getDetailSchema, normalizeDetailWhat, DETAIL_WHAT_CANONICAL, DETAIL_WHAT_ALIASES }

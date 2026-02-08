@@ -16,7 +16,8 @@
     "interaction:observe": "node scripts/botctl.js observe snapshot",
     "interaction:dry": "node scripts/interaction-dry-run.js",
     "inspect:context": "node scripts/inspect-injected-context.js",
-    "wt": "bash scripts/wt"
+    "wt": "bash scripts/wt",
+    "interaction:docgen": "node scripts/generate-interaction-doc.js"
   },
   "dependencies": {
     "minecraft-data": "^3.99.1",

@@ -140,10 +140,18 @@ function install (bot, { on, registerCleanup, log } = {}) {
   function listTools () {
     try {
       const actions = actionsMod.install(bot, { log })
-      const registered = new Set(actions.list())
-      const allowed = Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : []
-      const list = allowed.filter(n => registered.has(n))
-      return { list, missing: allowed.filter(n => !registered.has(n)), extra: Array.from(registered).filter(n => !allowed.includes(n)) }
+      const registered = actions.list()
+      const report = typeof actionsMod.buildToolRegistryReport === 'function'
+        ? actionsMod.buildToolRegistryReport(registered)
+        : {
+            allowlist: Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : [],
+            registered,
+            missing: [],
+            extra: []
+          }
+      const regSet = new Set(report.registered)
+      const list = report.allowlist.filter(n => regSet.has(n))
+      return { list, missing: report.missing, extra: report.extra }
     } catch {
       return { list: [], missing: [], extra: [] }
     }
@@ -180,8 +188,10 @@ function install (bot, { on, registerCleanup, log } = {}) {
         return
       }
 
-      const allowed = Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES : []
-      if (!allowed.includes(tool)) {
+      const isAllowlisted = typeof actionsMod.isToolAllowlisted === 'function'
+        ? actionsMod.isToolAllowlisted(tool)
+        : (Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES.includes(tool) : false)
+      if (!isAllowlisted) {
         print('fail', `tool not allowlisted: ${tool}`)
         return
       }

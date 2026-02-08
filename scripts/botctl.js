@@ -10,6 +10,7 @@
 //   node scripts/botctl.js observe prompt [key=value ...]
 //   node scripts/botctl.js observe detail [key=value ...]
 //   node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" [withTools=true] [maxToolCalls=6]
+//   node scripts/botctl.js schema ctl|observe|tool
 //   node scripts/botctl.js restart [mode=detached|inherit] [delayMs=200ms]
 // Options:
 //   --sock <path>   override socket path (default: $PWD/.mcbot.sock)
@@ -89,7 +90,7 @@ async function main () {
   const [cmd, ...rest] = argv.rest
 
   if (!cmd) {
-    process.stderr.write('usage: botctl.js hello|list|dry|run|observe|chatdry|restart ...\n')
+    process.stderr.write('usage: botctl.js hello|list|dry|run|observe|chatdry|restart|schema ...\n')
     process.exit(2)
   }
 
@@ -98,6 +99,16 @@ async function main () {
 
   if (cmd === 'hello') payload = { id, op: 'hello' }
   else if (cmd === 'list') payload = { id, op: 'tool.list' }
+  else if (cmd === 'schema') {
+    const target = String(rest[0] || 'ctl').toLowerCase()
+    if (target === 'ctl') payload = { id, op: 'ctl.schema' }
+    else if (target === 'observe') payload = { id, op: 'observe.schema' }
+    else if (target === 'tool') payload = { id, op: 'tool.schema' }
+    else {
+      process.stderr.write('usage: botctl.js schema ctl|observe|tool\n')
+      process.exit(2)
+    }
+  }
   else if (cmd === 'restart') {
     const args = parseKeyValueArgs(rest)
     payload = { id, op: 'proc.restart', args }
