@@ -96,6 +96,24 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: { type: 'object', properties: {}, additionalProperties: false }
   },
   {
+    name: 'voice_status',
+    description: 'Read current Simple Voice Chat runtime status (enabled/connected/errors).',
+    parameters: { type: 'object', properties: {}, additionalProperties: false }
+  },
+  {
+    name: 'voice_play',
+    description: 'Play/send an audio file through Simple Voice Chat.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Audio file path (absolute or project-relative).' },
+        file: { type: 'string', description: 'Alias of path.' },
+        audio: { type: 'string', description: 'Alias of path.' }
+      },
+      additionalProperties: true
+    }
+  },
+  {
     name: 'equip',
     description: 'Equip an item from the inventory into a destination slot.',
     parameters: {

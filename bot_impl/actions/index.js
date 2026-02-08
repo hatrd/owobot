@@ -4,10 +4,11 @@ const pvp = require('../pvp')
 const observer = require('../agent/observer')
 const skillRunnerMod = require('../agent/runner')
 
-const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'use_item', 'toss', 'read_book', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'range_attack', 'attack_armor_stand', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests', 'query_player_stats', 'query_leaderboard', 'announce_daily_star', 'people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
+const TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'reset', 'stop', 'stop_all', 'say', 'voice_status', 'voice_play', 'hunt_player', 'defend_area', 'defend_player', 'equip', 'use_item', 'toss', 'read_book', 'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest', 'feed_animals', 'cull_hostiles', 'mount_near', 'mount_player', 'dismount', 'observe_detail', 'observe_players', 'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'autofish', 'mine_ore', 'range_attack', 'attack_armor_stand', 'skill_start', 'skill_status', 'skill_cancel', 'sort_chests', 'query_player_stats', 'query_leaderboard', 'announce_daily_star', 'people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
 
 const MODULES = [
   require('./modules/movement'),
+  require('./modules/voice'),
   require('./modules/skills'),
   require('./modules/farming'),
   require('./modules/observation'),
@@ -110,7 +111,7 @@ function install (bot, options = {}) {
 
       // Read-only dry-run: allow a small set of safe, non-side-effect tools to probe runtime state.
       // This is primarily for data-fetch tools where "validate_only" is not useful.
-      const readOnlyDryTools = new Set(['read_book', 'observe_detail', 'observe_players'])
+      const readOnlyDryTools = new Set(['read_book', 'observe_detail', 'observe_players', 'voice_status'])
       if (readOnlyDryTools.has(name)) {
         try {
           const r = await Promise.resolve(fn(safeArgs))

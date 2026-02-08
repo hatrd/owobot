@@ -19,6 +19,7 @@ const MODULES = [
   { id: 'inventory-compress', path: './inventory-compress', logger: 'compress', kind: 'feature', description: 'Craft compacted stacks to free inventory slots' },
   { id: 'frame-sorter', path: './frame-sorter', logger: 'frames', kind: 'feature', description: 'Item frame sorter utilities' },
   { id: 'auto-login', path: './auto-login', logger: 'login', kind: 'feature', description: 'Handle /login prompts automatically' },
+  { id: 'voice-chat', path: './voice-chat', logger: 'voice', kind: 'feature', description: 'Simple Voice Chat plugin bridge and CLI controls' },
   { id: 'drops-debug', path: './drops-debug', logger: 'drops', kind: 'debug', description: 'CLI helpers for nearby item entities' },
   { id: 'collect-cli', path: './collect-cli', logger: 'collect', kind: 'cli', description: 'CLI command for collecting drops around the bot' },
   { id: 'tool-cli', path: './tool-cli', logger: 'tool', kind: 'cli', description: 'Unified CLI entrypoint for running action tools (.tool ...)' },

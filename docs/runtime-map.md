@@ -16,6 +16,7 @@ This project keeps long-lived state in `bot_impl/index.js` so that hot reloads c
 | `currentTask` | `object|null` | Lightweight descriptor of the action the bot is performing (tool name, source, start timestamp). Shown in status CLI and reset on completion. |
 | `autoLookSuspended` | `boolean` | Hint for visual modules (e.g., fishing) that they have temporarily claimed camera control. |
 | `loginPassword` | `string?` | Optional cached server password used by `auto-login`. |
+| `voiceChat` | `object` | Simple Voice Chat runtime state (`enabled/available/pluginLoaded/connected`) with last error, last speaker, and last played audio path/time. |
 | `aiRecentReplies` | `Map<string, number>` | Tracks recent AI replies to avoid greeting someone immediately after chatting with them. |
 
 All collections are normalised (`Map`/`Set`/`Array`) each time `activate()` runs so modules can depend on consistent shapes.

@@ -103,8 +103,16 @@ Default digging policy (simplified)
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
+- `.voice status|play <path>|play path=<path>` — inspect voice plugin status or send an audio file through Simple Voice Chat
 - `.ai ...` — configure AI key/model/base/path; list tools
 - `.pulse status|on|off|now` — control automatic DeepSeek chat pulses (flush recent player chats and produce a proactive reply)
+
+### Voice Chat Notes
+- Depends on `mineflayer-simplevoice` and the server/client side Simple Voice Chat mod.
+- Set `MC_VOICECHAT=off` to disable voice plugin loading at runtime.
+- Optional `MC_VOICECHAT_LOGLEVEL=<number>` maps to `simplevoice.setLoggingLevel(...)`.
+- Default target host follows the bot's server host when voice target is loopback (`127.x`/`localhost`).
+- Optional `MC_VOICECHAT_HOST` / `MC_VOICECHAT_PORT` can force UDP target overrides.
 
 ## Farming
 - Harvest and replant crops: `harvest{only?, radius?, replant?}`

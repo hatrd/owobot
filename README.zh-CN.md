@@ -100,8 +100,16 @@
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`
 - `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
+- `.voice status|play <path>|play path=<path>` — 查看语音插件状态或通过 Simple Voice Chat 发送音频文件
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
 - `.pulse status|on|off|now` — 控制自动 DeepSeek 聊天脉冲（定期汇总玩家聊天并主动发言）
+
+### 语音功能说明
+- 依赖 `mineflayer-simplevoice`，并要求服务端/客户端已安装 Simple Voice Chat 模组。
+- 可通过 `MC_VOICECHAT=off` 在运行时禁用语音插件加载。
+- 可选 `MC_VOICECHAT_LOGLEVEL=<number>`，对应 `simplevoice.setLoggingLevel(...)`。
+- 默认情况下，当语音地址为回环（`127.x`/`localhost`）时，会自动跟随 bot 连接服务器域名。
+- 可选 `MC_VOICECHAT_HOST` / `MC_VOICECHAT_PORT`，用于强制覆盖语音 UDP 地址。
 
 ## 种植
 - 收割并重种：`harvest{only?, radius?, replant?}`

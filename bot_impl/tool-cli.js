@@ -19,7 +19,12 @@ const ALIASES = {
   collect: 'collect',
   go: 'goto',
   goto: 'goto',
-  say: 'say'
+  say: 'say',
+  voice: 'voice_status',
+  vstatus: 'voice_status',
+  voice_status: 'voice_status',
+  vplay: 'voice_play',
+  voice_play: 'voice_play'
 }
 
 function isNum (s) {
@@ -101,6 +106,12 @@ function parseArgsForTool (tool, tokens) {
   if (t === 'say') {
     // `.tool say hello world` -> text="hello world"
     if (args.text == null && positionals.length) args.text = positionals.join(' ')
+    return args
+  }
+
+  if (t === 'voice_play') {
+    // `.tool voice_play ./music.mp3` -> path="./music.mp3"
+    if (args.path == null && positionals.length) args.path = positionals.join(' ')
     return args
   }
 
