@@ -151,8 +151,10 @@ Examples:
 node scripts/botctl.js observe snapshot invTop=8 nearPlayerRange=16
 node scripts/botctl.js observe prompt hostileRange=24
 node scripts/botctl.js observe detail what=players radius=24 max=12
-node scripts/botctl.js observe detail what=containers radius=20 max=8
-node scripts/botctl.js observe detail what=containers containerType=barrel radius=20 max=8
+node scripts/botctl.js observe detail what=containers radius=6 max=8
+node scripts/botctl.js observe detail what=containers containerType=barrel radius=6 max=8
+node scripts/botctl.js observe detail what=containers containerType=smoker radius=6 max=8
+node scripts/botctl.js observe detail what=containers containerType=hopper radius=6 max=8
 node scripts/botctl.js observe detail what=signs radius=24 max=20
 node scripts/botctl.js dry observe_detail what=environment radius=12
 ```

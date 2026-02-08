@@ -6,6 +6,9 @@ const HOSTILE_TOKENS_CN = ['苦力怕','僵尸','骷髅','蜘蛛','洞穴蜘蛛'
 let bookLib = null
 try { bookLib = require('../actions/lib/book') } catch {}
 
+let containerLib = null
+try { containerLib = require('../actions/lib/containers') } catch {}
+
 function ensureMcData (bot) { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
 
 function fmtNum (n) { return Number.isFinite(n) ? Number(n).toFixed(1) : String(n) }
@@ -220,11 +223,30 @@ function sanitizeObserveCustomNameCandidate (value) {
   }
 }
 
+function isObserveNoiseText (value) {
+  const text = String(value == null ? '' : value).trim()
+  if (!text) return true
+  const low = text.toLowerCase()
+  if (low === 'false' || low === 'true' || low === 'null' || low === 'undefined' || low === 'unknown') return true
+  if (/^-?\d+(\.\d+)?$/.test(text)) return true
+  return false
+}
+
+function parseObserveBoolArg (value) {
+  if (value == null) return null
+  if (typeof value === 'boolean') return value
+  const text = String(value).trim().toLowerCase()
+  if (!text) return null
+  if (['1', 'true', 'yes', 'y', 'on', '是', '要'].includes(text)) return true
+  if (['0', 'false', 'no', 'n', 'off', '否', '不要'].includes(text)) return false
+  return null
+}
+
 function entityNameProfile (e) {
   try {
-    const base = entityText(e?.name)
-    const display = entityText(e?.displayName)
-    const username = entityText(e?.username)
+    const base = firstValidObserveText(entityText(e?.name))
+    const display = firstValidObserveText(entityText(e?.displayName))
+    const username = firstValidObserveText(entityText(e?.username))
     const candidates = [e?.customName, e?.metadata?.customName, e?.metadata?.CustomName]
     const meta = e?.metadata
     if (Array.isArray(meta)) {
@@ -237,7 +259,8 @@ function entityNameProfile (e) {
       const t = sanitizeObserveCustomNameCandidate(c)
       if (t) { custom = t; break }
     }
-    const title = custom || username || display || base || 'unknown'
+    const fallbackType = firstValidObserveText(e?.name, e?.kind, e?.type, 'entity')
+    const title = firstValidObserveText(custom, username, base, display, fallbackType, 'unknown') || 'unknown'
     const searchable = [base, display, username, custom, title, String(e?.type || ''), String(e?.kind || '')]
       .filter(Boolean)
       .join(' ')
@@ -251,9 +274,9 @@ function entityNameProfile (e) {
 function buildEntityObserveRow (e, d, info = null) {
   const profile = info && typeof info === 'object' ? info : entityNameProfile(e)
   const customName = profile?.custom || null
-  const entityName = profile?.base || null
-  const displayName = profile?.display || null
-  const resolvedName = profile?.title || displayName || entityName || 'unknown'
+  const entityName = firstValidObserveText(profile?.base, e?.name, e?.kind, e?.type) || null
+  const displayName = firstValidObserveText(profile?.display) || null
+  const resolvedName = firstValidObserveText(profile?.title, displayName, entityName, e?.type, e?.kind, 'unknown') || 'unknown'
   const customLow = String(customName || '').trim().toLowerCase()
   const entityLow = String(entityName || '').trim().toLowerCase()
   const displayLow = String(displayName || '').trim().toLowerCase()
@@ -267,10 +290,10 @@ function buildEntityObserveRow (e, d, info = null) {
     customLow !== entityLow &&
     customLow !== displayLow
   )
-  const typeLabel = String(entityName || e?.type || displayName || 'entity')
+  const typeLabel = firstValidObserveText(entityName, displayName, e?.type, e?.kind, 'entity') || 'entity'
   const observeLabel = hasNamedTag
     ? `${typeLabel}「${customName}」`
-    : String(resolvedName)
+    : firstValidObserveText(resolvedName, entityName, displayName, e?.type, e?.kind, 'unknown') || 'unknown'
 
   return {
     id: e?.id,
@@ -761,9 +784,7 @@ function collectAnimals (bot, range = 16, species = null) {
 function firstValidObserveText (...candidates) {
   for (const c of candidates) {
     const text = String(c == null ? '' : c).trim()
-    if (!text) continue
-    const low = text.toLowerCase()
-    if (low === 'false' || low === 'true' || low === 'null' || low === 'undefined' || low === 'unknown') continue
+    if (isObserveNoiseText(text)) continue
     return text
   }
   return ''
@@ -771,19 +792,21 @@ function firstValidObserveText (...candidates) {
 
 function formatObserveRowBrief (row = {}) {
   try {
-    const name = firstValidObserveText(row.observeLabel, row.name, row.customName, row.displayName, row.entityName, row.type, row.kind, 'unknown')
-    const type = firstValidObserveText(row.entityName, row.type)
-    const kind = firstValidObserveText(row.kind)
-    const tags = []
-    const lowName = String(name || '').toLowerCase()
-    const lowType = String(type || '').toLowerCase()
-    const headAlreadyCarriesType = lowType && (lowName === lowType || lowName.startsWith(`${lowType}「`))
-    if (type && type !== name && !headAlreadyCarriesType) tags.push(type)
-    if (kind && kind !== name && kind !== type) tags.push(`#${kind}`)
+    // Signs: show text snippet
+    if (row && isSignBlockName(row.blockName || row.name || '')) {
+      const t = firstValidObserveText(row.text, Array.isArray(row.front) ? row.front.join(' | ') : '', Array.isArray(row.back) ? row.back.join(' | ') : '')
+      const d0 = Number(row.d)
+      const dist0 = Number.isFinite(d0) ? `${d0.toFixed(1)}m` : ''
+      if (t) return [`告示牌:${t}`.slice(0, 40), dist0].filter(Boolean).join(' ')
+      return ['告示牌', dist0].filter(Boolean).join(' ')
+    }
+    const namedLabel = row.named
+      ? firstValidObserveText(row.observeLabel, row.customName && row.entityName ? `${row.entityName}「${row.customName}」` : '')
+      : ''
+    const name = firstValidObserveText(namedLabel, row.observeLabel, row.name, row.customName, row.displayName, row.entityName, row.type, 'unknown')
     const d = Number(row.d)
     const dist = Number.isFinite(d) ? `${d.toFixed(1)}m` : ''
-    const head = tags.length ? `${name}[${tags.join('/')}]` : name
-    return [head, dist].filter(Boolean).join(' ')
+    return [name, dist].filter(Boolean).join(' ')
   } catch {
     return ''
   }
@@ -959,6 +982,7 @@ function toPrompt (snap) {
 }
 
 function normalizeContainerType (raw) {
+  if (containerLib?.normalizeContainerType) return containerLib.normalizeContainerType(raw, { fallback: 'any' })
   const s = String(raw ?? '').trim().toLowerCase()
   if (!s) return 'any'
   if (['any', 'auto', 'default', 'all', '任意', '随便'].includes(s)) return 'any'
@@ -970,6 +994,7 @@ function normalizeContainerType (raw) {
 }
 
 function containerGroupFromName (name) {
+  if (containerLib?.containerGroupFromName) return containerLib.containerGroupFromName(name)
   const s = String(name || '').toLowerCase()
   if (s === 'chest' || s === 'trapped_chest') return 'chest'
   if (s === 'barrel') return 'barrel'
@@ -979,6 +1004,7 @@ function containerGroupFromName (name) {
 }
 
 function containerTypeLabel (type) {
+  if (containerLib?.containerTypeLabel) return containerLib.containerTypeLabel(type)
   if (type === 'chest') return '箱子'
   if (type === 'barrel') return '木桶'
   if (type === 'ender_chest') return '末影箱'
@@ -987,6 +1013,7 @@ function containerTypeLabel (type) {
 }
 
 function isContainerNameMatch (name, containerType = 'any') {
+  if (containerLib?.isContainerNameMatch) return containerLib.isContainerNameMatch(name, containerType, { includeBarrel: true })
   const s = String(name || '').toLowerCase()
   if (containerType === 'chest') return (s === 'chest' || s === 'trapped_chest')
   if (containerType === 'barrel') return s === 'barrel'
@@ -1037,10 +1064,26 @@ function summarizeItems (bot, items, maxKinds = 24) {
   }
 }
 
+function formatAggregatedItemBrief (row, limit = 4) {
+  try {
+    const items = Array.isArray(row?.items) ? row.items : []
+    if (!items.length) return '空'
+    const cap = Math.max(1, Math.min(8, Math.floor(Number(limit) || 4)))
+    const shown = items.slice(0, cap).map(it => `${it.name}${it.label ? `「${it.label}」` : ''}x${it.count}`).join(',')
+    const suffix = (Number(row?.kinds) > cap) ? `,…+${Number(row.kinds) - cap}种` : ''
+    return `${shown}${suffix}`
+  } catch {
+    return '空'
+  }
+}
+
 async function openContainerReadOnly (bot, block, opts = {}) {
   if (!block) return { container: null, error: 'missing_block', method: null }
 
+  const noRetry = opts.noRetry === true
+
   const openAttempts = (() => {
+    if (noRetry) return 1
     const raw = parseInt(opts.openAttempts ?? opts.attempts ?? '3', 10)
     if (!Number.isFinite(raw)) return 3
     return Math.max(1, Math.min(6, raw))
@@ -1074,7 +1117,13 @@ async function openContainerReadOnly (bot, block, opts = {}) {
   if (blockName === 'ender_chest' && typeof bot.openEnderChest !== 'function') {
     errors.push('openEnderChest API unavailable on this bot version')
   }
+  if (containerLib?.isFurnaceLikeBlockName && containerLib.isFurnaceLikeBlockName(blockName) && typeof bot.openFurnace !== 'function') {
+    errors.push('openFurnace API unavailable on this bot version')
+  }
   const openers = []
+  if (containerLib?.isFurnaceLikeBlockName && containerLib.isFurnaceLikeBlockName(blockName) && typeof bot.openFurnace === 'function') {
+    openers.push({ method: 'openFurnace(block)', fn: async () => await bot.openFurnace(block) })
+  }
   if (blockName === 'ender_chest' && typeof bot.openEnderChest === 'function') {
     openers.push({ method: 'openEnderChest(block)', fn: async () => await bot.openEnderChest(block) })
     openers.push({ method: 'openEnderChest()', fn: async () => await bot.openEnderChest() })
@@ -1104,6 +1153,7 @@ async function openContainerReadOnly (bot, block, opts = {}) {
       }
     })
   }
+  const effectiveOpeners = noRetry ? openers.slice(0, 1) : openers
   if (!openers.length) return { container: null, error: 'no_open_api', method: null }
 
   for (let attempt = 1; attempt <= openAttempts; attempt++) {
@@ -1118,7 +1168,7 @@ async function openContainerReadOnly (bot, block, opts = {}) {
         await wait(140)
       }
 
-      for (const opener of openers) {
+      for (const opener of effectiveOpeners) {
         try {
           const container = await withTimeout(opener.method, opener.fn, openTimeoutMs)
           if (container) return { container, error: null, method: opener.method }
@@ -1144,11 +1194,12 @@ async function openContainerReadOnly (bot, block, opts = {}) {
 async function detailContainers (bot, args = {}) {
   const me = bot.entity?.position
   if (!me) return { ok: false, msg: '未就绪', data: null }
-  const radius = Math.max(1, parseInt(args.radius || '16', 10))
+  const requestedRadius = Math.max(1, parseInt(args.radius || '16', 10))
+  const radius = Math.min(6, requestedRadius)
   const max = Math.max(1, parseInt(args.max || '12', 10))
   const itemMax = Math.max(1, parseInt(args.itemMax || args.items || '24', 10))
   const full = String(args.full || '').toLowerCase() === 'true'
-  const openAttempts = Math.max(1, Math.min(6, parseInt(args.openAttempts || args.attempts || '3', 10) || 3))
+  const openAttempts = 1
   const openTimeoutMs = Math.max(500, Math.min(15000, parseInt(args.openTimeoutMs || args.openTimeout || args.timeoutMs || '3500', 10) || 3500))
   const containerType = normalizeContainerType(args.containerType ?? args.container ?? args.type)
   const count = Math.max(max * 4, max)
@@ -1166,6 +1217,8 @@ async function detailContainers (bot, args = {}) {
   for (const pos of positions.slice(0, max)) {
     const block = bot.blockAt(pos)
     if (!block || !isContainerNameMatch(block.name, containerType)) continue
+    const blockNameLower = String(block.name || '').toLowerCase()
+    const isFurnaceLike = Boolean(containerLib?.isFurnaceLikeBlockName && containerLib.isFurnaceLikeBlockName(blockNameLower))
     const row = {
       containerType: containerGroupFromName(block.name),
       blockName: String(block.name || ''),
@@ -1181,10 +1234,13 @@ async function detailContainers (bot, args = {}) {
     let container = null
     let openMeta = null
     try {
-      openMeta = await openContainerReadOnly(bot, block, { openAttempts, openTimeoutMs })
+      openMeta = await openContainerReadOnly(bot, block, { openAttempts, openTimeoutMs, noRetry: true })
       container = openMeta?.container || null
       if (!container) {
-        row.error = openMeta?.error || 'open_failed'
+        row.ok = false
+        row.unreachable = true
+        row.error = 'unreachable'
+        if (openMeta?.error) row.openError = openMeta.error
         if (Array.isArray(openMeta?.errors) && openMeta.errors.length) row.openErrors = openMeta.errors
         rows.push(row)
         continue
@@ -1197,9 +1253,24 @@ async function detailContainers (bot, args = {}) {
       row.total = summarized.total
       row.items = summarized.items
       if (full) row.allItems = summarized.all
+      if (isFurnaceLike) {
+        const input = container?.slots?.[0] || null
+        const fuel = container?.slots?.[1] || null
+        const output = container?.slots?.[2] || null
+        row.furnace = {
+          input: input ? { name: input.name || String(input.type), label: itemCustomLabel(bot, input), count: input.count || 0 } : null,
+          fuel: fuel ? { name: fuel.name || String(fuel.type), label: itemCustomLabel(bot, fuel), count: fuel.count || 0 } : null,
+          output: output ? { name: output.name || String(output.type), label: itemCustomLabel(bot, output), count: output.count || 0 } : null
+        }
+        if (Number.isFinite(Number(container?.fuel))) row.fuel = Number(container.fuel)
+        if (Number.isFinite(Number(container?.progress))) row.progress = Number(container.progress)
+      }
       rows.push(row)
     } catch (e) {
-      row.error = String(e?.message || e)
+      row.ok = false
+      row.unreachable = true
+      row.error = 'unreachable'
+      row.openError = String(e?.message || e)
       rows.push(row)
     } finally {
       try { container?.close?.() } catch {}
@@ -1208,7 +1279,30 @@ async function detailContainers (bot, args = {}) {
 
   const okCount = rows.filter(r => r.ok).length
   const failCount = rows.length - okCount
-  const msg = `附近${containerTypeLabel(containerType)}${rows.length}个(半径${radius})，读取成功${okCount}个${failCount > 0 ? `，失败${failCount}个` : ''}`
+  const unreachableCount = rows.filter(r => r.unreachable).length
+  const baseMsg = `附近${containerTypeLabel(containerType)}${rows.length}个(半径${radius})，读取成功${okCount}个${failCount > 0 ? `，失败${failCount}个` : ''}${unreachableCount > 0 ? `，不可触达${unreachableCount}个` : ''}`
+  const previews = []
+  for (const r of rows) {
+    if (!r?.ok) continue
+    const d = Number.isFinite(Number(r.d)) ? `${Number(r.d).toFixed(1)}m` : ''
+    const bn = String(r.blockName || 'container')
+    const label = containerTypeLabel(String(bn).toLowerCase())
+    const headName = (label && label !== '容器') ? `${label}(${bn})` : bn
+    const head = `${headName}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.z)} ${d}`.trim()
+    if (r.furnace) {
+      // Use structured row.furnace for text (container may have been closed).
+      const inText = r.furnace.input ? `${r.furnace.input.name}${r.furnace.input.label ? `「${r.furnace.input.label}」` : ''}x${r.furnace.input.count || 1}` : '空'
+      const fuelText = r.furnace.fuel ? `${r.furnace.fuel.name}${r.furnace.fuel.label ? `「${r.furnace.fuel.label}」` : ''}x${r.furnace.fuel.count || 1}` : '空'
+      const outText = r.furnace.output ? `${r.furnace.output.name}${r.furnace.output.label ? `「${r.furnace.output.label}」` : ''}x${r.furnace.output.count || 1}` : '空'
+      const prog = Number.isFinite(Number(r.progress)) ? ` 进度=${Math.round(Number(r.progress) * 100)}%` : ''
+      const fuelPct = Number.isFinite(Number(r.fuel)) ? ` 燃料条=${Math.round(Number(r.fuel) * 100)}%` : ''
+      previews.push(`${head} 原料=${inText} 燃料=${fuelText} 成品=${outText}${fuelPct}${prog}`.trim())
+    } else {
+      previews.push(`${head} ${formatAggregatedItemBrief(r, 4)}`.trim())
+    }
+    if (previews.length >= 3) break
+  }
+  const msg = previews.length ? `${baseMsg}: ${previews.join('；')}` : baseMsg
   return { ok: true, msg, data: rows }
 }
 
@@ -1216,6 +1310,7 @@ function detail (bot, args = {}) {
   const what = String(args.what || 'entities').toLowerCase()
   const radius = Math.max(1, parseInt(args.radius || '16', 10))
   const max = Math.max(1, parseInt(args.max || '24', 10))
+  const namedOnlyArg = parseObserveBoolArg(args.namedOnly ?? args.named ?? args.nametagOnly ?? args.nameTagOnly)
   const me = bot.entity?.position
   if (!me) return { ok: false, msg: '未就绪', data: null }
   if (what === 'containers' || what === 'container' || what === 'chests' || what === 'boxes' || what === 'container_contents' || what === 'chest_contents') {
@@ -1259,6 +1354,7 @@ function detail (bot, args = {}) {
   if (what === 'entities') {
     const species = String(args.species || args.entity || '').trim().toLowerCase()
     const match = String(args.match || '').trim().toLowerCase()
+    const namedOnly = namedOnlyArg !== false
     const list = []
     for (const e of Object.values(bot.entities || {})) {
       try {
@@ -1269,7 +1365,9 @@ function detail (bot, args = {}) {
         const text = info.searchable
         if (species && !text.includes(species)) continue
         if (match && !text.includes(match)) continue
-        list.push(buildEntityObserveRow(e, d, info))
+        const row = buildEntityObserveRow(e, d, info)
+        if (namedOnly && !row.named) continue
+        list.push(row)
       } catch {}
     }
     list.sort((a, b) => a.d - b.d)
@@ -1281,23 +1379,29 @@ function detail (bot, args = {}) {
     return detail(bot, { ...args, what: 'entities' })
   }
   if (what === 'animals' || what === 'passives') {
+    const namedOnly = namedOnlyArg !== false
     const r = collectAnimals(bot, radius, null)
-    const out = r.list.slice(0, max)
-    const msg = attachObservePreview(`附近动物${r.count}个(半径${radius})`, out, 6)
+    const rows = namedOnly ? r.list.filter(row => row.named) : r.list
+    const out = rows.slice(0, max)
+    const msg = attachObservePreview(`附近动物${rows.length}个(半径${radius})`, out, 6)
     return { ok: true, msg, data: out }
   }
   if (what === 'cats' || what === 'cat') {
+    const namedOnly = namedOnlyArg !== false
     const r = collectAnimals(bot, radius, 'cat')
-    const out = r.list.slice(0, max)
-    const msg = attachObservePreview(`附近猫${r.count}只(半径${radius})`, out, 6)
+    const rows = namedOnly ? r.list.filter(row => row.named) : r.list
+    const out = rows.slice(0, max)
+    const msg = attachObservePreview(`附近猫${rows.length}只(半径${radius})`, out, 6)
     return { ok: true, msg, data: out }
   }
   if (what === 'signs' || what === 'sign' || what === 'signboard' || what === 'boards') {
     const list = collectNearbySigns(bot, { radius, max })
     const withText = list.filter(x => x.text)
+    const out = list.slice(0, Math.max(1, max))
+    const msg = attachObservePreview(`附近告示牌${list.length}个(半径${radius})，有内容${withText.length}个`, out, 6)
     return {
       ok: true,
-      msg: `附近告示牌${list.length}个(半径${radius})，有内容${withText.length}个`,
+      msg,
       data: list
     }
   }
@@ -1318,9 +1422,11 @@ function detail (bot, args = {}) {
     return { ok: true, msg: `背包物品(${all.length}种): ${line}`, data: inv }
   }
   if (what === 'cows' || what === 'cow') {
+    const namedOnly = namedOnlyArg !== false
     const r = collectAnimals(bot, radius, 'cow')
-    const out = r.list.slice(0, max)
-    const msg = attachObservePreview(`附近奶牛${r.count}头(半径${radius})`, out, 6)
+    const rows = namedOnly ? r.list.filter(row => row.named) : r.list
+    const out = rows.slice(0, max)
+    const msg = attachObservePreview(`附近奶牛${rows.length}头(半径${radius})`, out, 6)
     return { ok: true, msg, data: out }
   }
   if (what === 'blocks') {

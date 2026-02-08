@@ -180,11 +180,15 @@ const ACTION_TOOL_DEFINITIONS = [
           type: 'string',
           description: 'Inspection target: players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
         },
-        radius: { type: 'number', description: 'Search radius around bot.' },
+        namedOnly: {
+          type: 'boolean',
+          description: 'When what=entities|animals|cats|cows, return only entities with explicit nametags by default; set false to include all.'
+        },
+        radius: { type: 'number', description: 'Search radius around bot. For what=containers, runtime clamps radius to <=6.' },
         max: { type: 'number', description: 'Max entities/containers returned.' },
         containerType: {
           type: 'string',
-          description: 'When what=containers: any|chest|barrel|ender_chest|shulker_box (Chinese aliases also accepted).'
+          description: 'When what=containers: any|storage|chest|barrel|ender_chest|shulker_box|furnace|smoker|blast_furnace|hopper|dispenser|dropper|brewing_stand (Chinese aliases also accepted).'
         },
         itemMax: { type: 'number', description: 'When what=containers: max item kinds returned for each container.' },
         full: { type: 'boolean', description: 'When what=containers: include all aggregated items via allItems.' }
@@ -321,11 +325,15 @@ const ACTION_TOOL_DEFINITIONS = [
   },
   {
     name: 'deposit',
-    description: 'Deposit items into the nearest reachable chest/barrel.',
+    description: 'Deposit items into the nearest reachable container (storage blocks, hoppers, and furnace-like blocks).',
     parameters: {
       type: 'object',
       properties: {
-        containerType: { type: 'string', description: 'Container type: chest|barrel|ender_chest|shulker_box|any (supports Chinese synonyms).' },
+        containerType: { type: 'string', description: 'Container type: storage|chest|barrel|ender_chest|shulker_box|furnace|smoker|blast_furnace|hopper|dispenser|dropper|brewing_stand|any (supports Chinese synonyms).' },
+        x: { type: 'number', description: 'Optional target block X.' },
+        y: { type: 'number', description: 'Optional target block Y.' },
+        z: { type: 'number', description: 'Optional target block Z.' },
+        to: { type: 'string', description: 'For furnace-like blocks: input|fuel (defaults to input). all=true is not supported on furnace-like blocks.' },
         items: {
           type: 'array',
           description: 'List of {name|slot,count} entries to deposit.',
@@ -352,11 +360,15 @@ const ACTION_TOOL_DEFINITIONS = [
   },
   {
     name: 'withdraw',
-    description: 'Withdraw items from the nearest container.',
+    description: 'Withdraw items from the nearest reachable container (supports furnace-like output slot).',
     parameters: {
       type: 'object',
       properties: {
-        containerType: { type: 'string', description: 'Container type: chest|barrel|ender_chest|shulker_box|any (supports Chinese synonyms).' },
+        containerType: { type: 'string', description: 'Container type: storage|chest|barrel|ender_chest|shulker_box|furnace|smoker|blast_furnace|hopper|dispenser|dropper|brewing_stand|any (supports Chinese synonyms).' },
+        x: { type: 'number', description: 'Optional target block X.' },
+        y: { type: 'number', description: 'Optional target block Y.' },
+        z: { type: 'number', description: 'Optional target block Z.' },
+        from: { type: 'string', description: 'For furnace-like blocks: output|input|fuel|any (defaults to output). For all=true you likely want from=any.' },
         items: {
           type: 'array',
           description: 'List of {name,count} entries to withdraw.',
@@ -638,11 +650,11 @@ const SPECIAL_TOOLS = [
   },
   {
     name: 'skip',
-    description: 'Do nothing this turn (no reply, no action). Use when waiting or nothing is needed.',
+    description: 'Do nothing and end the current tool loop immediately. Use when waiting, or when the task is already completed and no further action/reply is needed.',
     parameters: {
       type: 'object',
       properties: {
-        reason: { type: 'string', description: 'Why we are skipping this round.' }
+        reason: { type: 'string', description: 'Why we skip and end this round.' }
       },
       additionalProperties: true
     }

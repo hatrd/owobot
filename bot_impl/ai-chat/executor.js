@@ -777,16 +777,36 @@ function createChatExecutor ({
 
   function formatObserveEntityBrief (row = {}) {
     try {
-      const name = shortText(row.observeLabel || row.name || row.customName || row.displayName || row.entityName || row.type || row.kind || 'unknown', 20)
-      const kindParts = []
-      const entityName = shortText(row.entityName || row.type || '', 14)
-      const kind = shortText(row.kind || '', 10)
-      if (entityName && entityName !== name) kindParts.push(entityName)
-      if (kind && kind !== name && kind !== entityName) kindParts.push(`#${kind}`)
+      // Container row (observe_detail what=containers)
+      if (row && (row.blockName || row.containerType)) {
+        const name = shortText(String(row.blockName || row.containerType || 'container'), 20)
+        const d = Number(row.d)
+        const dist = Number.isFinite(d) ? `${d.toFixed(1)}m` : ''
+        if (row.furnace && typeof row.furnace === 'object') {
+          const out = row.furnace.output
+          const outName = out?.name ? String(out.name) : ''
+          const outCount = Number(out?.count)
+          const outText = outName ? `out:${shortText(outName, 12)}${Number.isFinite(outCount) && outCount > 0 ? `x${outCount}` : ''}` : ''
+          return [name, outText, dist].filter(Boolean).join(' ')
+        }
+        const items = Array.isArray(row.items) ? row.items : []
+        const top = items.length ? `${shortText(String(items[0]?.name || ''), 12)}${Number(items[0]?.count) > 0 ? `x${Number(items[0].count)}` : ''}` : ''
+        return [name, top, dist].filter(Boolean).join(' ')
+      }
+      // Sign row (observe_detail what=signs)
+      if (row && row.text && (String(row.blockName || '').toLowerCase().includes('sign'))) {
+        const text = shortText(String(row.text || '').replace(/\s+/g, ' ').trim(), 22)
+        const d = Number(row.d)
+        const dist = Number.isFinite(d) ? `${d.toFixed(1)}m` : ''
+        return [`sign:${text}`, dist].filter(Boolean).join(' ')
+      }
+      const namedLabel = row.named
+        ? (row.observeLabel || (row.customName && row.entityName ? `${row.entityName}「${row.customName}」` : row.customName) || '')
+        : ''
+      const name = shortText(namedLabel || row.observeLabel || row.name || row.customName || row.displayName || row.entityName || row.type || 'unknown', 20)
       const d = Number(row.d)
       const dist = Number.isFinite(d) ? `${d.toFixed(1)}m` : ''
-      const head = kindParts.length ? `${name}[${kindParts.join('/')}]` : name
-      return [head, dist].filter(Boolean).join(' ')
+      return [name, dist].filter(Boolean).join(' ')
     } catch {
       return ''
     }
@@ -868,7 +888,7 @@ function createChatExecutor ({
 
     let toolName = String(payload.tool)
     let toolLower = toolName.toLowerCase()
-    if (toolLower === 'skip') return result('skip')
+    if (toolLower === 'skip') return halt('skip')
 
     if (dryRun) {
       appendDry('tool.call', { tool: toolName, args: payload.args || {} })

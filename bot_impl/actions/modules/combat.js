@@ -1,5 +1,6 @@
 const { oreLabelFromOnly } = require('../lib/ore')
 const { countItemByName, ensureItemEquipped, itemsMatchingName } = require('../lib/inventory')
+const containerLib = require('../lib/containers')
 const { isSelfEntity, resolvePlayerEntityExact } = require('../lib/self')
 const logging = require('../../logging')
 
@@ -2732,24 +2733,20 @@ module.exports = function registerCombat (ctx) {
   }
 
   function normalizeContainerType (raw) {
-    const s = String(raw ?? '').trim().toLowerCase()
-    if (!s) return null
-    if (['any', 'auto', 'default', 'all', '任意', '随便'].includes(s)) return 'any'
-    if (['chest', 'box', '箱子', '箱'].includes(s)) return 'chest'
-    if (['barrel', '木桶', '桶'].includes(s)) return 'barrel'
-    if (['ender_chest', 'enderchest', 'ender-chest', 'ender chest', 'ender', '末影箱', '末影'].includes(s)) return 'ender_chest'
-    if (['shulker_box', 'shulkerbox', 'shulker-box', 'shulker box', 'shulker', '潜影箱', '潜影盒', '潜影'].includes(s)) return 'shulker_box'
-    return null
+    return containerLib.normalizeContainerType(raw, { fallback: null })
   }
 
   async function openContainerBlock (blk) {
     if (!blk) return null
     try {
+      const name = String(blk.name || '').toLowerCase()
+      if (containerLib.isFurnaceLikeBlockName(name) && typeof bot.openFurnace === 'function') {
+        return await bot.openFurnace(blk)
+      }
       if (typeof bot.activateBlock === 'function') {
         try { await bot.activateBlock(blk) } catch {}
         await wait(120)
       }
-      const name = String(blk.name || '').toLowerCase()
       if (name === 'ender_chest' && typeof bot.openEnderChest === 'function') {
         return await bot.openEnderChest(blk)
       }
@@ -2758,6 +2755,57 @@ module.exports = function registerCombat (ctx) {
       try { log?.warn && log.warn('openContainerBlock error', e?.message || e) } catch {}
       return null
     }
+  }
+
+  function normalizeFurnaceIo (raw, { fallback = null } = {}) {
+    const s = String(raw ?? '').trim().toLowerCase()
+    if (!s) return fallback
+    if (['any', 'all', '任意', '随便', '*'].includes(s)) return 'any'
+    if (['input', 'in', 'source', '原料', '输入', '食材', '物品'].includes(s)) return 'input'
+    if (['fuel', '燃料', '煤', '木炭'].includes(s)) return 'fuel'
+    if (['output', 'out', 'result', '产物', '输出', '结果'].includes(s)) return 'output'
+    return fallback
+  }
+
+  function windowInventoryRange (win) {
+    const start = Number(win?.inventoryStart)
+    const endRaw = Number(win?.inventoryEnd)
+    const slotsLen = Array.isArray(win?.slots) ? win.slots.length : 0
+    const s = Number.isFinite(start) ? Math.max(0, start) : 0
+    const e = Number.isFinite(endRaw) ? Math.max(s, endRaw) : (slotsLen ? slotsLen : s)
+    return { start: s, end: e }
+  }
+
+  async function transferToWindowSlot (win, destSlot, itemType, metadata, count) {
+    const { start, end } = windowInventoryRange(win)
+    if (!Number.isFinite(destSlot) || destSlot < 0) throw new Error('invalid_dest_slot')
+    if (!Number.isFinite(itemType)) throw new Error('invalid_item_type')
+    await bot.transfer({
+      window: win,
+      itemType,
+      metadata: (metadata == null ? null : metadata),
+      count,
+      sourceStart: start,
+      sourceEnd: end,
+      destStart: destSlot,
+      destEnd: destSlot + 1
+    })
+  }
+
+  async function transferFromWindowSlot (win, sourceSlot, itemType, metadata, count) {
+    const { start, end } = windowInventoryRange(win)
+    if (!Number.isFinite(sourceSlot) || sourceSlot < 0) throw new Error('invalid_source_slot')
+    if (!Number.isFinite(itemType)) throw new Error('invalid_item_type')
+    await bot.transfer({
+      window: win,
+      itemType,
+      metadata: (metadata == null ? null : metadata),
+      count,
+      sourceStart: sourceSlot,
+      sourceEnd: sourceSlot + 1,
+      destStart: start,
+      destEnd: end
+    })
   }
 
   // --- Deposit items into nearest chest/barrel ---
@@ -2772,23 +2820,20 @@ module.exports = function registerCombat (ctx) {
     m.canDig = (args.dig === true); m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
-    function isContainerName (n) {
-      const s = String(n || '').toLowerCase()
-      if (containerType === 'chest') return (s === 'chest' || s === 'trapped_chest')
-      if (containerType === 'barrel') return s === 'barrel'
-      if (containerType === 'ender_chest') return s === 'ender_chest'
-      if (containerType === 'shulker_box') return (s === 'shulker_box' || s.endsWith('_shulker_box'))
-      if (containerType === 'any') return (s === 'chest' || s === 'trapped_chest' || s === 'barrel' || s === 'ender_chest' || s === 'shulker_box' || s.endsWith('_shulker_box'))
-      if (s === 'chest' || s === 'trapped_chest') return true
-      if (includeBarrel && s === 'barrel') return true
-      return false
-    }
+    function isContainerName (n) { return containerLib.isContainerNameMatch(n, containerType, { includeBarrel }) }
 
     const me = bot.entity?.position
     if (!me) return fail('未就绪')
-    const blocks = bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 32 }) || []
+    const fixed = (() => {
+      const x = Number(args.x); const y = Number(args.y); const z = Number(args.z)
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
+      return new Vec3(Math.floor(x), Math.floor(y), Math.floor(z))
+    })()
+    const blocks = fixed
+      ? [fixed]
+      : (bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 32 }) || [])
     if (!blocks.length) {
-      const label = containerType === 'barrel' ? '木桶' : (containerType === 'ender_chest' ? '末影箱' : (containerType === 'shulker_box' ? '潜影箱' : (containerType === 'any' ? '可用容器' : '箱子')))
+      const label = containerLib.containerTypeLabel(containerType || 'chest')
       return fail(`附近没有${label}`)
     }
     blocks.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
@@ -2809,10 +2854,13 @@ module.exports = function registerCombat (ctx) {
     // Open container
     const { Vec3 } = require('vec3')
     const blk = bot.blockAt(new Vec3(target.x, target.y, target.z))
-    if (!blk) return fail('箱子不可见')
+    if (!blk) return fail('容器不可见')
+    if (!isContainerName(blk.name)) return fail('目标不是可用容器')
     try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
     const container = await openContainerBlock(blk)
-    if (!container) return fail('无法打开箱子，请稍后再试~')
+    if (!container) return fail('无法打开容器，请稍后再试~')
+    const openedName = String(blk.name || '').toLowerCase()
+    const isFurnaceLike = containerLib.isFurnaceLikeBlockName(openedName)
 
     function itemFromSlot (slot) {
       const key = String(slot).toLowerCase()
@@ -2835,6 +2883,60 @@ module.exports = function registerCombat (ctx) {
     let kinds = 0
     let total = 0
     try {
+      if (isFurnaceLike) {
+        if ((!arr || !arr.length) && (args.all === true || String(args.all).toLowerCase() === 'true')) {
+          return fail('熔炉类容器不支持 all=true，请显式指定要放入的物品')
+        }
+        if (!arr || !arr.length) return fail('缺少物品参数')
+        const to = normalizeFurnaceIo(args.to ?? args.furnaceTo ?? args.containerSlot, { fallback: 'input' })
+        if (to === 'any') return fail('熔炉类容器请使用 to=input 或 to=fuel')
+        const destSlot = (to === 'fuel') ? 1 : 0
+        if (to === 'output') return fail('熔炉的 output 槽不可放入物品')
+        for (const spec of arr) {
+          const cnt = (spec && spec.count != null) ? Math.max(0, Number(spec.count)) : null
+          if (spec.slot) {
+            const it = itemFromSlot(spec.slot)
+            if (!it) continue
+            const n = cnt != null ? Math.min(cnt, it.count || 0) : (it.count || 0)
+            if (n > 0) {
+              try { await transferToWindowSlot(container, destSlot, it.type, it.metadata, n); kinds++; total += n } catch {}
+            }
+            continue
+          }
+          const nm = spec?.name
+          if (!nm) continue
+          const list = itemsMatchingName(bot, nm, { source: bot.inventory?.items() || [], allowPartial: true, includeArmor: false, includeOffhand: true, includeHeld: true })
+          if (!list.length) continue
+          if (cnt != null) {
+            let remaining = Math.max(0, Number(cnt))
+            let moved = 0
+            for (const it of list) {
+              if (!remaining) break
+              const stackCount = it.count || 0
+              if (stackCount <= 0) continue
+              const n = Math.min(remaining, stackCount)
+              if (n <= 0) continue
+              try {
+                await transferToWindowSlot(container, destSlot, it.type, it.metadata, n)
+                moved += n
+                remaining -= n
+              } catch {}
+            }
+            if (moved > 0) { kinds++; total += moved }
+          } else {
+            let moved = 0
+            for (const it of list) {
+              const c = it.count || 0
+              if (c <= 0) continue
+              try { await transferToWindowSlot(container, destSlot, it.type, it.metadata, c); moved += c } catch {}
+            }
+            if (moved > 0) { kinds++; total += moved }
+          }
+        }
+        if (kinds <= 0) return fail('没有可存放的物品')
+        return ok(`已放入${containerLib.containerTypeLabel(openedName)} 共${kinds}种${total}个`)
+      }
+
       if ((!arr || !arr.length) && (args.all === true || String(args.all).toLowerCase() === 'true')) {
         // Modes: by default keep equipped armor and current hands; override via keepEquipped/keepHeld/keepOffhand=false
         const keepEquipped = (args.keepEquipped === undefined) ? true : !(args.keepEquipped === false)
@@ -2923,23 +3025,20 @@ module.exports = function registerCombat (ctx) {
     m.canDig = false; m.allowSprinting = true
     bot.pathfinder.setMovements(m)
 
-    function isContainerName (n) {
-      const s = String(n || '').toLowerCase()
-      if (containerType === 'chest') return (s === 'chest' || s === 'trapped_chest')
-      if (containerType === 'barrel') return s === 'barrel'
-      if (containerType === 'ender_chest') return s === 'ender_chest'
-      if (containerType === 'shulker_box') return (s === 'shulker_box' || s.endsWith('_shulker_box'))
-      if (containerType === 'any') return (s === 'chest' || s === 'trapped_chest' || s === 'barrel' || s === 'ender_chest' || s === 'shulker_box' || s.endsWith('_shulker_box'))
-      if (s === 'chest' || s === 'trapped_chest') return true
-      if (includeBarrel && s === 'barrel') return true
-      return false
-    }
+    function isContainerName (n) { return containerLib.isContainerNameMatch(n, containerType, { includeBarrel }) }
 
     const me = bot.entity?.position
     if (!me) return fail('未就绪')
-    const blocks = bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 48 }) || []
+    const fixed = (() => {
+      const x = Number(args.x); const y = Number(args.y); const z = Number(args.z)
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
+      return new Vec3(Math.floor(x), Math.floor(y), Math.floor(z))
+    })()
+    const blocks = fixed
+      ? [fixed]
+      : (bot.findBlocks({ matching: (b) => b && isContainerName(b.name), maxDistance: Math.max(2, radius), count: 48 }) || [])
     if (!blocks.length) {
-      const label = containerType === 'barrel' ? '木桶' : (containerType === 'ender_chest' ? '末影箱' : (containerType === 'shulker_box' ? '潜影箱' : (containerType === 'any' ? '可用容器' : '箱子')))
+      const label = containerLib.containerTypeLabel(containerType || 'chest')
       return fail(`附近没有${label}`)
     }
     blocks.sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
@@ -2985,20 +3084,68 @@ module.exports = function registerCombat (ctx) {
       const blk = bot.blockAt(new Vec3(pos.x, pos.y, pos.z))
       if (!blk) return null
       try { await bot.lookAt(blk.position.offset(0.5, 0.5, 0.5), true) } catch {}
-      return await openContainerBlock(blk)
+      if (!isContainerName(blk.name)) return null
+      const container = await openContainerBlock(blk)
+      if (!container) return null
+      return { container, blockName: String(blk.name || '').toLowerCase() }
+    }
+
+    async function withdrawFromFurnaceLike (win, opts = {}) {
+      const from = normalizeFurnaceIo(opts.from ?? opts.furnaceFrom ?? opts.containerSlot, { fallback: 'output' })
+      const slots = (from === 'any')
+        ? [0, 1, 2]
+        : (from === 'input' ? [0] : (from === 'fuel' ? [1] : [2]))
+      let movedKinds = 0
+      let movedTotal = 0
+      const takeAll = (opts.all === true || String(opts.all).toLowerCase() === 'true')
+      if (takeAll) {
+        for (const s of slots) {
+          const it = win?.slots?.[s]
+          const c = it?.count || 0
+          if (!it || c <= 0) continue
+          try { await transferFromWindowSlot(win, s, it.type, it.metadata, c); movedKinds++; movedTotal += c } catch {}
+        }
+        return { movedKinds, movedTotal }
+      }
+      const remainByName = opts.remainByName
+      if (!(remainByName instanceof Map) || !remainByName.size) return { movedKinds, movedTotal }
+
+      for (const s of slots) {
+        const it = win?.slots?.[s]
+        if (!it || (it.count || 0) <= 0) continue
+        const iname = String(it.name || '').toLowerCase()
+        if (!iname) continue
+        const rem0 = remainByName.get(iname)
+        if (rem0 == null || rem0 <= 0) continue
+        const take = (rem0 === Infinity) ? (it.count || 0) : Math.min(rem0, it.count || 0)
+        if (take <= 0) continue
+        try {
+          await transferFromWindowSlot(win, s, it.type, it.metadata, take)
+          movedKinds++
+          movedTotal += take
+          if (rem0 !== Infinity) remainByName.set(iname, rem0 - take)
+        } catch {}
+      }
+      return { movedKinds, movedTotal }
     }
 
     // If taking all: just use nearest container
     if (takeAll) {
       const target = blocks[0]
-      let container = await openAt(target)
-      if (!container) return fail('无法打开箱子')
+      const opened = await openAt(target)
+      if (!opened) return fail('无法打开容器')
+      const { container, blockName } = opened
       try {
-        const list = fromContainerSlots(container)
-        for (const it of list) {
-          const cnt = it.count || 0
-          if (cnt <= 0) continue
-          try { await container.withdraw(it.type, it.metadata, cnt, it.nbt); kinds++; total += cnt } catch {}
+        if (containerLib.isFurnaceLikeBlockName(blockName)) {
+          const r = await withdrawFromFurnaceLike(container, { ...args, all: true, from: normalizeFurnaceIo(args.from, { fallback: 'any' }) })
+          kinds += r.movedKinds; total += r.movedTotal
+        } else {
+          const list = fromContainerSlots(container)
+          for (const it of list) {
+            const cnt = it.count || 0
+            if (cnt <= 0) continue
+            try { await container.withdraw(it.type, it.metadata, cnt, it.nbt); kinds++; total += cnt } catch {}
+          }
         }
       } finally { try { container.close() } catch {} }
       if (kinds <= 0) return fail('箱子里没有可取的物品')
@@ -3020,20 +3167,27 @@ module.exports = function registerCombat (ctx) {
 
     for (let i = 0; i < blocks.length; i++) {
       const pos = blocks[i]
-      let container = await openAt(pos)
-      if (!container) continue
+      const opened = await openAt(pos)
+      if (!opened) continue
+      const { container, blockName } = opened
       try {
-        const list = fromContainerSlots(container)
-        // Slot-specific (container slot index) support is rare; we focus on names
-        for (const it of list) {
-          if (!it || it.count <= 0) continue
-          // Try each desired name
-          for (const [nm, rem0] of remainByName.entries()) {
-            if (rem0 <= 0) continue
-            if (!matchesName(it, nm)) continue
-            const take = Math.min(rem0, it.count || 0)
-            if (take <= 0) continue
-            try { await container.withdraw(it.type, it.metadata, take, it.nbt); kinds++; total += take; remainByName.set(nm, rem0 - take) } catch {}
+        if (containerLib.isFurnaceLikeBlockName(blockName)) {
+          const r = await withdrawFromFurnaceLike(container, { ...args, from: args.from, remainByName })
+          kinds += r.movedKinds
+          total += r.movedTotal
+        } else {
+          const list = fromContainerSlots(container)
+          // Slot-specific (container slot index) support is rare; we focus on names
+          for (const it of list) {
+            if (!it || it.count <= 0) continue
+            // Try each desired name
+            for (const [nm, rem0] of remainByName.entries()) {
+              if (rem0 <= 0) continue
+              if (!matchesName(it, nm)) continue
+              const take = Math.min(rem0, it.count || 0)
+              if (take <= 0) continue
+              try { await container.withdraw(it.type, it.metadata, take, it.nbt); kinds++; total += take; remainByName.set(nm, rem0 - take) } catch {}
+            }
           }
         }
       } finally { try { container.close() } catch {} }
