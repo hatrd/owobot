@@ -1,4 +1,5 @@
 const actionsMod = require('../actions')
+const { TOOL_SPECS } = require('../action-tool-specs')
 const ACTION_TOOL_SCHEMA_OVERRIDES = [
   {
     name: 'goto',
@@ -692,6 +693,18 @@ function cloneObject (value) {
 }
 
 function listActionToolMetadata () {
+  if (Array.isArray(TOOL_SPECS) && TOOL_SPECS.length > 0) {
+    return TOOL_SPECS
+      .map((spec) => {
+        const name = String(spec?.name || '').trim()
+        if (!name) return null
+        return {
+          name,
+          dryCapability: spec?.dryCapability === 'read_only' ? 'read_only' : 'validate_only'
+        }
+      })
+      .filter(Boolean)
+  }
   if (typeof actionsMod.listToolMetadata === 'function') return actionsMod.listToolMetadata()
   if (Array.isArray(actionsMod.TOOL_NAMES)) {
     return actionsMod.TOOL_NAMES.map(name => ({ name, dryCapability: 'validate_only' }))

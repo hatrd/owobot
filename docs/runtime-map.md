@@ -36,6 +36,11 @@ All collections are normalised (`Map`/`Set`/`Array`) each time `activate()` runs
 
 ## Tool Metadata
 
-`bot_impl/actions.js` exposes `TOOL_NAMES` (the full allowlist for AI-exposed tools). Run `node scripts/list-tools.js` to output the names as JSON. This keeps documentation and prompts synchronised with the runtime registry.
+Single source of truth lives in `bot_impl/action-tool-specs.js` (`TOOL_SPECS`).
+
+- `bot_impl/actions/index.js` derives runtime metadata (`TOOL_NAMES`, allowlist checks) from that file.
+- `bot_impl/ai-chat/tool-schemas.js` also derives action tool definitions from the same source, then overlays parameter schemas.
+
+Run `node scripts/list-tools.js` to output the current allowlist as JSON.
 
 Keeping these snapshots up to date helps both humans and AI contributors understand the current surface area without reading every module manually.

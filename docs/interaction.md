@@ -125,6 +125,7 @@ Supported ops/what/tool coverage is generated from runtime schema; this doc keep
 - Canonical snapshot: `docs/interaction.generated.md`
 - Refresh snapshot: `npm run interaction:docgen`
 - Live schema query: `node scripts/botctl.js schema ctl|observe|tool`
+- Control-plane op/alias canonical source: `bot_impl/control-plane-contract.js`
 - Compatibility handshake: `node scripts/botctl.js hello` and check
   - `result.capabilities.schema.hash`
   - `result.capabilities.build.hash`

@@ -8,7 +8,8 @@
 - AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`、`DEEPSEEK_MODEL`（或 `AI_MODEL`）
 
 ## 运行
-- `npm start`（单进程热重载）
+- `npm start`（默认 watcher 模式，启动 `scripts/bot-watch.js --takeover=true`）
+- `npm run bot:start:direct`（直接单进程运行 `bot.js`）
 - `npm run dev`（nodemon 重启，修改 `bot.js` 时使用）
 
 ### 快速配置

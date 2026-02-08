@@ -16,9 +16,10 @@
 
 ## 2. 动作层结构
 
-核心文件：`bot_impl/actions/index.js`
+核心文件：`bot_impl/action-tool-specs.js` + `bot_impl/actions/index.js`
 
-- `TOOL_SPECS` / `TOOL_METADATA`：工具元数据单一真相（含 dry 能力）。
+- `bot_impl/action-tool-specs.js` 的 `TOOL_SPECS`：工具元数据单一真相（含 dry 能力）。
+- `index.js` 的 `TOOL_METADATA`：由单一真相派生的运行时元数据。
 - `TOOL_NAMES`：从元数据导出的名称列表（兼容导出）。
 - `MODULES`：模块注册列表（`./modules/*`）。
 - `createContext()`：构造统一 `ctx`（`ok/fail/register/shared/...`）。
@@ -68,7 +69,7 @@
 ## 6. 新增工具最小流程
 
 1. 在合适模块实现并 `register('tool_name', fn)`。
-2. 更新 `TOOL_SPECS`（名称与 dry 能力）。
+2. 更新 `bot_impl/action-tool-specs.js` 中的 `TOOL_SPECS`（名称与 dry 能力）。
 3. 在 `bot_impl/ai-chat/tool-schemas.js` 补参数 schema（可缺省，缺省会自动回落通用 object 并在 schema report 里暴露）。
 4. 明确 dry 能力级别（`validate_only` 或 `read_only`）。
 5. 校验返回结构统一。
@@ -78,6 +79,7 @@
 
 ```bash
 node --check bot_impl/actions/index.js
+node --check bot_impl/action-tool-specs.js
 node --check bot_impl/actions/modules/<your-module>.js
 npm run bot:reload
 npm run interaction:dry

@@ -44,7 +44,7 @@
 - 禁止把 action 层细节硬编码到 AI 子模块；通过 actions/tool schema 抽象边界。
 
 ## Tool schema 边界
-- action 工具名来源于 `bot_impl/actions/index.js` 的 `TOOL_SPECS`（单一真相）。
+- action 工具名来源于 `bot_impl/action-tool-specs.js` 的 `TOOL_SPECS`（单一真相）。
 - 本目录只负责“参数 schema/描述”覆盖，不再维护独立工具名清单。
 - `tool-schemas.js` 中缺失显式参数 schema 时，会落到默认 object schema，并出现在 `tool.schema.report.missingSchema`。
 - 新增 action 工具时，优先补齐参数 schema，避免模型调用歧义。
