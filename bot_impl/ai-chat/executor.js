@@ -819,13 +819,13 @@ function createChatExecutor ({
     try {
       const source = shortText(res?.source || args?.source || args?.kind || 'preset', 16)
       const preset = shortText(res?.preset || args?.preset || args?.name || args?.text || '', 32)
-      const msg = shortText(res?.msg || res?.error || '', 80)
+      const error = shortText(res?.error || '', 80)
       const parts = [
         `tool=${toolName}`,
         `ok=${res?.ok === true ? 1 : 0}`,
         source ? `source=${source}` : '',
         preset ? `preset=${preset}` : '',
-        msg ? `msg=${msg}` : ''
+        error ? `error=${error}` : ''
       ].filter(Boolean)
       return parts.join(' ')
     } catch {
