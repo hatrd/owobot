@@ -326,11 +326,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           if (ok) {
             planted += 1
             try { await vacateSaplings(lastResult?.placed) } catch {}
-            try {
-              const ms = require('./minimal-self').getInstance()
-              ms?.getIdentity?.().recordSkillOutcome?.('auto_plant', true, 0.9)
-              ms?.getNarrative?.().recordDid?.(`自动种树:${s.name}`, null, 'auto-plant')
-            } catch {}
           }
         } catch {}
       }

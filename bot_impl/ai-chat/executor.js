@@ -352,22 +352,6 @@ function createChatExecutor ({
     return out
   }
 
-  function getMinimalSelfInstance () {
-    try {
-      return require('../minimal-self').getInstance()
-    } catch { return null }
-  }
-
-  function gateActionWithIdentity (toolName) {
-    try {
-      const ms = getMinimalSelfInstance()
-      if (!ms || typeof ms.scoreAction !== 'function') return null
-      const res = ms.scoreAction(toolName)
-      if (!res || !Number.isFinite(res.score)) return null
-      return res
-    } catch { return null }
-  }
-
   function classifyIntent (text) {
     const trimmed = String(text || '').trim()
     const lower = trimmed.toLowerCase()
@@ -1007,21 +991,12 @@ function createChatExecutor ({
           return Boolean(people?.upsertCommitment?.({ player, action, status: 'pending', deadlineMs, source: 'tool:add_commitment' })?.ok)
         } catch { return false }
       })()
-      const ms = getMinimalSelfInstance()
-      const identity = ms?.getIdentity?.()
-      const commitment = (() => {
-        try {
-          if (!identity || typeof identity.addCommitment !== 'function') return null
-          return identity.addCommitment(player, action, deadlineMs)
-        } catch { return null }
-      })()
-      if (!storedInPeople && !commitment) {
+      if (!storedInPeople) {
         return result('add_commitment_failed', '现在记不住承诺呢~')
       }
       if (contextBus) {
         try { contextBus.pushEvent('commitment.add', `${player}:${action}`) } catch {}
       }
-      if (state.ai.trace && log?.info) log.info('commitment ->', commitment)
       const reply = speech || H.trimReply(`好，我记下了承诺: ${action}`, replyLimit)
       if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:add', memoryRefs })
       return result('add_commitment_saved')
@@ -1082,11 +1057,6 @@ function createChatExecutor ({
     const canOverrideBusy = canToolBypassBusy(toolName, payload)
     if (busy && !canOverrideBusy) {
       return result('tool_busy', '我还在执行其他任务，先等我完成或者说“重置”哦~')
-    }
-    const actionScore = gateActionWithIdentity(toolName)
-    if (actionScore && Number.isFinite(actionScore.score) && actionScore.score < 0.45) {
-      const scoreStr = actionScore.score.toFixed(2)
-      return result('tool_low_confidence', `这个动作我信心不高（评分${scoreStr}），要不要换个？`)
     }
     const hadSpeech = Boolean(speech)
     if (hadSpeech) {

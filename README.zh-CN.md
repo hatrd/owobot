@@ -102,7 +102,6 @@
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.voice status|play <path>|play path=<path>` — 查看语音插件状态或通过 Simple Voice Chat 发送音频文件
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
-- `.pulse status|on|off|now` — 控制自动 DeepSeek 聊天脉冲（定期汇总玩家聊天并主动发言）
 
 ### 语音功能说明
 - 依赖 `mineflayer-simplevoice`，并要求服务端/客户端已安装 Simple Voice Chat 模组。

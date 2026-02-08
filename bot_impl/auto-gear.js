@@ -68,14 +68,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     try { return name(bot.inventory?.slots?.[idx]) } catch { return null }
   }
 
-  const getMS = () => { try { return require('./minimal-self').getInstance() } catch { return null } }
-  const recordDid = (action, detail) => {
-    const ms = getMS()
-    if (!ms) return
-    try { ms.getIdentity?.().recordSkillOutcome?.(action, true, 0.95) } catch {}
-    try { ms.getNarrative?.().recordDid?.(action, null, detail || 'auto-gear') } catch {}
-  }
-
   async function ensureBestArmorOnce () {
     for (const spec of ARMOR_SLOTS) {
       try {
@@ -85,7 +77,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         if (name(best) === cur) continue
         await bot.equip(best, spec.slot)
         dlog && dlog('equip armor', spec.slot, '->', best.name)
-        recordDid('自动换装', `${spec.slot}:${best.name}`)
       } catch {}
     }
   }
@@ -98,7 +89,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         await pvp.ensureBestWeapon(bot)
       }
       await pvp.ensureShieldEquipped(bot)
-      recordDid('自动持械', 'weapon/shield')
     } catch {}
   }
 

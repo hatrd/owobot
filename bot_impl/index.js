@@ -309,13 +309,6 @@ function activate (botInstance, options = {}) {
     } catch {}
   } catch (e) { coreLog.warn('skill runner install error:', e?.message || e) }
 
-  // Minimal Self: world model + agency attribution (M1)
-  try {
-    const minimalSelf = require('./minimal-self')
-    minimalSelf.activate(bot, state)
-    registerCleanup(() => { try { minimalSelf.deactivate() } catch {} })
-  } catch (e) { coreLog.warn('minimal-self install error:', e?.message || e) }
-
   // Debug: drops scanner CLI
   // CLI modules registered via MODULES
 

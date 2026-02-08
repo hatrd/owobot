@@ -13,17 +13,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function now () { return Date.now() }
 
-  function getMinimalSelf () {
-    try { return require('./minimal-self').getInstance() } catch { return null }
-  }
-
-  function recordTeleportAchievement (kind, player = null) {
-    const ms = getMinimalSelf()
-    if (!ms) return
-    try { ms.getIdentity?.().recordSkillOutcome?.(kind, true, 0.95) } catch {}
-    try { ms.getNarrative?.().recordDid?.(`传送:${kind}`, player || null, 'teleport') } catch {}
-  }
-
   function canTrigger (user) {
     const t = now()
     const last = lastByUser.get(user) || 0
@@ -42,7 +31,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const cmd = `/tpa ${username}`
       dlog && dlog('[tpa] ->', cmd)
       try { bot.chat(cmd) } catch {}
-      recordTeleportAchievement('tpa', username)
       try {
         if (Array.isArray(state.aiRecent)) {
           state.aiRecent.push({ kind: 'bot', content: cmd, t: now() })
@@ -80,7 +68,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
             if (state.aiRecent.length > 200) state.aiRecent.splice(0, state.aiRecent.length - 200)
           }
         } catch {}
-        recordTeleportAchievement('tpaccept', lastReqUser || null)
       }
     } catch {}
   }

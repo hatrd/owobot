@@ -6,13 +6,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   let timer = null
   let mcData = null
   state.autoEat = state.autoEat || { enabled: true, eating: false }
-  const getMS = () => { try { return require('./minimal-self').getInstance() } catch { return null } }
-  const recordDid = (itemName) => {
-    const ms = getMS()
-    if (!ms) return
-    try { ms.getIdentity?.().recordSkillOutcome?.('auto_eat', true, 0.95) } catch {}
-    try { ms.getNarrative?.().recordDid?.('自动进食', null, itemName || 'auto-eat') } catch {}
-  }
 
   const THRESHOLD = Number(process.env.AUTO_EAT_START_AT || 18) // start eating if food < threshold
   const COOLDOWN_MS = 1500
@@ -85,7 +78,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       await ensureOnHotbar(item.slot)
       await bot.consume()
       dlog && dlog('eat: consumed', item.name)
-      recordDid(item.name)
     } catch (err) {
       dlog && dlog('eat: failed', err?.message || String(err))
     } finally {

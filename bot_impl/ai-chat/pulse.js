@@ -587,10 +587,6 @@ function createPulseService ({
       const tracked = new Set(['tpa', 'tpaccept', 'sit', 'lay', 'sitdown', 'gsit', 'glay', 'gstand'])
       if (!tracked.has(cmd)) return
       try { contextBus?.pushEvent?.('command', cmd) } catch {}
-      const ms = (() => { try { return require('../minimal-self').getInstance() } catch { return null } })()
-      if (!ms) return
-      try { ms.getIdentity?.().recordSkillOutcome?.(cmd, true, 0.95) } catch {}
-      try { ms.getNarrative?.().recordDid?.(`指令:${cmd}`, null, 'command') } catch {}
     } catch {}
   }
 

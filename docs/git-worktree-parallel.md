@@ -16,13 +16,13 @@
 1) 创建 worktree 并写入任务说明：
 
 ```bash
-npm run wt -- assign drive-m5 "接通 minimal-self 的 drive 到 ai-chat，并加最小可验证点"
+npm run wt -- assign observe-detail "完善 observe_detail 的容器读失败诊断输出，并补 dry 验证点"
 ```
 
 2) 把下面这三样发给子 Codex（最小上下文切片）：
 
 - `TASK.md` 的全文
-- 你期望它只改哪些目录/文件（例如只改 `bot_impl/minimal-self/`）
+- 你期望它只改哪些目录/文件（例如只改 `bot_impl/agent/`）
 - 验收方式（怎么跑、怎么观察）
 
 提示：可以让子 Codex 在完成后额外写一个 `HANDOFF.md`（变更摘要 + 如何测试）。
