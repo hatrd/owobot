@@ -1,5 +1,14 @@
 module.exports = function registerVoiceTools (ctx) {
   const { bot, register, ok, fail } = ctx
+  const VOICE_PRESET_MAP = Object.freeze({
+    ciallo: 'voice/Ciallo.aac'
+  })
+
+  function normalizePresetKey (value) {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    return raw.toLowerCase().replace(/\s+/g, '')
+  }
 
   async function voice_status () {
     const api = bot.voiceChat
@@ -17,22 +26,43 @@ module.exports = function registerVoiceTools (ctx) {
     return ok(`语音状态: ${parts.join(' ')}`, { data: status })
   }
 
-  async function voice_play (args = {}) {
+  async function voice_speak (args = {}) {
     const api = bot.voiceChat
     if (!api || typeof api.play !== 'function') return fail('语音模块未加载')
-    const rawPath = (() => {
-      if (args.path != null) return String(args.path)
-      if (args.file != null) return String(args.file)
-      if (args.audio != null) return String(args.audio)
-      return ''
-    })().trim()
-    if (!rawPath) return fail('缺少音频路径(path)')
 
-    const res = await api.play(rawPath)
-    if (res?.ok) return ok(res.msg || '已发送语音音频', { path: res.path })
-    return fail((res && res.msg) || '发送语音失败', { error: res?.error || null, status: res?.status || null })
+    const sourceRaw = String(args.source ?? args.kind ?? '').trim().toLowerCase()
+    const source = sourceRaw || 'preset'
+    if (source !== 'preset') {
+      return fail('暂不支持该语音来源(source)，目前仅支持 preset', {
+        source,
+        supportedSources: ['preset']
+      })
+    }
+
+    const presetKey = normalizePresetKey(args.preset ?? args.name ?? args.text ?? 'ciallo')
+    const audioPath = VOICE_PRESET_MAP[presetKey]
+    if (!audioPath) {
+      return fail('不支持的语音预设(preset)', {
+        preset: presetKey || null,
+        supportedPresets: Object.keys(VOICE_PRESET_MAP)
+      })
+    }
+
+    const res = await api.play(audioPath)
+    if (res?.ok) {
+      return ok(res.msg || '已发送语音音频', {
+        source: 'preset',
+        preset: presetKey
+      })
+    }
+    return fail((res && res.msg) || '发送语音失败', {
+      source: 'preset',
+      preset: presetKey,
+      error: res?.error || null,
+      status: res?.status || null
+    })
   }
 
   register('voice_status', voice_status)
-  register('voice_play', voice_play)
+  register('voice_speak', voice_speak)
 }

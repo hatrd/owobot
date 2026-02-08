@@ -38,7 +38,7 @@ Common examples:
 - `.status` / `.status full` (runtime snapshot)
 - `.ai info` / `.ai on` / `.ai off` (AI module control)
 - `.tool ...` (unified tool runner; see next section)
-- `.voice status` / `.voice play ./assets/music.mp3` (Simple Voice Chat bridge)
+- `.voice status` / `.voice play ./assets/music.mp3` (Simple Voice Chat bridge; local debug only)
 
 ## Unified Tool CLI: `.tool ...`
 
@@ -64,7 +64,7 @@ Args:
     - `.tool pick 20 50` => `{ radius: 20, max: 50 }`
   - `goto`: `.tool goto 10 64 -20 [range]`
   - `say`: `.tool say hello world` => `{ text: "hello world" }`
-  - `voice_play`: `.tool voice_play ./music.mp3` => `{ path: "./music.mp3" }`
+  - `voice_speak`: `.tool voice_speak ciallo` => `{ preset: "ciallo" }`
 
 Notes:
 
@@ -94,7 +94,7 @@ node scripts/botctl.js observe snapshot
 node scripts/botctl.js observe prompt
 node scripts/botctl.js observe detail what=inventory radius=12
 node scripts/botctl.js run voice_status
-node scripts/botctl.js run voice_play path=./assets/music.mp3
+node scripts/botctl.js run voice_speak preset=ciallo
 node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" withTools=true maxToolCalls=6
 ```
 

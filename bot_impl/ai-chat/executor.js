@@ -831,6 +831,24 @@ function createChatExecutor ({
     }
   }
 
+  function buildVoiceSpeakContextLine ({ toolName, args, res }) {
+    try {
+      const source = shortText(res?.source || args?.source || args?.kind || 'preset', 16)
+      const preset = shortText(res?.preset || args?.preset || args?.name || args?.text || '', 32)
+      const msg = shortText(res?.msg || res?.error || '', 80)
+      const parts = [
+        `tool=${toolName}`,
+        `ok=${res?.ok === true ? 1 : 0}`,
+        source ? `source=${source}` : '',
+        preset ? `preset=${preset}` : '',
+        msg ? `msg=${msg}` : ''
+      ].filter(Boolean)
+      return parts.join(' ')
+    } catch {
+      return ''
+    }
+  }
+
   function buildToolLoopContextNote ({ round, maxToolCalls, entries }) {
     try {
       const normalized = Array.isArray(entries) ? entries.slice(0, 6) : []
@@ -905,9 +923,12 @@ function createChatExecutor ({
       }
       if (state.ai.trace && log?.info) log.info('tool(dry) ->', toolName, payload.args, dryRes)
       const isObserveTool = toolLower === 'observe_detail' || toolLower === 'observe_players'
-      if (isObserveTool) {
+      const isVoiceSpeakTool = toolLower === 'voice_speak'
+      if (isObserveTool || isVoiceSpeakTool) {
         try {
-          const line = buildObserveContextLine({ toolName, args: payload.args || {}, res: dryRes })
+          const line = isObserveTool
+            ? buildObserveContextLine({ toolName, args: payload.args || {}, res: dryRes })
+            : buildVoiceSpeakContextLine({ toolName, args: payload.args || {}, res: dryRes })
           if (line) contextBus?.pushTool?.(line)
         } catch {}
       }
@@ -1085,9 +1106,12 @@ function createChatExecutor ({
     }
     if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
     const isObserveTool = toolLower === 'observe_detail' || toolLower === 'observe_players'
-    if (isObserveTool) {
+    const isVoiceSpeakTool = toolLower === 'voice_speak'
+    if (isObserveTool || isVoiceSpeakTool) {
       try {
-        const line = buildObserveContextLine({ toolName, args: payload.args || {}, res })
+        const line = isObserveTool
+          ? buildObserveContextLine({ toolName, args: payload.args || {}, res })
+          : buildVoiceSpeakContextLine({ toolName, args: payload.args || {}, res })
         if (line) contextBus?.pushTool?.(line)
       } catch {}
     }

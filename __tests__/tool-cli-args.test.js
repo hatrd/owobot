@@ -25,3 +25,11 @@ test('tool-cli: key=value parsing', () => {
   assert.equal(args.timeoutMs, '8000')
   assert.deepEqual(positionals, ['log'])
 })
+
+test('tool-cli: voice_speak positional sugar maps to preset', () => {
+  const { normalizeToolName, parseArgsForTool } = toolCli._internal
+  const tool = normalizeToolName('voice_speak')
+  assert.equal(tool, 'voice_speak')
+  const args = parseArgsForTool(tool, ['ciallo'])
+  assert.deepEqual(args, { preset: 'ciallo' })
+})

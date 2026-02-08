@@ -101,14 +101,15 @@ const ACTION_TOOL_DEFINITIONS = [
     parameters: { type: 'object', properties: {}, additionalProperties: false }
   },
   {
-    name: 'voice_play',
-    description: 'Play/send an audio file through Simple Voice Chat.',
+    name: 'voice_speak',
+    description: 'Speak with a controlled voice preset. Path/URL/TTS are not accepted yet.',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Audio file path (absolute or project-relative).' },
-        file: { type: 'string', description: 'Alias of path.' },
-        audio: { type: 'string', description: 'Alias of path.' }
+        source: { type: 'string', description: 'Voice source kind. Only preset is currently supported.' },
+        preset: { type: 'string', description: 'Voice preset key. Currently supports: ciallo.' },
+        name: { type: 'string', description: 'Alias of preset.' },
+        text: { type: 'string', description: 'Compat alias for preset for now; only value ciallo is accepted.' }
       },
       additionalProperties: true
     }

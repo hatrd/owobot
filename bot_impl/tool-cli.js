@@ -23,8 +23,8 @@ const ALIASES = {
   voice: 'voice_status',
   vstatus: 'voice_status',
   voice_status: 'voice_status',
-  vplay: 'voice_play',
-  voice_play: 'voice_play'
+  vspeak: 'voice_speak',
+  voice_speak: 'voice_speak'
 }
 
 function isNum (s) {
@@ -109,9 +109,9 @@ function parseArgsForTool (tool, tokens) {
     return args
   }
 
-  if (t === 'voice_play') {
-    // `.tool voice_play ./music.mp3` -> path="./music.mp3"
-    if (args.path == null && positionals.length) args.path = positionals.join(' ')
+  if (t === 'voice_speak') {
+    // `.tool voice_speak ciallo` -> preset="ciallo"
+    if (args.preset == null && args.name == null && args.text == null && positionals.length) args.preset = positionals.join(' ')
     return args
   }
 
