@@ -18,6 +18,7 @@
 
 const net = require('net')
 const path = require('path')
+const controlPlaneContract = require('../bot_impl/control-plane-contract')
 
 function parseArgv () {
   const out = { flags: {}, rest: [] }
@@ -59,6 +60,14 @@ function makeId () {
   return `ctl_${Date.now()}_${Math.floor(Math.random() * 100000)}`
 }
 
+function schemaTargetsUsage () {
+  return controlPlaneContract.listCtlSchemaTargets().join('|')
+}
+
+function observeModesUsage () {
+  return controlPlaneContract.listObserveModes().join('|')
+}
+
 function request (sockPath, payload) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: sockPath })
@@ -97,21 +106,20 @@ async function main () {
   const id = makeId()
   let payload
 
-  if (cmd === 'hello') payload = { id, op: 'hello' }
-  else if (cmd === 'list') payload = { id, op: 'tool.list' }
+  if (cmd === 'hello') payload = { id, op: controlPlaneContract.CTL_OPS.HELLO }
+  else if (cmd === 'list') payload = { id, op: controlPlaneContract.CTL_OPS.TOOL_LIST }
   else if (cmd === 'schema') {
-    const target = String(rest[0] || 'ctl').toLowerCase()
-    if (target === 'ctl') payload = { id, op: 'ctl.schema' }
-    else if (target === 'observe') payload = { id, op: 'observe.schema' }
-    else if (target === 'tool') payload = { id, op: 'tool.schema' }
-    else {
-      process.stderr.write('usage: botctl.js schema ctl|observe|tool\n')
+    const target = String(rest[0] || 'ctl')
+    const schemaOp = controlPlaneContract.resolveCtlSchemaOp(target)
+    if (!schemaOp) {
+      process.stderr.write(`usage: botctl.js schema ${schemaTargetsUsage()}\n`)
       process.exit(2)
     }
+    payload = { id, op: schemaOp }
   }
   else if (cmd === 'restart') {
     const args = parseKeyValueArgs(rest)
-    payload = { id, op: 'proc.restart', args }
+    payload = { id, op: controlPlaneContract.CTL_OPS.PROC_RESTART, args }
   }
   else if (cmd === 'dry' || cmd === 'run') {
     const tool = rest[0]
@@ -120,24 +128,28 @@ async function main () {
       process.exit(2)
     }
     const args = parseKeyValueArgs(rest.slice(1))
-    payload = { id, op: cmd === 'dry' ? 'tool.dry' : 'tool.run', tool, args }
+    payload = {
+      id,
+      op: cmd === 'dry' ? controlPlaneContract.CTL_OPS.TOOL_DRY : controlPlaneContract.CTL_OPS.TOOL_RUN,
+      tool,
+      args
+    }
   } else if (cmd === 'chatdry' || cmd === 'ai-dry') {
     const args = parseKeyValueArgs(rest)
     if (!args.content && !args.message && !args.text) {
       process.stderr.write('usage: botctl.js chatdry username=<name> content=<text> [withTools=true] [maxToolCalls=6]\n')
       process.exit(2)
     }
-    payload = { id, op: 'ai.chat.dry', args }
+    payload = { id, op: controlPlaneContract.CTL_OPS.AI_CHAT_DRY, args }
   } else if (cmd === 'observe') {
-    const mode = String(rest[0] || 'snapshot').toLowerCase()
+    const mode = String(rest[0] || 'snapshot')
     const args = parseKeyValueArgs(rest.slice(1))
-    if (mode === 'snapshot') payload = { id, op: 'observe.snapshot', args }
-    else if (mode === 'prompt') payload = { id, op: 'observe.prompt', args }
-    else if (mode === 'detail') payload = { id, op: 'observe.detail', args }
-    else {
-      process.stderr.write('usage: botctl.js observe snapshot|prompt|detail [key=value ...]\n')
+    const observeOp = controlPlaneContract.resolveObserveOp(mode)
+    if (!observeOp) {
+      process.stderr.write(`usage: botctl.js observe ${observeModesUsage()} [key=value ...]\n`)
       process.exit(2)
     }
+    payload = { id, op: observeOp, args }
   } else {
     process.stderr.write(`unknown cmd: ${cmd}\n`)
     process.exit(2)

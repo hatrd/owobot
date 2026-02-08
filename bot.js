@@ -7,6 +7,7 @@ const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process')
 const fileLogger = require('./bot_impl/file-logger')
+const controlPlaneContract = require('./bot_impl/control-plane-contract')
 const { formatDateTimeTz } = require('./bot_impl/time-utils')
 
 // Simple argv parser
@@ -319,24 +320,26 @@ function scheduleProcessRestart ({ mode = 'detached', delayMs = 200, reason = 'u
 
 async function handleCtlRequest (req) {
   const id = req && req.id != null ? req.id : null
-  const op = req && req.op ? String(req.op) : ''
-  if (!op) return { id, ok: false, error: 'missing op' }
+  const rawOp = req && req.op ? String(req.op) : ''
+  if (!rawOp) return { id, ok: false, error: 'missing op' }
+  const op = controlPlaneContract.normalizeCtlOp(rawOp)
+  if (!op) return { id, ok: false, error: `unknown op: ${rawOp}` }
 
   if (ctl.token) {
     const provided = req && req.token != null ? String(req.token) : ''
     if (!provided || provided !== ctl.token) return { id, ok: false, error: 'unauthorized' }
   }
 
-  if (op === 'ctl.schema' || op === 'observe.schema' || op === 'tool.schema') {
+  if (op === controlPlaneContract.CTL_OPS.CTL_SCHEMA || op === controlPlaneContract.CTL_OPS.OBSERVE_SCHEMA || op === controlPlaneContract.CTL_OPS.TOOL_SCHEMA) {
     // Require inside handler so hot reload cache clears stay consistent.
     // eslint-disable-next-line import/no-dynamic-require
     const schemaMod = require(path.join(pluginRoot, 'interaction-schema'))
-    if (op === 'ctl.schema') return { id, ok: true, result: schemaMod.getCtlSchema() }
-    if (op === 'observe.schema') return { id, ok: true, result: schemaMod.getObserveSchema() }
+    if (op === controlPlaneContract.CTL_OPS.CTL_SCHEMA) return { id, ok: true, result: schemaMod.getCtlSchema() }
+    if (op === controlPlaneContract.CTL_OPS.OBSERVE_SCHEMA) return { id, ok: true, result: schemaMod.getObserveSchema() }
     return { id, ok: true, result: schemaMod.getToolSchema() }
   }
 
-  if (op === 'hello') {
+  if (op === controlPlaneContract.CTL_OPS.HELLO) {
     let capabilities = null
     try {
       // Require inside handler so hot reload cache clears stay consistent.
@@ -358,7 +361,7 @@ async function handleCtlRequest (req) {
     }
   }
 
-  if (op === 'proc.restart' || op === 'process.restart') {
+  if (op === controlPlaneContract.CTL_OPS.PROC_RESTART) {
     const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
     const mode = String(args.mode || 'detached').toLowerCase() === 'inherit' ? 'inherit' : 'detached'
     const delayParsed = parseDurationMs(args.delayMs ?? args.delay)
@@ -379,7 +382,7 @@ async function handleCtlRequest (req) {
 
   if (!bot) return { id, ok: false, error: 'bot not ready' }
 
-  if (op === 'ai.chat.dry' || op === 'chat.dry') {
+  if (op === controlPlaneContract.CTL_OPS.AI_CHAT_DRY) {
     const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
     const username = String(args.username || args.user || args.player || 'dry_user').trim() || 'dry_user'
     const content = String(args.content || args.message || args.text || '').trim()
@@ -396,23 +399,23 @@ async function handleCtlRequest (req) {
     return { id, ok: true, result }
   }
 
-  if (op === 'observe.snapshot' || op === 'observe.prompt' || op === 'observe.detail') {
+  if (op === controlPlaneContract.CTL_OPS.OBSERVE_SNAPSHOT || op === controlPlaneContract.CTL_OPS.OBSERVE_PROMPT || op === controlPlaneContract.CTL_OPS.OBSERVE_DETAIL) {
     // Require inside handler so hot reload cache clears stay consistent.
     // eslint-disable-next-line import/no-dynamic-require
     const observer = require(path.join(pluginRoot, 'agent', 'observer'))
     const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
 
-    if (op === 'observe.snapshot') {
+    if (op === controlPlaneContract.CTL_OPS.OBSERVE_SNAPSHOT) {
       return { id, ok: true, result: observer.snapshot(bot, args) }
     }
 
-    if (op === 'observe.prompt') {
+    if (op === controlPlaneContract.CTL_OPS.OBSERVE_PROMPT) {
       const snap = observer.snapshot(bot, args)
       const prompt = typeof observer.toPrompt === 'function' ? observer.toPrompt(snap) : ''
       return { id, ok: true, result: { prompt, snapshot: snap } }
     }
 
-    if (op === 'observe.detail') {
+    if (op === controlPlaneContract.CTL_OPS.OBSERVE_DETAIL) {
       const r = typeof observer.detail === 'function'
         ? await Promise.resolve(observer.detail(bot, args))
         : { ok: false, msg: 'observe.detail unsupported' }
@@ -420,13 +423,13 @@ async function handleCtlRequest (req) {
     }
   }
 
-  if (op === 'tool.list' || op === 'tool.dry' || op === 'tool.run') {
+  if (op === controlPlaneContract.CTL_OPS.TOOL_LIST || op === controlPlaneContract.CTL_OPS.TOOL_DRY || op === controlPlaneContract.CTL_OPS.TOOL_RUN) {
     // Require inside handler so hot reload cache clears stay consistent.
     // eslint-disable-next-line import/no-dynamic-require
     const actionsMod = require(path.join(pluginRoot, 'actions'))
     const actions = actionsMod.install(bot, { log: null })
 
-    if (op === 'tool.list') {
+    if (op === controlPlaneContract.CTL_OPS.TOOL_LIST) {
       const registered = actions.list()
       const report = typeof actionsMod.buildToolRegistryReport === 'function'
         ? actionsMod.buildToolRegistryReport(registered)
@@ -456,7 +459,7 @@ async function handleCtlRequest (req) {
       : (Array.isArray(actionsMod.TOOL_NAMES) ? actionsMod.TOOL_NAMES.includes(tool) : false)
     if (!isAllowlisted) return { id, ok: false, error: `tool not allowlisted: ${tool}` }
 
-    if (op === 'tool.dry') {
+    if (op === controlPlaneContract.CTL_OPS.TOOL_DRY) {
       const r = actions.dry ? await actions.dry(tool, args) : { ok: false, msg: 'dry-run unsupported' }
       return { id, ok: true, result: r }
     }
@@ -472,7 +475,7 @@ async function handleCtlRequest (req) {
     return { id, ok: true, result: r }
   }
 
-  return { id, ok: false, error: `unknown op: ${op}` }
+  return { id, ok: false, error: `unknown op: ${rawOp}` }
 }
 // Optional: reload gate file to control when hot-reload applies
 function resolveReloadGate () {

@@ -4,74 +4,9 @@ const path = require('path')
 const actionsMod = require('./actions')
 const observer = require('./agent/observer')
 const toolSchemas = require('./ai-chat/tool-schemas')
+const controlPlaneContract = require('./control-plane-contract')
 
 const DEFAULT_PARAMETERS = { type: 'object', properties: {}, additionalProperties: true }
-
-const CTL_OPERATION_SPECS = Object.freeze([
-  { op: 'hello', requiresBot: false, description: 'Control-plane heartbeat and process status.' },
-  {
-    op: 'proc.restart',
-    aliases: ['process.restart'],
-    requiresBot: false,
-    description: 'Restart current bot process.',
-    args: {
-      mode: { type: 'string', enum: ['detached', 'inherit'], default: 'detached' },
-      delayMs: { type: 'string', description: 'Duration (supports ms/s/m/h suffix).' }
-    }
-  },
-  {
-    op: 'ai.chat.dry',
-    aliases: ['chat.dry'],
-    requiresBot: true,
-    description: 'Dry-run one AI chat turn without real world side effects.',
-    args: {
-      username: { type: 'string' },
-      content: { type: 'string' },
-      withTools: { type: 'boolean', default: true },
-      maxToolCalls: { type: 'number' }
-    }
-  },
-  {
-    op: 'observe.snapshot',
-    requiresBot: true,
-    description: 'Structured runtime snapshot for AI/game context.',
-    args: { '*': { type: 'object', description: 'Snapshot options.' } }
-  },
-  {
-    op: 'observe.prompt',
-    requiresBot: true,
-    description: 'Prompt text plus snapshot, as used by AI context assembly.',
-    args: { '*': { type: 'object', description: 'Prompt/snapshot options.' } }
-  },
-  {
-    op: 'observe.detail',
-    requiresBot: true,
-    description: 'Focused read-only observation details.',
-    args: { '*': { type: 'object', description: 'Detail options (see observe.schema).' } }
-  },
-  { op: 'observe.schema', requiresBot: false, description: 'Observer detail schema and aliases.' },
-  { op: 'tool.list', requiresBot: true, description: 'Tool allowlist and registration report.' },
-  {
-    op: 'tool.dry',
-    requiresBot: true,
-    description: 'Dry-run one tool call.',
-    args: {
-      tool: { type: 'string', required: true },
-      args: { type: 'object', description: 'Tool arguments.' }
-    }
-  },
-  {
-    op: 'tool.run',
-    requiresBot: true,
-    description: 'Execute one tool call.',
-    args: {
-      tool: { type: 'string', required: true },
-      args: { type: 'object', description: 'Tool arguments.' }
-    }
-  },
-  { op: 'tool.schema', requiresBot: false, description: 'Tool metadata + parameter schemas.' },
-  { op: 'ctl.schema', requiresBot: false, description: 'Control-plane operation schema.' }
-])
 
 function cloneObject (value) {
   if (!value || typeof value !== 'object') return value
@@ -114,7 +49,7 @@ function readPackageVersion () {
 }
 
 function listCtlOperationSpecs () {
-  return CTL_OPERATION_SPECS.map(spec => cloneObject(spec))
+  return controlPlaneContract.listCtlOperationSpecs()
 }
 
 function getCtlSchema () {
