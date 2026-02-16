@@ -95,6 +95,7 @@
 | 命令 | 说明 |
 |------|------|
 | `.ai on/off` | 启用/禁用 AI |
+| `.ai env reload [~/.bashrc]` | source 指定 rc（默认 `~/.bashrc`）后，重载 `DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / AI_MODEL(或 DEEPSEEK_MODEL)` 到运行态（别名：`.ai reloadenv`） |
 | `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`metaCtx/gameCtx/chatCtx`；若可用还会打印 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
 | `.ai context show` | 打印 `state.ai.context` |
 | `.ai context recent N` | 设置注入 `xmlCtx` 的最大条数（下限被 clamp 到 ≥1） |

@@ -1,7 +1,7 @@
 {
   "name": "mcbot",
   "version": "0.1.0",
-  "description": "Simple mineflayer echo bot",
+  "description": "Hot-reloadable Mineflayer bot with AI chat/control plane",
   "main": "bot.js",
   "scripts": {
     "start": "node scripts/bot-watch.js --takeover=true",

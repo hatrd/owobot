@@ -1,3 +1,134 @@
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+const { spawnSync } = require('child_process')
+
+const AI_ENV_KEYS = Object.freeze([
+  'DEEPSEEK_API_KEY',
+  'DEEPSEEK_BASE_URL',
+  'AI_MODEL',
+  'DEEPSEEK_MODEL'
+])
+
+function normalizeText (value) {
+  return String(value == null ? '' : value).trim()
+}
+
+function resolveRcPath (rawPath) {
+  const input = normalizeText(rawPath)
+  if (!input) return path.join(os.homedir(), '.bashrc')
+  if (input === '~') return os.homedir()
+  if (input.startsWith('~/')) return path.join(os.homedir(), input.slice(2))
+  return path.resolve(process.cwd(), input)
+}
+
+function parseEnvOutput (stdout) {
+  const text = String(stdout || '')
+  const useNullSeparated = text.includes('\u0000')
+  const chunks = useNullSeparated ? text.split('\u0000') : text.split('\n')
+  const out = {}
+  for (const chunk of chunks) {
+    if (!chunk) continue
+    const idx = chunk.indexOf('=')
+    if (idx <= 0) continue
+    const k = chunk.slice(0, idx)
+    const v = chunk.slice(idx + 1)
+    out[k] = v
+  }
+  return out
+}
+
+function expandShellVars (value, envMap) {
+  const getVar = (k) => (envMap && Object.prototype.hasOwnProperty.call(envMap, k)) ? envMap[k] : ''
+  return String(value || '')
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, k) => String(getVar(k) || ''))
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, k) => String(getVar(k) || ''))
+}
+
+function parseRcFallback (rcPath) {
+  let content = ''
+  try {
+    content = fs.readFileSync(rcPath, 'utf8')
+  } catch (e) {
+    return { ok: false, error: `read rc failed: ${e?.message || e}` }
+  }
+  const keySet = new Set(AI_ENV_KEYS)
+  const envMap = { ...process.env }
+  for (const rawLine of String(content || '').split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const normalized = line.startsWith('export ') ? line.slice(7).trim() : line
+    const eqIdx = normalized.indexOf('=')
+    if (eqIdx <= 0) continue
+    const name = normalized.slice(0, eqIdx).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue
+    if (!keySet.has(name)) continue
+    let value = normalized.slice(eqIdx + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
+      value = value.slice(1, -1)
+    }
+    value = expandShellVars(value, envMap)
+    envMap[name] = value
+  }
+  return { ok: true, env: envMap, fallback: true, warning: 'shell spawn blocked, used rc parser fallback' }
+}
+
+function loadEnvFromRc (rcPath) {
+  const shellScript = [
+    'set +u',
+    'if [ -f "$MCBOT_AI_RC" ]; then',
+    '  . "$MCBOT_AI_RC" >/dev/null 2>&1 || true',
+    'fi',
+    'if env -0 >/dev/null 2>&1; then',
+    '  env -0',
+    'else',
+    '  env',
+    'fi'
+  ].join('\n')
+  const res = spawnSync('bash', ['-lc', shellScript], {
+    encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
+    env: {
+      ...process.env,
+      MCBOT_AI_RC: rcPath
+    }
+  })
+  if (res.error) return parseRcFallback(rcPath)
+  if (res.status !== 0 && !String(res.stdout || '').trim()) {
+    const fallback = parseRcFallback(rcPath)
+    if (!fallback.ok) {
+      return { ok: false, error: String(res.stderr || `bash exited with ${res.status}`).trim() || `bash exited with ${res.status}` }
+    }
+    return fallback
+  }
+  return { ok: true, env: parseEnvOutput(res.stdout) }
+}
+
+function applyAiEnvToState (state, envMap) {
+  const nextKey = normalizeText(envMap.DEEPSEEK_API_KEY)
+  const nextBase = normalizeText(envMap.DEEPSEEK_BASE_URL)
+  const nextModel = normalizeText(envMap.AI_MODEL || envMap.DEEPSEEK_MODEL)
+  const updated = []
+  const missing = []
+
+  if (nextKey) {
+    state.ai.key = nextKey
+    updated.push('key')
+  } else missing.push('DEEPSEEK_API_KEY')
+
+  if (nextBase) {
+    state.ai.baseUrl = nextBase
+    updated.push('baseUrl')
+  } else missing.push('DEEPSEEK_BASE_URL')
+
+  if (nextModel) {
+    state.ai.model = nextModel
+    updated.push('model')
+  } else missing.push('AI_MODEL/DEEPSEEK_MODEL')
+
+  return { updated, missing }
+}
+
 function createAiCliHandler (options = {}) {
   const {
     bot,
@@ -34,6 +165,28 @@ function createAiCliHandler (options = {}) {
         case 'model': state.ai.model = rest[0] || state.ai.model; print('model =', state.ai.model); break
         case 'base': state.ai.baseUrl = rest[0] || state.ai.baseUrl; print('base =', state.ai.baseUrl); break
         case 'path': state.ai.path = rest[0] || state.ai.path; print('path =', state.ai.path); break
+        case 'reloadenv':
+        case 'env': {
+          const mode = (rest[0] || '').toLowerCase()
+          if ((sub || '').toLowerCase() === 'env' && mode && mode !== 'reload') {
+            print('用法: .ai env reload [~/.bashrc]')
+            break
+          }
+          const rcPathInput = (sub || '').toLowerCase() === 'reloadenv' ? rest[0] : rest[1]
+          const rcPath = resolveRcPath(rcPathInput)
+          const loaded = loadEnvFromRc(rcPath)
+          if (!loaded.ok) {
+            print('env reload failed:', loaded.error)
+            break
+          }
+          const { updated, missing } = applyAiEnvToState(state, loaded.env || {})
+          print('env reloaded from', rcPath)
+          if (loaded.fallback && loaded.warning) print('warning =', loaded.warning)
+          print('updated =', updated.length ? updated.join(', ') : '(none)')
+          if (missing.length) print('missing =', missing.join(', '))
+          print('enabled=', state.ai.enabled, 'model=', state.ai.model, 'base=', state.ai.baseUrl, 'path=', state.ai.path, 'key=', state.ai.key ? '[set]' : '[empty]')
+          break
+        }
         case 'max': state.ai.maxReplyLen = Math.max(20, parseInt(rest[0] || '120', 10)); print('maxReplyLen =', state.ai.maxReplyLen); break
         case 'clear': {
           state.aiRecent = []
