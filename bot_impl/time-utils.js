@@ -202,6 +202,8 @@ function detectHolidays (date = new Date()) {
     if (lunar) {
       const lunarKey = `${lunar.month}-${lunar.day}`
       if (LUNAR_HOLIDAYS[lunarKey]) hits.push(LUNAR_HOLIDAYS[lunarKey])
+      const isLunarYearEnd = lunar.month === 12 && lunar.day === monthDays(lunar.year, 12)
+      if (isLunarYearEnd) hits.push('除夕')
     }
     return Array.from(new Set(hits))
   } catch {
