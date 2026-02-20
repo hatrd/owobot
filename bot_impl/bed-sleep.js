@@ -156,6 +156,36 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     return false
   }
 
+  function snapshotSleepListeners () {
+    try {
+      if (typeof bot.rawListeners !== 'function') return null
+      return new Set(bot.rawListeners('sleep'))
+    } catch {}
+    return null
+  }
+
+  function pruneLeakedSleepWaiters (beforeSet) {
+    if (!beforeSet || typeof bot.rawListeners !== 'function') return 0
+    const off = typeof bot.off === 'function'
+      ? (fn) => bot.off('sleep', fn)
+      : (typeof bot.removeListener === 'function' ? (fn) => bot.removeListener('sleep', fn) : null)
+    if (!off) return 0
+    let removed = 0
+    let current = null
+    try { current = bot.rawListeners('sleep') } catch {}
+    if (!Array.isArray(current)) return 0
+    for (const fn of current) {
+      if (beforeSet.has(fn)) continue
+      // Mineflayer sleep() registers bot.once('sleep', ...) waiters; failed attempts can leave wrappers behind.
+      if (typeof fn?.listener !== 'function') continue
+      try {
+        off(fn)
+        removed++
+      } catch {}
+    }
+    return removed
+  }
+
   async function trySleepNearby () {
     if (inFlight) return
     inFlight = true
@@ -200,6 +230,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       }
       dlog && dlog('sleep: bed candidate at', bed.position)
       try { await bot.lookAt(bed.position.offset(0.5, 0.5, 0.5), true) } catch {}
+      const sleepListenersBefore = snapshotSleepListeners()
       try {
         await bot.sleep(bed)
         dlog && dlog('sleep: success at', bed.position)
@@ -207,6 +238,11 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       } catch (err) {
         dlog && dlog('sleep: failed', err?.message || String(err))
         applyFailureCooldown(err)
+        const removed = pruneLeakedSleepWaiters(sleepListenersBefore)
+        if (removed > 0) {
+          if (log?.warn) log.warn('sleep: pruned leaked waiters=' + removed)
+          else dlog && dlog('sleep: pruned leaked waiters=' + removed)
+        }
       }
     } finally {
       if (!bot.isSleeping) {
