@@ -1,5 +1,6 @@
 // CLI: .tab
 // Prints current tablist-style player list with ping to the internal console.
+const { getListedPlayerEntries } = require('./tablist-utils')
 
 function install (bot, { on, registerCleanup, log }) {
   const print = (...a) => console.log('[TAB]', ...a)
@@ -23,7 +24,7 @@ function install (bot, { on, registerCleanup, log }) {
   function onCli (payload) {
     try {
       if (!payload || String(payload.cmd || '').toLowerCase() !== 'tab') return
-      const entries = Object.entries(bot.players || {}).filter(([, rec]) => rec?.listed !== false)
+      const entries = getListedPlayerEntries(bot)
       if (!entries.length) {
         print('无玩家')
         return

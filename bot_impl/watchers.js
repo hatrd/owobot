@@ -1,5 +1,6 @@
 let createContextBus
 try { ({ createContextBus } = require('./ai-chat/context-bus')) } catch {}
+const { getListedPlayerEntries, hasListedSelf } = require('./tablist-utils')
 
 class WatcherManager {
   constructor(bot, { state, on, registerCleanup, dlog }) {
@@ -11,9 +12,17 @@ class WatcherManager {
     this.contextBus = createContextBus ? createContextBus({ state }) : null
     this.fireTimer = null
     this.idleTimer = null
+    this.tabHealthTimer = null
     this.explosionCleanup = null
     this.lastFireReconnectAt = 0
+    this.lastTabReconnectAt = 0
+    this.tabEmptyStreak = 0
+    this.lastSpawnAt = 0
     this.LOOK_GREET_COOLDOWN_MS = 10 * 60 * 1000
+    this.TAB_HEALTH_INTERVAL_MS = 1500
+    this.TAB_HEALTH_SPAWN_GRACE_MS = 12000
+    this.TAB_EMPTY_STREAK_THRESHOLD = 3
+    this.TAB_RECONNECT_COOLDOWN_MS = 12000
   }
 
   normalizeUsername (name) {
@@ -22,10 +31,13 @@ class WatcherManager {
 
   onSpawn() {
     this.stopTimers()
+    this.lastSpawnAt = Date.now()
+    this.tabEmptyStreak = 0
     this.fireTimer = setInterval(() => {
       this.extinguishNearbyFire().catch((err) => this.handleFireWatcherError(err))
     }, 1500)
     this.idleTimer = setInterval(() => this.trackNearbyEntity(), 120)
+    this.tabHealthTimer = setInterval(() => this.checkTabListHealth(), this.TAB_HEALTH_INTERVAL_MS)
     this.registerExplosionGuard()
     this.pruneLookGreetHistory()
   }
@@ -33,6 +45,7 @@ class WatcherManager {
   stopTimers() {
     if (this.fireTimer) { clearInterval(this.fireTimer); this.fireTimer = null }
     if (this.idleTimer) { clearInterval(this.idleTimer); this.idleTimer = null }
+    if (this.tabHealthTimer) { clearInterval(this.tabHealthTimer); this.tabHealthTimer = null }
   }
 
   handleFireWatcherError (err) {
@@ -65,6 +78,27 @@ class WatcherManager {
     } catch (e) {
       try { console.log('Failed to terminate bot after fire watcher error:', e?.message || e) } catch {}
     }
+  }
+
+  checkTabListHealth () {
+    try {
+      const now = Date.now()
+      if (!this.lastSpawnAt || (now - this.lastSpawnAt) < this.TAB_HEALTH_SPAWN_GRACE_MS) return
+      const entries = getListedPlayerEntries(this.bot)
+      if (entries.length > 0) {
+        this.tabEmptyStreak = 0
+        return
+      }
+      if (!hasListedSelf(this.bot, entries)) this.tabEmptyStreak++
+      if (this.tabEmptyStreak < this.TAB_EMPTY_STREAK_THRESHOLD) return
+      if (now - this.lastTabReconnectAt < this.TAB_RECONNECT_COOLDOWN_MS) return
+      this.lastTabReconnectAt = now
+      this.tabEmptyStreak = 0
+      try {
+        console.log(`[${new Date().toISOString()}] Tablist empty for ${this.TAB_EMPTY_STREAK_THRESHOLD} checks; forcing reconnect`)
+      } catch {}
+      this.forceReconnect('tablist empty')
+    } catch {}
   }
 
   registerExplosionGuard() {
