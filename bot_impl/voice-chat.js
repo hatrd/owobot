@@ -24,6 +24,11 @@ function setVoiceError (state, err) {
   } catch {}
 }
 
+function isVoiceNotLoadedError (err) {
+  const msg = String(err?.message || err || '').toLowerCase()
+  return msg.includes('voice chat is not loaded')
+}
+
 function parsePort (value) {
   const n = Number(value)
   if (!Number.isFinite(n)) return null
@@ -187,12 +192,14 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
   const logger = log || console
   const out = (...args) => console.log('[VOICE]', ...args)
   const enabled = parseBool(process.env.MC_VOICECHAT, true)
+  const VOICE_RECOVER_COOLDOWN_MS = 5000
+  const VOICE_RECOVER_INTERVAL_MS = 15000
 
   if (!state.voiceChat || typeof state.voiceChat !== 'object') state.voiceChat = {}
   state.voiceChat.enabled = enabled
-  if (!('available' in state.voiceChat)) state.voiceChat.available = false
-  if (!('pluginLoaded' in state.voiceChat)) state.voiceChat.pluginLoaded = false
-  if (!('connected' in state.voiceChat)) state.voiceChat.connected = false
+  state.voiceChat.available = false
+  state.voiceChat.pluginLoaded = false
+  state.voiceChat.connected = false
   if (!('lastError' in state.voiceChat)) state.voiceChat.lastError = null
   if (!('lastAudioPath' in state.voiceChat)) state.voiceChat.lastAudioPath = null
   if (!('lastAudioAt' in state.voiceChat)) state.voiceChat.lastAudioAt = null
@@ -201,14 +208,97 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
   if (!('lastConnectAt' in state.voiceChat)) state.voiceChat.lastConnectAt = null
   if (!('lastDisconnectAt' in state.voiceChat)) state.voiceChat.lastDisconnectAt = null
 
+  let lastRecoverAt = 0
+  let recoverTimer = null
+
+  function hasVoiceApi () {
+    return Boolean(bot.voicechat && typeof bot.voicechat.sendAudio === 'function')
+  }
+
+  function isReadyState () {
+    return Boolean(state.voiceChat.available && state.voiceChat.pluginLoaded && hasVoiceApi())
+  }
+
+  function syncConnectedState () {
+    const connected = Boolean(
+      bot.voicechat &&
+      typeof bot.voicechat.isConnected === 'function' &&
+      bot.voicechat.isConnected()
+    )
+    state.voiceChat.connected = connected
+    return connected
+  }
+
+  function markDisconnected (reason) {
+    try {
+      state.voiceChat.connected = false
+      state.voiceChat.lastDisconnectAt = nowIso()
+      if (reason) out('voicechat disconnected', `(${reason})`)
+    } catch {}
+  }
+
+  function requestVoiceReconnect (reason, { force = false } = {}) {
+    try {
+      if (!isReadyState()) return { ok: false, skipped: 'not-ready' }
+      if (syncConnectedState()) return { ok: true, skipped: 'already-connected' }
+      const mcState = String(bot?._client?.state || '').toLowerCase()
+      if (mcState !== 'play') return { ok: false, skipped: 'mc-not-play' }
+      const now = Date.now()
+      if (!force && now - lastRecoverAt < VOICE_RECOVER_COOLDOWN_MS) return { ok: false, skipped: 'cooldown' }
+      lastRecoverAt = now
+
+      const voiceClient = bot.voicechat?._client
+      if (!voiceClient) throw new Error('voice client unavailable')
+
+      try {
+        const socketClient = typeof voiceClient.getSocketClient === 'function'
+          ? voiceClient.getSocketClient()
+          : voiceClient.socketClient
+        if (socketClient && typeof socketClient.close === 'function') socketClient.close()
+      } catch {}
+
+      try {
+        if (typeof voiceClient.registerChannels === 'function') voiceClient.registerChannels()
+      } catch {}
+
+      const packets = typeof voiceClient.getPackets === 'function'
+        ? voiceClient.getPackets()
+        : voiceClient.packets
+      const requestSecretPacket = packets?.requestSecretPacket
+      if (!requestSecretPacket || typeof requestSecretPacket.send !== 'function') {
+        throw new Error('voice request packet unavailable')
+      }
+      const compatibilityVersionRaw = Number(voiceClient.compatibilityVersion)
+      const compatibilityVersion = Number.isFinite(compatibilityVersionRaw) ? compatibilityVersionRaw : 18
+      requestSecretPacket.send({ compatibilityVersion })
+      try { logger.info && logger.info('voice reconnect requested:', reason || 'unknown') } catch {}
+      return { ok: true }
+    } catch (err) {
+      setVoiceError(state, err)
+      try { logger.warn && logger.warn('voice reconnect request failed:', err?.message || err) } catch {}
+      return { ok: false, error: String(err?.message || err) }
+    }
+  }
+
+  function queueVoiceReconnect (reason, delayMs = 0) {
+    try {
+      if (recoverTimer) clearTimeout(recoverTimer)
+    } catch {}
+    const waitMs = Number.isFinite(Number(delayMs)) ? Math.max(0, Math.floor(Number(delayMs))) : 0
+    recoverTimer = setTimeout(() => {
+      recoverTimer = null
+      requestVoiceReconnect(reason)
+    }, waitMs)
+  }
+
   function status () {
     const target = readVoiceTarget(bot)
     return {
       enabled: Boolean(state.voiceChat.enabled),
       available: Boolean(state.voiceChat.available),
       pluginLoaded: Boolean(state.voiceChat.pluginLoaded),
-      connected: Boolean(state.voiceChat.connected),
-      hasApi: Boolean(bot.voicechat && typeof bot.voicechat.sendAudio === 'function'),
+      connected: Boolean(syncConnectedState()),
+      hasApi: hasVoiceApi(),
       targetHost: target.host,
       targetPort: target.port,
       lastError: state.voiceChat.lastError || null,
@@ -223,17 +313,20 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
 
   const api = {
     isReady () {
-      return Boolean(state.voiceChat.available && state.voiceChat.pluginLoaded && bot.voicechat && typeof bot.voicechat.sendAudio === 'function')
+      return isReadyState()
     },
     isConnected () {
-      return Boolean(state.voiceChat.connected)
+      return Boolean(syncConnectedState())
     },
     status,
     async play (audioPath) {
       const targetPath = normalizeAudioPath(audioPath)
       if (!targetPath) return { ok: false, msg: '缺少音频路径(path)' }
       if (!api.isReady()) return { ok: false, msg: '语音插件未就绪', status: api.status() }
-      if (!api.isConnected()) return { ok: false, msg: '语音通道未连接', status: api.status() }
+      if (!api.isConnected()) {
+        requestVoiceReconnect('play:not-connected', { force: true })
+        return { ok: false, msg: '语音通道未连接', status: api.status() }
+      }
       try {
         await Promise.resolve(bot.voicechat.sendAudio(targetPath))
         state.voiceChat.lastAudioPath = targetPath
@@ -242,6 +335,10 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
         return { ok: true, msg: '已发送语音音频', path: targetPath }
       } catch (e) {
         setVoiceError(state, e)
+        if (isVoiceNotLoadedError(e)) {
+          markDisconnected('send-audio-failed')
+          requestVoiceReconnect('play:not-loaded', { force: true })
+        }
         return { ok: false, msg: '发送语音失败', error: String(e?.message || e), path: targetPath }
       }
     }
@@ -250,6 +347,12 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
   try { bot.voiceChat = api } catch {}
   registerCleanup && registerCleanup(() => {
     try { if (bot.voiceChat === api) delete bot.voiceChat } catch {}
+  })
+  registerCleanup && registerCleanup(() => {
+    try {
+      if (recoverTimer) clearTimeout(recoverTimer)
+      recoverTimer = null
+    } catch {}
   })
 
   function findAudioPath (tokens) {
@@ -365,11 +468,7 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
   }
 
   function onDisconnect () {
-    try {
-      state.voiceChat.connected = false
-      state.voiceChat.lastDisconnectAt = nowIso()
-      out('voicechat disconnected')
-    } catch {}
+    markDisconnected(null)
   }
 
   function onPlayerSound (data) {
@@ -384,6 +483,29 @@ function install (bot, { on, state, registerCleanup, log } = {}) {
   on('voicechat_connect', onConnect)
   on('voicechat_disconnect', onDisconnect)
   on('voicechat_player_sound', onPlayerSound)
+  on('spawn', () => {
+    queueVoiceReconnect('spawn', 1500)
+  })
+  on('end', () => {
+    markDisconnected('bot-end')
+  })
+  on('kicked', () => {
+    markDisconnected('bot-kicked')
+  })
+
+  const recoverTicker = setInterval(() => {
+    try {
+      if (!isReadyState()) return
+      if (api.isConnected()) return
+      requestVoiceReconnect('periodic')
+    } catch {}
+  }, VOICE_RECOVER_INTERVAL_MS)
+  try { if (typeof recoverTicker.unref === 'function') recoverTicker.unref() } catch {}
+  registerCleanup && registerCleanup(() => {
+    try { clearInterval(recoverTicker) } catch {}
+  })
+
+  queueVoiceReconnect('plugin-loaded', 1200)
 
   return api
 }
