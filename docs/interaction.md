@@ -219,6 +219,8 @@ Recommended resilient mode (auto-restart + inherited stdin/stdout):
   - The watcher starts `bot.js` with `stdio: inherit`, so interactive stdin still goes to the running bot child.
   - If `bot.js` exits unexpectedly, watcher restarts it with bounded exponential backoff.
   - If an existing pid from `./.mcbot.pid` is alive, watcher takeover stops it first (`--takeover=true`).
+- `bash scripts/start-bot.sh`
+  - Thin wrapper around the same watcher, useful as a direct startup entrypoint.
 
 ## Troubleshooting
 

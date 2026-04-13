@@ -9,6 +9,7 @@
 
 ## 运行
 - `npm start`（默认 watcher 模式，启动 `scripts/bot-watch.js --takeover=true`）
+- `bash scripts/start-bot.sh`（等价于 `npm start`，适合直接拉起守护启动）
 - `npm run bot:start:direct`（直接单进程运行 `bot.js`）
 - `npm run dev`（nodemon 重启，修改 `bot.js` 时使用）
 

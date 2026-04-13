@@ -91,12 +91,91 @@ console.log('Starting bot with config:', {
 
 // Current bot instance (may be recreated on reconnect)
 let bot = null
+let plugin = null
+
+const deactivatedBotPlugins = new WeakSet()
+const disposedBots = new WeakSet()
+const BOT_HEAVY_FIELDS = [
+  '_client',
+  'world',
+  'entity',
+  'entities',
+  'players',
+  'inventory',
+  'physics',
+  'pathfinder',
+  'registry',
+  'mcData',
+  'game',
+  'currentWindow',
+  'targetDigBlock',
+  'voicechat',
+  'voiceChat',
+  '_skillRunner',
+  '_skillRunnerState',
+  '_aiChatExecutor'
+]
 
 // Reconnect backoff state
 let reconnectTimer = null
 let reconnectAttempts = 0
 const RECONNECT_MAX_DELAY_MS = 30000
 const RECONNECT_BASE_DELAY_MS = 1000
+
+function formatMemUsage () {
+  try {
+    const m = process.memoryUsage && process.memoryUsage()
+    if (!m) return ''
+    const fmt = (n) => Math.round((n || 0) / (1024 * 1024)) + 'MB'
+    return `rss=${fmt(m.rss)} heapUsed=${fmt(m.heapUsed)} heapTotal=${fmt(m.heapTotal)}`
+  } catch {
+    return ''
+  }
+}
+
+function deactivateAttachedPlugin (targetBot) {
+  if (!targetBot || deactivatedBotPlugins.has(targetBot)) return
+  const targetPlugin = targetBot.__mcbotPlugin
+  deactivatedBotPlugins.add(targetBot)
+  if (!targetPlugin || typeof targetPlugin.deactivate !== 'function') return
+  try {
+    targetPlugin.deactivate()
+  } catch (e) {
+    console.error('Plugin deactivate failed during bot teardown:', e?.message || e)
+  } finally {
+    try {
+      if (bot === targetBot && plugin === targetPlugin) plugin = null
+    } catch {}
+    try { delete targetBot.__mcbotPlugin } catch {}
+  }
+}
+
+function disposeClosedBot (targetBot) {
+  if (!targetBot || disposedBots.has(targetBot)) return
+  disposedBots.add(targetBot)
+  // A few third-party plugins keep stale bot references after disconnect.
+  // Drop the heavy world/client graph so retained stale refs stay cheap.
+  setTimeout(() => {
+    const client = targetBot._client
+    try { if (targetBot.pathfinder && typeof targetBot.pathfinder.setGoal === 'function') targetBot.pathfinder.setGoal(null) } catch {}
+    try { if (typeof targetBot.clearControlStates === 'function') targetBot.clearControlStates() } catch {}
+    try { if (typeof targetBot.removeAllListeners === 'function') targetBot.removeAllListeners() } catch {}
+    try { if (client && typeof client.removeAllListeners === 'function') client.removeAllListeners() } catch {}
+    for (const emitter of [client?.socket, client?.serializer, client?.deserializer]) {
+      try { if (emitter && typeof emitter.removeAllListeners === 'function') emitter.removeAllListeners() } catch {}
+    }
+    for (const key of BOT_HEAVY_FIELDS) {
+      try { targetBot[key] = null } catch {}
+    }
+    try {
+      if (client && typeof client === 'object') {
+        client.socket = null
+        client.serializer = null
+        client.deserializer = null
+      }
+    } catch {}
+  }, 0)
+}
 
 function scheduleReconnect(reason) {
   if (shuttingDown) return
@@ -110,28 +189,25 @@ function scheduleReconnect(reason) {
   }, delay)
 }
 
-function attachCoreBotListeners() {
-  bot.on('kicked', (reason) => {
+function attachCoreBotListeners(targetBot) {
+  targetBot.on('kicked', (reason) => {
     try {
-      const m = process.memoryUsage && process.memoryUsage()
-      const fmt = (n) => Math.round((n || 0) / (1024 * 1024)) + 'MB'
-      const mem = m ? `rss=${fmt(m.rss)} heapUsed=${fmt(m.heapUsed)} heapTotal=${fmt(m.heapTotal)}` : ''
-      console.log(`[${ts()}] Kicked by server:`, typeof reason === 'string' ? reason : JSON.stringify(reason), mem)
+      const detail = typeof reason === 'string' ? reason : JSON.stringify(reason)
+      console.log(`[${ts()}] Kicked by server:`, detail, formatMemUsage())
     } catch {}
-    try { if (plugin && typeof plugin.deactivate === 'function') plugin.deactivate() } catch {}
-    scheduleReconnect('kicked')
+    deactivateAttachedPlugin(targetBot)
+    disposeClosedBot(targetBot)
+    if (bot === targetBot) scheduleReconnect('kicked')
   })
-  bot.on('end', (reason) => {
+  targetBot.on('end', (reason) => {
     try {
-      const m = process.memoryUsage && process.memoryUsage()
-      const fmt = (n) => Math.round((n || 0) / (1024 * 1024)) + 'MB'
-      const mem = m ? `rss=${fmt(m.rss)} heapUsed=${fmt(m.heapUsed)} heapTotal=${fmt(m.heapTotal)}` : ''
-      console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '', mem)
+      console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '', formatMemUsage())
     } catch {}
-    try { if (plugin && typeof plugin.deactivate === 'function') plugin.deactivate() } catch {}
-    scheduleReconnect('end')
+    deactivateAttachedPlugin(targetBot)
+    disposeClosedBot(targetBot)
+    if (bot === targetBot) scheduleReconnect('end')
   })
-  bot.on('error', (err) => {
+  targetBot.on('error', (err) => {
     console.error('Bot error:', err?.message || err)
   })
 }
@@ -145,7 +221,7 @@ function startBot() {
     try {
       if (sharedState) sharedState.hasSpawned = false
     } catch {}
-    attachCoreBotListeners()
+    attachCoreBotListeners(bot)
     loadPlugin()
   } catch (e) {
     console.error('Failed to start bot:', e)
@@ -170,7 +246,6 @@ rl.on('line', (line) => {
 
 // Hot-reloadable implementation loader (directory-based)
 const pluginRoot = path.resolve(__dirname, 'bot_impl')
-let plugin = null
 let sharedState = { pendingGreets: new Map(), greetedPlayers: new Set(), readyForGreeting: false, extinguishing: false }
 
 // --- Control plane (Unix socket, NDJSON) ---
@@ -536,6 +611,7 @@ function loadPlugin() {
     plugin = next
     const res = plugin.activate(bot, { sharedState, config: { password: options.password } })
     if (res && res.sharedState) sharedState = res.sharedState
+    try { bot.__mcbotPlugin = plugin } catch {}
     console.log('Loaded bot implementation from', path.basename(pluginRoot))
   } catch (e) {
     console.error('Hot reload: activation failed:', e?.message || e)
