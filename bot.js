@@ -8,6 +8,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 const fileLogger = require('./bot_impl/file-logger')
 const controlPlaneContract = require('./bot_impl/control-plane-contract')
+const { createReconnectReadinessGuard } = require('./bot_impl/reconnect-readiness')
 const { sanitizeOutboundText } = require('./bot_impl/outbound-text-filter')
 const { formatDateTimeTz } = require('./bot_impl/time-utils')
 
@@ -205,7 +206,7 @@ function attachCoreBotListeners(targetBot) {
     } catch {}
     deactivateAttachedPlugin(targetBot)
     disposeClosedBot(targetBot)
-    if (bot === targetBot) scheduleReconnect('end')
+    if (bot === targetBot) scheduleReconnect(reason || 'end')
   })
   targetBot.on('error', (err) => {
     console.error('Bot error:', err?.message || err)
@@ -217,6 +218,13 @@ function startBot() {
     // Create new bot instance
     bot = mineflayer.createBot(options)
     try { console.log(`[${ts()}] Starting (re)connection...`) } catch {}
+    createReconnectReadinessGuard(bot, {
+      onReconnectReady (reason) {
+        try {
+          console.log(`[${ts()}] Reconnect readiness failed (${reason}); terminating stalled bot instance`)
+        } catch {}
+      }
+    })
     reconnectAttempts = 0 // reset backoff on successful create
     try {
       if (sharedState) sharedState.hasSpawned = false
