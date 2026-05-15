@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-02-08T12:16:19.229Z`
+- GeneratedAt: `2026-05-15T18:51:45.337Z`
 - Source: `offline-module`
 
 ## Control Ops
@@ -66,7 +66,7 @@
 | reset | validate_only | yes | Stop current tasks, clear timers, and return to idle. |
 | stop | validate_only | yes | Execute action tool "stop". |
 | stop_all | validate_only | yes | Execute action tool "stop_all". |
-| say | validate_only | yes | Execute action tool "say". |
+| say | validate_only | yes | Send multiple chat messages in order, optionally inserting pauses to simulate human typing delay. Use this when you want to deliver a reply in several short parts with timing. |
 | voice_status | read_only | yes | Read current Simple Voice Chat runtime status (enabled/connected/errors). |
 | voice_speak | validate_only | yes | Speak with a controlled voice preset. Path/URL/TTS are not accepted yet. |
 | hunt_player | validate_only | yes | Aggressively chase and attack a named player. |
@@ -112,5 +112,5 @@
 ### Coverage Report
 
 - allowlistCount: 48
-- missingSchema: `stop`, `stop_all`, `say`, `break_blocks`, `collect`, `cull_hostiles`, `deposit_all`, `withdraw_all`, `mine_ore`, `skill_start`, `skill_status`, `skill_cancel`, `people_commitments_list`, `people_commitments_dedupe`, `people_commitments_clear`
+- missingSchema: `stop`, `stop_all`, `break_blocks`, `collect`, `cull_hostiles`, `deposit_all`, `withdraw_all`, `mine_ore`, `skill_start`, `skill_status`, `skill_cancel`, `people_commitments_list`, `people_commitments_dedupe`, `people_commitments_clear`
 - staleSchema: (none)
