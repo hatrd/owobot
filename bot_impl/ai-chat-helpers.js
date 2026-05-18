@@ -47,6 +47,94 @@ function buildContextPrompt (username, recent, options = {}) {
   return `当前对话玩家: ${username}。\n${summary}`
 }
 
+function selectContextProfile (intent = {}, options = {}) {
+  const explicit = String(options?.contextProfile || options?.profile || '').trim().toLowerCase()
+  const reason = String(options?.reason || '').trim().toLowerCase()
+  const topic = String(intent?.topic || '').trim().toLowerCase()
+  const kind = String(intent?.kind || '').trim().toLowerCase()
+  const nearby = intent?.nearby === true
+
+  const profiles = {
+    greet_minimal: {
+      name: 'greet_minimal',
+      recentCount: 0,
+      recentWindowSec: 0,
+      memoryQueryRecentCount: 0,
+      includeSystem: true,
+      includeMeta: false,
+      includeGame: false,
+      includeMemory: false,
+      includePeople: false,
+      includeCommitments: false,
+      includeDialogue: false,
+      includeRecent: false,
+      withTools: false,
+      maxInputTokens: 1200
+    },
+    chat_light: {
+      name: 'chat_light',
+      recentCount: 10,
+      recentWindowSec: 30 * 60,
+      memoryQueryRecentCount: 4,
+      includeSystem: true,
+      includeMeta: true,
+      includeGame: false,
+      includeMemory: true,
+      includePeople: true,
+      includeCommitments: false,
+      includeDialogue: false,
+      includeRecent: true,
+      withTools: false,
+      maxInputTokens: 3000
+    },
+    task_context: {
+      name: 'task_context',
+      recentCount: 16,
+      recentWindowSec: 60 * 60,
+      memoryQueryRecentCount: 6,
+      includeSystem: true,
+      includeMeta: true,
+      includeGame: true,
+      includeMemory: true,
+      includePeople: true,
+      includeCommitments: true,
+      includeDialogue: false,
+      includeRecent: true,
+      withTools: true,
+      maxInputTokens: 5000
+    },
+    plan_context: {
+      name: 'plan_context',
+      recentCount: 20,
+      recentWindowSec: 2 * 60 * 60,
+      memoryQueryRecentCount: 8,
+      includeSystem: true,
+      includeMeta: true,
+      includeGame: true,
+      includeMemory: true,
+      includePeople: true,
+      includeCommitments: true,
+      includeDialogue: true,
+      includeRecent: true,
+      withTools: true,
+      maxInputTokens: 6500
+    }
+  }
+
+  const clone = (name) => ({ ...profiles[name] })
+  if (explicit === 'greet' || explicit === 'minimal' || explicit === 'greet_minimal') return clone('greet_minimal')
+  if (explicit === 'chat' || explicit === 'light' || explicit === 'chat_light') return clone('chat_light')
+  if (explicit === 'task' || explicit === 'action' || explicit === 'query' || explicit === 'task_context') return clone('task_context')
+  if (explicit === 'plan' || explicit === 'loop' || explicit === 'tool_loop' || explicit === 'plan_context') return clone('plan_context')
+
+  if (reason === 'look_greet' || reason === 'auto-look' || reason === 'auto_look') return clone('greet_minimal')
+  if (topic === 'greet' && nearby) return clone('greet_minimal')
+  if (topic === 'plan') return clone('plan_context')
+  if (kind === 'action' || kind === 'command') return clone('task_context')
+  if (['position', 'players', 'drops', 'observe'].includes(topic)) return clone('task_context')
+  return clone('chat_light')
+}
+
 function projectedCostForCall (priceInPerKT, priceOutPerKT, promptTok, outTokMax) {
   const cIn = (promptTok / 1000) * (priceInPerKT || 0)
   const cOut = (outTokMax / 1000) * (priceOutPerKT || 0)
@@ -225,6 +313,7 @@ module.exports = {
   estTokensFromText,
   trimReply,
   buildContextPrompt,
+  selectContextProfile,
   projectedCostForCall,
   canAfford,
   stripReasoningText,

@@ -292,28 +292,45 @@ function createChatExecutor ({
     }
   }
 
-  function buildContextPrompt (username) {
+  function buildContextPrompt (username, profile = null) {
     const ctx = state.ai.context || {
       include: true,
       recentCount: defaults.DEFAULT_RECENT_COUNT,
       recentWindowSec: defaults.DEFAULT_RECENT_WINDOW_SEC
     }
+    const includeRecent = profile ? profile.includeRecent !== false : ctx.include !== false
+    if (!includeRecent) return `当前对话玩家: ${username}`
+    const recentCount = profile && Number.isFinite(profile.recentCount)
+      ? Math.max(0, Math.floor(profile.recentCount))
+      : null
+    const recentWindowSec = profile && Number.isFinite(profile.recentWindowSec)
+      ? Math.max(0, Math.floor(profile.recentWindowSec))
+      : null
     if (contextBus) {
-      const maxEntries = Number.isFinite(ctx.recentCount) ? Math.max(1, ctx.recentCount) : defaults.DEFAULT_RECENT_COUNT
-      const windowSec = Number.isFinite(ctx.recentWindowSec)
+      const maxEntries = recentCount != null
+        ? Math.max(0, recentCount)
+        : (Number.isFinite(ctx.recentCount) ? Math.max(1, ctx.recentCount) : defaults.DEFAULT_RECENT_COUNT)
+      const windowSec = recentWindowSec != null
+        ? Math.max(0, recentWindowSec)
+        : (Number.isFinite(ctx.recentWindowSec)
         ? Math.max(0, ctx.recentWindowSec)
-        : defaults.DEFAULT_RECENT_WINDOW_SEC
+        : defaults.DEFAULT_RECENT_WINDOW_SEC)
       const xmlCtx = contextBus.buildXml({
         maxEntries,
         windowSec,
         includeGaps: true
       })
-      const conv = memory.dialogue.buildPrompt(username)
+      const conv = profile && profile.includeDialogue === false ? '' : memory.dialogue.buildPrompt(username)
       const parts = [`当前对话玩家: ${username}`, xmlCtx, conv].filter(Boolean)
       return parts.join('\n\n')
     }
-    const base = H.buildContextPrompt(username, state.aiRecent, { ...ctx, trigger: triggerWord() })
-    const conv = memory.dialogue.buildPrompt(username)
+    const base = H.buildContextPrompt(username, state.aiRecent, {
+      ...ctx,
+      ...(recentCount != null ? { recentCount } : null),
+      ...(recentWindowSec != null ? { recentWindowSec } : null),
+      trigger: triggerWord()
+    })
+    const conv = profile && profile.includeDialogue === false ? '' : memory.dialogue.buildPrompt(username)
     return [base, conv].filter(Boolean).join('\n\n')
   }
 
@@ -479,26 +496,33 @@ function createChatExecutor ({
     if (!key) throw new Error('AI key not configured')
     const apiPath = pathOverride || path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-    const contextPrompt = buildContextPrompt(username)
-    const gameCtx = buildGameContext()
+    const profile = typeof H.selectContextProfile === 'function'
+      ? H.selectContextProfile(intent, options)
+      : { includeGame: true, includeMemory: true, includePeople: true, includeCommitments: true, includeRecent: true, withTools: true }
+    const contextPrompt = buildContextPrompt(username, profile)
+    const gameCtx = profile.includeGame === false ? '' : buildGameContext()
     const memoryQuery = buildMemoryQuery({
       username,
       message: content,
-      recentChat: collectRecentChatForMemoryQuery(username, 8),
+      recentChat: collectRecentChatForMemoryQuery(username, profile.memoryQueryRecentCount ?? 8),
       worldHint: null
     })
-    const memoryCtxResult = await memory.longTerm.buildContext({ query: memoryQuery, actor: username, withRefs: true })
+    const memoryCtxResult = profile.includeMemory === false
+      ? { text: '', refs: [] }
+      : await memory.longTerm.buildContext({ query: memoryQuery, actor: username, withRefs: true })
     const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     const peopleProfilesCtx = (() => {
+      if (profile.includePeople === false) return ''
       try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
     })()
     const peopleCommitmentsCtx = (() => {
+      if (profile.includeCommitments === false) return ''
       try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
     })()
-    const metaCtx = buildMetaContext()
+    const metaCtx = profile.includeMeta === false ? '' : buildMetaContext()
     const inlineUserContent = options?.inlineUserContent === true
-    const withTools = options?.withTools !== false
+    const withTools = options?.withTools !== false && profile.withTools !== false
     const maxToolCalls = (() => {
       const raw = Number(options?.maxToolCalls ?? state.ai?.maxToolCallsPerTurn ?? state.ai?.maxToolCalls ?? 6)
       if (!Number.isFinite(raw)) return 6
@@ -513,7 +537,7 @@ function createChatExecutor ({
     }
     const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
     const baseMessages = [
-      { role: 'system', content: systemPrompt() },
+      profile.includeSystem === false ? null : { role: 'system', content: systemPrompt() },
       metaCtx ? { role: 'system', content: metaCtx } : null,
       gameCtx ? { role: 'system', content: gameCtx } : null,
       peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx } : null,
@@ -524,8 +548,9 @@ function createChatExecutor ({
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
+        log.info('contextProfile ->', profile.name || 'default')
         log.info('gameCtx ->', gameCtx)
-        log.info('chatCtx ->', buildContextPrompt(username))
+        log.info('chatCtx ->', buildContextPrompt(username, profile))
         log.info('peopleProfilesCtx ->', peopleProfilesCtx)
         log.info('peopleCommitmentsCtx ->', peopleCommitmentsCtx)
         log.info('memoryCtx ->', memoryCtx)

@@ -6,6 +6,7 @@ import {
   buildContextPrompt,
   projectedCostForCall,
   canAfford,
+  selectContextProfile,
   extractAssistantText,
   stripReasoningText,
   isResponsesApiPath,
@@ -94,6 +95,36 @@ test('buildContextPrompt limits to recent window/count', () => {
   assert.match(ctx, /C: \[.*\] latest line/)
   assert.match(ctx, /B: \[.*\] yo/)
   assert.doesNotMatch(ctx, /Old: \[.*\] past/)
+})
+
+test('selectContextProfile maps structured intent to explicit context budgets', () => {
+  const greet = selectContextProfile({ topic: 'greet', kind: 'chat', nearby: true }, { reason: 'look_greet' })
+  assert.equal(greet.name, 'greet_minimal')
+  assert.equal(greet.includeGame, false)
+  assert.equal(greet.includeMemory, false)
+  assert.equal(greet.includePeople, false)
+  assert.equal(greet.withTools, false)
+  assert.ok(greet.maxInputTokens <= 1200)
+
+  const chat = selectContextProfile({ topic: 'generic', kind: 'chat' }, {})
+  assert.equal(chat.name, 'chat_light')
+  assert.equal(chat.includeMemory, true)
+  assert.equal(chat.includePeople, true)
+  assert.equal(chat.withTools, false)
+  assert.ok(chat.recentCount <= 12)
+  assert.ok(chat.maxInputTokens <= 3000)
+
+  const action = selectContextProfile({ topic: 'observe', kind: 'action' }, {})
+  assert.equal(action.name, 'task_context')
+  assert.equal(action.includeGame, true)
+  assert.equal(action.withTools, true)
+  assert.ok(action.maxInputTokens <= 5000)
+
+  const plan = selectContextProfile({ topic: 'plan', kind: 'chat' }, { contextProfile: 'plan' })
+  assert.equal(plan.name, 'plan_context')
+  assert.equal(plan.includeGame, true)
+  assert.equal(plan.withTools, true)
+  assert.ok(plan.maxInputTokens > action.maxInputTokens)
 })
 
 test('cost projection and affordability', () => {
