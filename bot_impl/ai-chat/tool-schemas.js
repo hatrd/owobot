@@ -125,15 +125,33 @@ const ACTION_TOOL_SCHEMA_OVERRIDES = [
         text: { type: 'string', description: 'Single chat message shortcut.' },
         steps: {
           type: 'array',
-          description: 'Ordered script. Each step can send a message (`text`) and/or wait (`pauseMs`). If `text` is empty and `pauseMs` is provided, it is a pure pause step.',
+          description: 'Ordered script. Each step can be a string chat message, a text step, or a pause object. Use `{ "pauseMs": 1500 }` for a pure wait.',
           items: {
-            type: 'object',
-            properties: {
-              text: { type: 'string', description: 'Chat message to send.' },
-              pauseMs: { type: 'number', description: 'Milliseconds to wait after this step (or a pure pause when no text).' },
-              typing: { type: 'boolean', description: 'If true, wait a computed typing delay before sending this message.' }
-            },
-            additionalProperties: true
+            anyOf: [
+              { type: 'string', description: 'Chat message to send.' },
+              {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', const: 'text' },
+                  text: { type: 'string', description: 'Chat message to send.' },
+                  pauseMs: { type: 'number', description: 'Milliseconds to wait after this message.' },
+                  typing: { type: 'boolean', description: 'If true, wait a computed typing delay before sending this message.' }
+                },
+                required: ['text'],
+                additionalProperties: true
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', const: 'pause', description: 'Optional explicit pause marker.' },
+                  pauseMs: { type: 'number', description: 'Milliseconds to wait before the next step.' },
+                  ms: { type: 'number', description: 'Alias for pauseMs.' },
+                  delayMs: { type: 'number', description: 'Alias for pauseMs.' }
+                },
+                required: ['pauseMs'],
+                additionalProperties: true
+              }
+            ]
           }
         },
         messages: { type: 'array', items: { type: 'string' }, description: 'Convenience: messages to send in order.' },

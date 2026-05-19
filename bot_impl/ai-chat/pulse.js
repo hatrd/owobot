@@ -143,7 +143,8 @@ function createPulseService ({
         continue
       }
       if (!step || typeof step !== 'object') continue
-      const kind = step.kind || 'text'
+      const hasPauseOnly = step.text == null && (step.pauseMs != null || step.ms != null || step.delayMs != null)
+      const kind = step.kind || (hasPauseOnly ? 'pause' : 'text')
       if (kind === 'pause') {
         pushPause(step.pauseMs ?? step.ms ?? step.delayMs ?? gapMs)
         continue

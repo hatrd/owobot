@@ -14,7 +14,7 @@ function makeNow () {
   return fn
 }
 
-function makePulse () {
+function makePulse (overrides = {}) {
   const now = makeNow()
   const state = {
     ai: { enabled: true, key: 'test' },
@@ -22,7 +22,7 @@ function makePulse () {
     aiRecent: [],
     aiRecentSeq: 0
   }
-  const bot = { username: 'bot', chat: () => {} }
+  const bot = { username: 'bot', chat: () => {}, ...(overrides.bot || {}) }
   const contextBus = createContextBus({ state, now })
   const pulse = createPulseService({
     state,
@@ -116,4 +116,16 @@ test('say: injects planned bot lines into context bus immediately', () => {
   assert.deepEqual(store[0].payload, { content: '第一句', from: 'LLM' })
   assert.equal(store[1].type, 'bot')
   assert.deepEqual(store[1].payload, { content: '第二句', from: 'LLM' })
+})
+
+test('say: pure pauseMs step delays the next message without requiring kind', async () => {
+  const sent = []
+  const { pulse } = makePulse({ bot: { username: 'bot', chat: (text) => sent.push({ text, t: Date.now() }) } })
+  const ok = pulse.say('kuleizi', { steps: ['第一句', { pauseMs: 30 }, '第二句'], gapMs: 0, typing: { enabled: false } }, { from: 'LLM' })
+  assert.equal(ok, true)
+  await new Promise(resolve => setTimeout(resolve, 70))
+  assert.equal(sent.length, 2)
+  assert.equal(sent[0].text, '第一句')
+  assert.equal(sent[1].text, '第二句')
+  assert.ok(sent[1].t - sent[0].t >= 25, `expected pause before second message, got ${sent[1].t - sent[0].t}ms`)
 })

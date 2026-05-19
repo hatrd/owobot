@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-05-15T18:51:45.337Z`
+- GeneratedAt: `2026-05-19T12:47:16.980Z`
 - Source: `offline-module`
 
 ## Control Ops
