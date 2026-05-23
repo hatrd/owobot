@@ -1,3 +1,5 @@
+const { createAiCallMonitor } = require('./call-monitor')
+
 const ACTIVE_CHAT_WINDOW_MS = 120 * 1000
 const ACTIVE_CHAT_CLEANUP_MS = 5000
 const PLAYER_CHAT_DEDUPE_MS = 1200
@@ -14,9 +16,11 @@ function createPulseService ({
   traceChat = () => {},
   memory,
   feedbackCollector = null,
-  contextBus = null
+  contextBus = null,
+  aiCallMonitor = null
 }) {
   const sayCtrlByUser = new Map()
+  const callMonitor = aiCallMonitor || createAiCallMonitor({ state, log, now })
 
   const SAY_LIMITS = {
     maxSteps: 24,
@@ -385,7 +389,14 @@ function createPulseService ({
           ? { model: state.ai.model || defaults.DEFAULT_MODEL, input: messages, max_output_tokens: 1024 }
           : { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 1024, stream: false }
         try {
-          const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }, body: JSON.stringify(body) })
+          const res = await callMonitor.request({
+            source: 'overflow_summary',
+            kind: 'chat',
+            model: body.model,
+            url,
+            body,
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.ai.key}` }
+          })
           if (!res.ok) {
             if (state.ai?.trace && log?.info) {
               try {

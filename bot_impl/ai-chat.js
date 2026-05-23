@@ -13,6 +13,7 @@ const { createFeedbackCollector } = require('./ai-chat/feedback-collector')
 const { createIntrospectionEngine } = require('./ai-chat/introspection')
 const { createPureSurprise } = require('./ai-chat/pure-surprise')
 const { createContextBus } = require('./ai-chat/context-bus')
+const { createAiCallMonitor } = require('./ai-chat/call-monitor')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
@@ -128,8 +129,9 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     DEFAULT_MEMORY_STORE_MAX,
     buildDefaultContext
   }
+  const aiCallMonitor = createAiCallMonitor({ state, log, now })
   const people = createPeopleService({ state, peopleStore, now, trace: traceChat })
-  const memory = createMemoryService({ state, log, memoryStore, defaults, bot, people, traceChat, now })
+  const memory = createMemoryService({ state, log, memoryStore, defaults, bot, people, traceChat, now, aiCallMonitor })
   const persistedMemory = memoryStore.load()
   const persistedEvolution = memoryStore.loadEvolution()
   prepareAiState(state, {
@@ -183,10 +185,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       const timeout = setTimeout(() => ac.abort('probe_timeout'), 3500)
       let res
       try {
-        res = await fetch(url, {
-          method: 'POST',
+        res = await aiCallMonitor.request({
+          source: 'startup_probe',
+          kind: 'chat',
+          model: body.model,
+          url,
+          body,
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-          body: JSON.stringify(body),
           signal: ac.signal
         })
       } finally {
@@ -294,7 +299,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     traceChat,
     memory,
     feedbackCollector,
-    contextBus
+    contextBus,
+    aiCallMonitor
   })
   executor = createChatExecutor({
     state,
@@ -311,7 +317,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     canAfford,
     applyUsage,
     buildGameContext,
-    contextBus
+    contextBus,
+    aiCallMonitor
   })
   try { bot._aiChatExecutor = executor } catch {}
 
@@ -345,7 +352,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       try {
         const prompt = `玩家 ${usernameRaw} 正在你身边并被你注意到，请用一句温暖、自然的中文主动打招呼，鼓励对方继续聊天，控制在20字以内。`
         const intent = { topic: 'greet', kind: 'chat', nearby: true }
-        const { reply } = await executor.callAI(usernameRaw, prompt, intent, { inlineUserContent: true })
+        const { reply } = await executor.callAI(usernameRaw, prompt, intent, { inlineUserContent: true, aiCallSource: 'auto_look_greet' })
         const text = String(reply || '').trim()
         if (!text) {
           cooldowned = true
@@ -423,10 +430,13 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       : defaults.DEFAULT_TIMEOUT_MS
     const timeout = setTimeout(() => ac.abort('timeout'), timeoutMs)
     try {
-      const res = await fetch(url, {
-        method: 'POST',
+      const res = await aiCallMonitor.request({
+        source: 'introspection',
+        kind: 'chat',
+        model: body.model,
+        url,
+        body,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify(body),
         signal: ac.signal
       })
       if (!res.ok) {

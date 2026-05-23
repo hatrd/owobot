@@ -129,6 +129,25 @@ function applyAiEnvToState (state, envMap) {
   return { updated, missing }
 }
 
+function formatAiMonitorLine (state) {
+  const mon = state?.aiCallMonitor || {}
+  const counts = mon.counts || {}
+  const recent = Array.isArray(mon.recent) ? mon.recent : []
+  const last = recent.length ? recent[recent.length - 1] : null
+  const bg = state?.ai?.externalCalls?.allowBackground === true ? 'on' : 'off'
+  const lastText = last
+    ? `last=${last.source || '?'}:${last.status || '?'}${last.httpStatus ? `/${last.httpStatus}` : ''}`
+    : 'last=none'
+  return [
+    `started=${Number(counts.started) || 0}`,
+    `ok=${Number(counts.ok) || 0}`,
+    `error=${Number(counts.error) || 0}`,
+    `blocked=${Number(counts.blocked) || 0}`,
+    `background=${bg}`,
+    lastText
+  ].join(' ')
+}
+
 function createAiCliHandler (options = {}) {
   const {
     bot,
@@ -281,6 +300,30 @@ function createAiCliHandler (options = {}) {
           const v = (rest[0] || '').toLowerCase()
           state.ai.trace = ['1', 'true', 'on', 'yes'].includes(v)
           print('trace =', state.ai.trace)
+          break
+        }
+        case 'monitor':
+        case 'calls': {
+          const k = (rest[0] || 'show').toLowerCase()
+          if (k === 'background') {
+            const v = (rest[1] || '').toLowerCase()
+            if (!state.ai.externalCalls || typeof state.ai.externalCalls !== 'object') state.ai.externalCalls = { allowSources: ['main_chat'] }
+            state.ai.externalCalls.allowBackground = ['1', 'true', 'on', 'yes'].includes(v)
+            print('background calls=', state.ai.externalCalls.allowBackground)
+            break
+          }
+          if (k === 'recent') {
+            const recent = Array.isArray(state.aiCallMonitor?.recent) ? state.aiCallMonitor.recent : []
+            if (!recent.length) {
+              print('no recent AI calls')
+              break
+            }
+            for (const r of recent.slice(-10)) {
+              print(`${r.id || '-'} ${r.source || '?'} ${r.status || '?'} model=${r.model || '-'} ms=${r.durationMs ?? '-'}`)
+            }
+            break
+          }
+          print(formatAiMonitorLine(state))
           break
         }
         case 'budget': {
@@ -493,7 +536,7 @@ function createAiCliHandler (options = {}) {
         }
         case 'info':
         default:
-          print('enabled=', state.ai.enabled, 'model=', state.ai.model, 'base=', state.ai.baseUrl, 'path=', state.ai.path, 'max=', state.ai.maxReplyLen, 'limits=', state.ai.limits || null)
+          print('enabled=', state.ai.enabled, 'model=', state.ai.model, 'base=', state.ai.baseUrl, 'path=', state.ai.path, 'max=', state.ai.maxReplyLen, 'limits=', state.ai.limits || null, 'calls=', formatAiMonitorLine(state))
       }
     } catch (e) {
       log?.warn && log.warn('ai cli error:', e?.message || e)

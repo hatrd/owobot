@@ -19,6 +19,8 @@
 | `state.aiMemory.entries` | 长期记忆条目（注入到 prompt 的“长期记忆”） |
 | `state.aiPulse` | 会话激活追踪（60s 窗口 + 5s 延迟跟进） |
 | `state.aiStats/aiSpend` | 用量与预算 |
+| `state.ai.externalCalls` | 外部 AI 调用门控；默认仅允许 `main_chat`，后台摘要/记忆/自省/auto-look greet 会被阻断，除非显式开启 background 或 allowSources |
+| `state.aiCallMonitor` | 外部 AI 调用监控；记录 source/status/model/duration，并累计 started/ok/error/blocked |
 
 ## 2. 触发流程 (`handleChat`)
 
@@ -30,6 +32,8 @@
 ```
 
 补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。
+
+外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。需要临时放开时用 `.ai calls background on`，并通过 `.ai calls` / `.ai calls recent` 观察实际调用。
 
 ## 3. 会话激活与跟进
 
@@ -56,15 +60,12 @@
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
    - Query：`executor.callAI()` 先用 `buildMemoryQuery({ username, message, recentChat, worldHint })` 构造会话语境查询，再传给 `buildContext({ query: memoryQuery, actor: username })`
-   - Mode：`state.ai.context.memory.mode=keyword|v2|hybrid`
+   - Mode：`state.ai.context.memory.mode=keyword|v2`
      - `keyword`：关键词/触发词命中；**无命中时会 recent fallback**（补最近记忆）
      - `v2`：多信号打分（relevance/recency/importance）+ `minScore/minRelevance` 阈值裁剪 + 去重；**宁缺毋滥，无 recent fallback**
-     - `hybrid`：稀疏（lexical）+ 稠密（embeddings，可选）RRF 融合后再按 v2-style 打分；**宁缺毋滥，无 recent fallback**
-   - 关键可调参（v2/hybrid）：`minScore/minRelevance`、`wRelevance/wRecency/wImportance`、`recencyHalfLifeDays`、`importanceCountSaturation`
-   - Embeddings（hybrid）：`embeddingProvider` 为空则自动退化为 sparse-only；向量存到 `data/ai-memory-embeddings.json`（可重建，不膨胀 `data/ai-memory.json`）
+   - 关键可调参（v2）：`minScore/minRelevance`、`wRelevance/wRecency/wImportance`、`recencyHalfLifeDays`、`importanceCountSaturation`
    - Backfill：
      - 命名空间：`node scripts/memory-backfill-v2.js --dry-run` / `--apply`（写入前会生成 `.bak.*`）
-     - 向量：`node scripts/memory-embeddings-backfill.js --provider hash --dim 64 --dry-run` / `--apply`
    - Namespacing：长期记忆条目含 `scope=player|global` + `owners[]`；召回会按 `actor` 强过滤，避免跨玩家污染
    - Feedback：`refs` 由反馈链路使用，显式正/负反馈会影响 `count/effectiveness`，并更新 `lastPositiveFeedback` 参与 recency/decay
    - 格式：`长期记忆: 1. ... | 2. ...`
@@ -79,7 +80,7 @@
 
 - 离线查看（不依赖 bot 在线）：`npm run inspect:context -- --player <name> [--query <text>] [--memory-limit N]`
   - 输出：`systemPrompt/metaCtx/peopleProfilesCtx/peopleCommitmentsCtx/memoryCtx/contextPrompt`；`gameCtx` 需要 bot 在线（用 `.ai ctx` 或 trace log）
-  - 对比：加 `--compare` 会同一 query 跑 `keyword/v2/hybrid`（JSON 输出含 `compare.memory` + `compare.diff`）
+  - 对比：加 `--compare` 会同一 query 跑 `keyword/v2`（JSON 输出含 `compare.memory` + `compare.diff`）
   - Debug：加 `--debug` 会输出检索 `tokens/scoredTop/thresholds` 以及 `trace`（token 估算）
 - 运行时查看（bot 在线）：`.ai ctx [player] [query...]`（打印 `metaCtx/gameCtx/chatCtx`，并尽量对齐注入的 `people/memory`）
 
@@ -103,6 +104,8 @@
 | `.ai context recentmax N` | 设置 `state.aiRecent` 存储上限（用于会话摘要/部分逻辑） |
 | `.ai dialog [clear|full|<username>]` | 查看/清空对话摘要 |
 | `.ai budget show` | 查看预算与用量 |
+| `.ai calls` / `.ai calls recent` | 查看外部 AI 调用计数与最近记录 |
+| `.ai calls background on/off` | 临时允许/禁止非主线外部 AI 调用（默认 off） |
 | `.ai clear` | 只清空 `state.aiRecent`（不清 `state.aiContextBus`） |
 
 ## 7. 热重载

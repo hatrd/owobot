@@ -2,6 +2,7 @@ const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const timeUtils = require('../time-utils')
 const feedbackPool = require('./feedback-pool')
 const { buildMemoryQuery } = require('./memory-query')
+const { createAiCallMonitor } = require('./call-monitor')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
@@ -28,10 +29,12 @@ function createChatExecutor ({
   canAfford,
   applyUsage,
   buildGameContext,
-  contextBus = null
+  contextBus = null,
+  aiCallMonitor = null
 }) {
   const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false, lastUser: null, pendingInterruptSeq: 0 }
   const actions = actionsMod.install(bot, { log })
+  const callMonitor = aiCallMonitor || createAiCallMonitor({ state, log, now })
 
   const estTokensFromText = H.estTokensFromText
   const metaTimeZone = (() => {
@@ -592,10 +595,13 @@ function createChatExecutor ({
         : defaults.DEFAULT_TIMEOUT_MS
       const timeout = setTimeout(() => ac.abort('timeout'), timeoutMs)
       try {
-        const res = await fetch(url, {
-          method: 'POST',
+        const res = await callMonitor.request({
+          source: options?.aiCallSource || 'main_chat',
+          kind: 'chat',
+          model: body.model,
+          url,
+          body,
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-          body: JSON.stringify(body),
           signal: ac.signal
         })
         if (!res.ok) {

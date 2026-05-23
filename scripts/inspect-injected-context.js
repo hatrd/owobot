@@ -265,7 +265,7 @@ async function main () {
       const isBoolToken = ['1', 'true', 'yes', 'y', 'on', '0', 'false', 'no', 'n', 'off'].includes(v)
       if (raw && !isBoolToken) return raw.split(',').map(s => String(s || '').trim()).filter(Boolean)
     }
-    return ['keyword', 'v2', 'hybrid']
+    return ['keyword', 'v2']
   })()
 
   const compareResults = {}

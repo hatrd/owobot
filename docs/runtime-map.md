@@ -14,10 +14,12 @@ This project keeps long-lived state in `bot_impl/index.js` so that hot reloads c
 | `cleanups` | `Array<Function>` | Functions registered by modules to run on `deactivate()`; see `registerCleanup`. |
 | `externalBusy` / `externalBusyCount` | `boolean` / `number` | Gate for autonomous features to yield while a player-initiated tool is running. Incremented/decremented via `external:begin` / `external:end`. |
 | `currentTask` | `object|null` | Lightweight descriptor of the action the bot is performing (tool name, source, start timestamp). Shown in status CLI and reset on completion. |
+| `autoLookEnabled` | `boolean` | Enables idle camera tracking of nearby entities. Defaults to `false`; modules can still set `autoLookSuspended` when temporarily claiming camera control. |
 | `autoLookSuspended` | `boolean` | Hint for visual modules (e.g., fishing) that they have temporarily claimed camera control. |
 | `loginPassword` | `string?` | Optional cached server password used by `auto-login`. |
 | `voiceChat` | `object` | Simple Voice Chat runtime state (`enabled/available/pluginLoaded/connected`) with last error, last speaker, and last played audio path/time. |
 | `aiRecentReplies` | `Map<string, number>` | Tracks recent AI replies to avoid greeting someone immediately after chatting with them. |
+| `aiCallMonitor` | `object` | Records every external AI request attempt by source/status/duration. Non-mainline sources are blocked by default through `state.ai.externalCalls`. |
 
 All collections are normalised (`Map`/`Set`/`Array`) each time `activate()` runs so modules can depend on consistent shapes.
 

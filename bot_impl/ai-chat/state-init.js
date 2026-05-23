@@ -1,3 +1,5 @@
+const { buildDefaultExternalCallPolicy, ensureAiCallMonitorState } = require('./call-monitor')
+
 const DAY_WINDOW_SHIFT_HOURS = 4
 
 function startOfHour (ts) {
@@ -84,7 +86,12 @@ function prepareAiState (state, opts = {}) {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     notifyOnBudget: true,
     trace: false,
-    refsEnabled: false
+    refsEnabled: false,
+    externalCalls: buildDefaultExternalCallPolicy()
+  }
+  state.ai.externalCalls = {
+    ...buildDefaultExternalCallPolicy(),
+    ...(state.ai.externalCalls && typeof state.ai.externalCalls === 'object' ? state.ai.externalCalls : {})
   }
   const refsEnv = process.env.AI_REFS
   if (refsEnv != null) {
@@ -225,6 +232,7 @@ function prepareAiState (state, opts = {}) {
     lastRun: persistedEvolution.lastIntrospection || null,
     consecutiveNegative: 0
   }
+  ensureAiCallMonitorState(state, now)
 }
 
 module.exports = { prepareAiState }

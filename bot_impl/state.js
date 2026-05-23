@@ -25,6 +25,7 @@ function prepareSharedState (existing, { greetEnabled, loginPassword, voiceEnabl
   state.readyForGreeting = Boolean(state.readyForGreeting)
   state.extinguishing = Boolean(state.extinguishing)
   state.hasSpawned = Boolean(state.hasSpawned)
+  state.autoLookEnabled = typeof state.autoLookEnabled === 'boolean' ? state.autoLookEnabled : false
   state.autoLookSuspended = Boolean(state.autoLookSuspended)
   state.greetingEnabled = typeof state.greetingEnabled === 'boolean' ? state.greetingEnabled : Boolean(greetEnabled)
   state.greetZonesSeeded = Boolean(state.greetZonesSeeded)

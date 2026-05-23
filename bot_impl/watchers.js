@@ -159,6 +159,7 @@ class WatcherManager {
   }
 
   trackNearbyEntity () {
+    if (this.state?.autoLookEnabled !== true) return
     try {
       const hasGoal = !!(this.bot.pathfinder && this.bot.pathfinder.goal)
       const hasTask = !!(this.state?.currentTask)
