@@ -13,6 +13,10 @@ const LONG_TASK_TOOLS = new Set([
   'withdraw_all'
 ])
 const TELEPORT_COMMANDS = new Set(['tpa', 'tpaccept', 'tpahere', 'back', 'home', 'spawn', 'warp', 'rtp'])
+const INLINE_TOOL_NAMES = TOOL_FUNCTIONS
+  .map(def => String(def?.function?.name || '').trim())
+  .filter(Boolean)
+  .sort((a, b) => b.length - a.length)
 
 function createChatExecutor ({
   state,
@@ -623,6 +627,13 @@ function createChatExecutor ({
         const toolCalls = allowTools && typeof H.extractToolCallsFromApiResponse === 'function'
           ? H.extractToolCallsFromApiResponse(data)
           : []
+        if (!toolCalls.length) {
+          const inlineToolCall = extractInlineToolCallFromText(reply, allowTools ? INLINE_TOOL_NAMES : ['say'])
+          if (inlineToolCall) {
+            if (state.ai.trace && log?.info) log.info('inline text tool ->', inlineToolCall.function?.name)
+            return { reply: '', toolCalls: [inlineToolCall], interrupted: false }
+          }
+        }
         return { reply: H.trimReply(reply, replyLimit), toolCalls, interrupted: false }
       } catch (err) {
         const abortReason = String(ac.signal?.reason || '')
@@ -656,7 +667,7 @@ function createChatExecutor ({
       if (step && step.interrupted === true) continue
 
       lastReply = step.reply || ''
-      if (!allowTools || !Array.isArray(step.toolCalls) || !step.toolCalls.length) {
+      if (!Array.isArray(step.toolCalls) || !step.toolCalls.length) {
         const finalReply = String(lastReply || '').trim()
         if (finalReply) return finish(finalReply)
         return finish(H.trimReply(fallbackReply || '', replyLimit))
@@ -720,6 +731,17 @@ function createChatExecutor ({
       }
     }
     return { tool: fn.name, args }
+  }
+
+  function extractInlineToolCallFromText (text, allowedNames = INLINE_TOOL_NAMES) {
+    const call = typeof H.extractInlineToolCallFromText === 'function'
+      ? H.extractInlineToolCallFromText(text, allowedNames)
+      : null
+    if (!call) return null
+    return {
+      id: call.id || `inline_${call.function?.name || 'tool'}_${now()}`,
+      function: call.function
+    }
   }
 
   function isTeleportChatCommand (text) {

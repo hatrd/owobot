@@ -35,6 +35,14 @@
 
 外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。需要临时放开时用 `.ai calls background on`，并通过 `.ai calls` / `.ai calls recent` 观察实际调用。
 
+## 2.1 LLM 输出回放
+
+解析/出站文本类问题必须优先做可回放测试：把生产日志里模型实际返回的文本作为 fixture 输入 executor/pulse 边界，断言 `bot.chat()` 的每一条输出。不要只测小 parser，也不要依赖真实 `chatdry` 复现；`chatdry` 会调用当前生产 LLM，模型超时时只能证明外部调用不可用，不能证明本地解析逻辑。
+
+当前关键回归：
+
+- `__tests__/ai-chat-text-tool-syntax.test.js`：回放 `say{"steps":["没发呆喵！","刚刚在想事情啦~"]}`，期望输出两条纯聊天，不允许泄漏 `say{}`。
+
 ## 3. 会话激活与跟进
 
 - `activateSession(username)`: 触发后保持 60s 活跃窗口
@@ -45,7 +53,7 @@
 
 ### 4.1 真正注入到 LLM 的顺序（`executor.callAI()`）
 
-> 注意：这里说的是“LLM 看到的 messages[]”。工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接。
+> 注意：这里说的是“LLM 看到的 messages[]”。动作工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接；`say{...}` 是系统 prompt 明示的短回复脚本语法，若模型把它作为纯文本返回，`executor` 会按精确的 `<工具名>{JSON}` 结构解析成 `say`，避免把 `say{}` 原样发到公屏。
 
 顺序（全部为 system message）：
 

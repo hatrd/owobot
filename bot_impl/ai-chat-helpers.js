@@ -284,6 +284,34 @@ function extractToolCallsFromApiResponse (data) {
   return calls
 }
 
+function extractInlineToolCallFromText (text, toolNames) {
+  const raw = String(text || '').trim()
+  if (!raw) return null
+  const names = Array.isArray(toolNames)
+    ? toolNames.map(name => String(name || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length)
+    : []
+  if (!names.length) return null
+  for (const name of names) {
+    if (!raw.startsWith(name)) continue
+    const argsText = raw.slice(name.length).trimStart()
+    if (!argsText.startsWith('{')) continue
+    let args
+    try {
+      args = JSON.parse(argsText)
+    } catch {
+      return null
+    }
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return null
+    return {
+      function: {
+        name,
+        arguments: JSON.stringify(args)
+      }
+    }
+  }
+  return null
+}
+
 function extractUsageFromApiResponse (data) {
   const usage = (data && typeof data === 'object') ? (data.usage || {}) : {}
   const inTok = Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens
@@ -321,6 +349,7 @@ module.exports = {
   extractAssistantText,
   extractAssistantTextFromApiResponse,
   extractToolCallsFromApiResponse,
+  extractInlineToolCallFromText,
   extractUsageFromApiResponse,
   buildAiUrl
 }

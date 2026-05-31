@@ -52,6 +52,7 @@
 - 触发词：机器人名的前 3 个字母/数字（如 `owk`）。
 - 查询类（多少/有无/哪些/在哪里/多远）：优先直接回答上下文，必要时用 `observe_detail`，不调用会改变世界的工具。
 - 动作类：描述需求即可，DeepSeek 会通过 function calling 自动选择安全工具（`node scripts/list-tools.js` 可查看完整 schema）。
+- 多段回复：系统 prompt 允许模型返回 `say{"steps":[...]}`；如果 provider 把它当纯文本返回，执行器会按精确 JSON 结构转换为 `say` 脚本，不会把 `say{}` 原样发到公屏。
 - 安全默认：不攻击玩家（除非明确“追击 <玩家名>”、“追杀 <玩家名>”或“攻击 <玩家名>”）、不挖掘（除非 `dig:true`）。
 - 立即停止：说“停止/停下/停止追击/不要攻击/stop/cancel”→ `reset{}`。
 
@@ -137,6 +138,7 @@
 - `docs/runtime-map.md` 总结了共享状态结构与关键事件。
 - `bot_impl/module-registry.js` 统一登记所有热重载模块，新增/移除功能时只需修改这里。
 - `docs/git-worktree-parallel.md` 总结了基于 git worktree 的并行 Codex 流程（分配/验收/合入子任务）。
+- `docs/agent-skills.md` 沉淀了适合固化为 Codex skills 的 mcbot 调试/验证流程。
 - `docs/interaction.md` 是一等公民交互契约；凡涉及交互行为改动，建议先执行 `npm run interaction:dry` 做闭环验证。
 - 运行 `node scripts/list-tools.js` 可输出当前 AI 工具白名单 JSON，帮助提示词与文档保持一致。
 - 运行 `npm run inspect:context -- --player <name> --query <text> [--debug] [--json]` 可离线预览注入到 LLM 的上下文（system/meta/identity + 长期记忆 + 对话记忆）。

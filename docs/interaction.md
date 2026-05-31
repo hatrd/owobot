@@ -102,6 +102,8 @@ node scripts/botctl.js schema observe
 node scripts/botctl.js schema tool
 ```
 
+`chatdry` 会走当前运行态配置的真实 LLM 调用，只执行 dry 工具分支、不做真实服内操作；如果线上模型超时，它会返回 `timeout`。排查解析/出站文本类问题时，应优先用测试 fixture 回放生产 LLM 原始返回，再用 `chatdry` 验证真实模型路径是否可用。
+
 Options:
 
 - `--sock <path>` override socket path (default: `$PWD/.mcbot.sock`)

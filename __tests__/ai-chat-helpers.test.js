@@ -12,6 +12,7 @@ import {
   isResponsesApiPath,
   extractAssistantTextFromApiResponse,
   extractToolCallsFromApiResponse,
+  extractInlineToolCallFromText,
   extractUsageFromApiResponse
 } from '../bot_impl/ai-chat-helpers.js'
 
@@ -67,6 +68,15 @@ test('OpenAI-compatible response helpers support chat-completions and responses 
   assert.equal(extractAssistantTextFromApiResponse(respData, { allowReasoning: false }), 'hello')
   assert.equal(extractToolCallsFromApiResponse(respData)[0]?.function?.name, 'say')
   assert.deepEqual(extractUsageFromApiResponse(respData), { inTok: 3, outTok: 4 })
+})
+
+test('extractInlineToolCallFromText parses exact structured tool text without guessing prose', () => {
+  const call = extractInlineToolCallFromText('say{"steps":["没发呆喵！","刚刚在想事情啦~"]}', ['say'])
+  assert.equal(call?.function?.name, 'say')
+  assert.deepEqual(JSON.parse(call.function.arguments), { steps: ['没发呆喵！', '刚刚在想事情啦~'] })
+  assert.equal(extractInlineToolCallFromText('我想 say{"text":"hi"}', ['say']), null)
+  assert.equal(extractInlineToolCallFromText('say {bad json}', ['say']), null)
+  assert.equal(extractInlineToolCallFromText('feedback{"need":"x"}', ['say']), null)
 })
 
 test('estTokensFromText approximates chars/4 ceil', () => {
