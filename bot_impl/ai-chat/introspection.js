@@ -6,6 +6,7 @@
 const INTROSPECTION_INTERVAL_MS = 30 * 60 * 1000 // 30分钟
 const EMERGENCY_NEGATIVE_THRESHOLD = 3 // 连续3次负面反馈触发紧急自省
 const MAX_HISTORY = 20
+const LOCAL_ONLY_SIGNAL_TYPES = new Set(['ENGAGEMENT', 'IGNORE'])
 
 const INTROSPECTION_SYSTEM_PROMPT = `你是一个进行自我反思的Minecraft机器人。
 分析最近的互动数据，识别行为模式并给出调整建议。
@@ -128,11 +129,18 @@ ${data.currentEmotion}
     try {
       const fbStats = feedbackCollector?.getStats?.() || {}
       const recentSignals = feedbackCollector?.getRecentSignals?.(INTROSPECTION_INTERVAL_MS) || []
-      if (Array.isArray(recentSignals) && recentSignals.length > 0) return true
-      if (Number(fbStats.totalFeedback || 0) > 0) return true
-      if (Number(fbStats.totalActions || 0) > 0) return true
+      const signals = Array.isArray(recentSignals) ? recentSignals : []
+      const totalActions = Number(fbStats.totalActions || 0)
+      const hasModelWorthySignal = signals.some(record => {
+        const signals = Array.isArray(record?.signals) ? record.signals : []
+        return signals.some(sig => sig?.type && !LOCAL_ONLY_SIGNAL_TYPES.has(sig.type))
+      })
+      if (hasModelWorthySignal) return true
+      if (totalActions > 0) return true
+      if (signals.length > 0) return false
       if (Number(fbStats.positive || 0) > 0) return true
       if (Number(fbStats.negative || 0) > 0) return true
+      if (Number(fbStats.totalFeedback || 0) > 0) return true
       return false
     } catch {
       return false

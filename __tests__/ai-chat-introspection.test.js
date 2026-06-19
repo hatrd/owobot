@@ -34,6 +34,40 @@ test('introspection uses local fallback without external LLM when there is no fe
   assert.ok(savedEvolution?.introspectionHistory?.length)
 })
 
+test('scheduled introspection skips LLM for engagement-only feedback evidence', async () => {
+  let aiCalls = 0
+  const state = {}
+  const engine = createIntrospectionEngine({
+    state,
+    bot: { username: 'bot' },
+    log: { info: () => {}, debug: () => {}, warn: () => {} },
+    now: () => 1500,
+    feedbackCollector: {
+      getStats: () => ({ totalFeedback: 1, positive: 1, negative: 0, totalActions: 0, feedbackRatio: 1 }),
+      getRecentSignals: () => [
+        {
+          isPositive: true,
+          isNegative: false,
+          botMessage: '继续聊天',
+          signals: [{ type: 'ENGAGEMENT', weight: 0.6 }]
+        }
+      ]
+    },
+    memory: { longTerm: { getStats: () => ({ totalEntries: 0, effectivenessRate: 0 }) } },
+    memoryStore: { saveEvolution: () => {} },
+    aiCall: async () => {
+      aiCalls += 1
+      return '{"insights":["不应调用外部模型"],"behavior_adjustments":[],"memory_reinforcements":[],"memory_decays":[],"emotional_state":"content","self_narrative":"x"}'
+    }
+  })
+
+  const result = await engine.runIntrospection('scheduled')
+
+  assert.equal(aiCalls, 0)
+  assert.ok(result)
+  assert.match(result.insights.join('\n'), /中性|保持当前策略/)
+})
+
 test('scheduled introspection still uses LLM when feedback evidence exists', async () => {
   let aiCalls = 0
   const state = {}
