@@ -53,6 +53,7 @@ const MEMORY_REWRITE_RECENT_MAX_LINE_CHARS = 120
 const MEMORY_REWRITE_EXISTING_MAX_ENTRIES = 4
 const MEMORY_REWRITE_EXISTING_MAX_INSTRUCTION_CHARS = 120
 const MEMORY_REWRITE_TRIGGER_MAX_CHARS = 40
+const MEMORY_REWRITE_MAX_MODEL_CALLS_PER_RUN = 2
 
 function createMemoryService ({
   state,
@@ -1248,8 +1249,10 @@ function createMemoryService ({
     if (!state.ai?.key) return
     memoryCtrl.running = true
     const seenBatchKeys = new Set()
+    let modelCallsLeft = MEMORY_REWRITE_MAX_MODEL_CALLS_PER_RUN
     try {
       while (Array.isArray(state.aiMemory.queue) && state.aiMemory.queue.length) {
+        if (modelCallsLeft <= 0) break
         const job = state.aiMemory.queue.shift()
         if (!job) continue
         const key = memoryRewriteJobKey(job)
@@ -1258,6 +1261,7 @@ function createMemoryService ({
           seenBatchKeys.add(key)
         }
         job.attempts = (job.attempts || 0) + 1
+        modelCallsLeft -= 1
         const result = await invokeMemoryRewrite(job)
         const status = result && result.status ? String(result.status).toLowerCase() : null
         if (!result || status === 'error' || !status) {

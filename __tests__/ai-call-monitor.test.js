@@ -393,6 +393,61 @@ test('memory rewrite dedupes duplicate pending jobs before external calls', asyn
   }
 })
 
+test('memory rewrite caps external calls per queue run', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiMemory: {
+      entries: [],
+      queue: Array.from({ length: 6 }, (_, i) => ({
+        id: `job_burst_${i}`,
+        player: 'Alice',
+        text: `基地记忆 ${i}`,
+        original: `记住基地记忆 ${i}`,
+        recent: []
+      }))
+    },
+    aiRecent: []
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const oldFetch = global.fetch
+  let calls = 0
+  global.fetch = async () => {
+    calls += 1
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"status":"reject","reason":"测试"}' } }]
+      })
+    }
+  }
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+      defaults,
+      bot: { username: 'bot' },
+      aiCallMonitor: monitor,
+      now: () => 1000
+    })
+
+    await memory.rewrite.processQueue()
+
+    assert.equal(calls, 2)
+    assert.equal(state.aiCallMonitor.bySource.memory_rewrite.ok, 2)
+    assert.equal(state.aiMemory.queue.length, 4)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('executor tags auto-look greet as a blocked non-mainline AI call', async () => {
   const state = {
     ai: {
