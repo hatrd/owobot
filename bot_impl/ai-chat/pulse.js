@@ -48,7 +48,7 @@ function createPulseService ({
       : { inTok: null, outTok: null }
     const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estimateMessagesTokens(messages)
     const outTok = Number.isFinite(usage.outTok) ? usage.outTok : estTokensFromText(replyText || '')
-    applyUsage(inTok, outTok || maxOut || 0)
+    applyUsage(inTok, Number.isFinite(outTok) ? outTok : (maxOut || 0))
   }
 
   const SAY_LIMITS = {
