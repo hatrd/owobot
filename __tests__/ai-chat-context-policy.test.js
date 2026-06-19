@@ -67,7 +67,9 @@ function makeRealContextBusFromRecent (recent) {
 function makeMemory (longText = repeatedText('长期记忆', 2400)) {
   return {
     longTerm: {
-      buildContext: async () => ({ text: `长期记忆:\n1. ${longText}`, refs: [] })
+      buildContext: async () => ({ text: `长期记忆:\n1. ${longText}`, refs: [] }),
+      extractCommand: () => null,
+      extractForgetCommand: () => null
     },
     dialogue: {
       buildPrompt: () => `对话摘要:\n${repeatedText('对话摘要', 1600)}`
@@ -146,6 +148,7 @@ function makeExecutor ({
       sendChatReply: (username, text, meta = {}) => { sent.push({ username, text, meta }) },
       isUserActive: () => true,
       activateSession: () => {},
+      touchConversationSession: () => {},
       captureAiReply: () => {}
     },
     memory,
@@ -377,6 +380,32 @@ test('chat profile does not spend prompt tokens on unrelated people records', as
     assert.ok(scopedTokens < oldFullPeopleTokens / 3, `expected scoped prompt to avoid unrelated people records: scoped=${scopedTokens}, old=${oldFullPeopleTokens}`)
     assert.doesNotMatch(text, /Other0/)
     assert.doesNotMatch(text, /无关画像/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('non-action Chinese chat containing 打 stays on lightweight chat profile', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
+  const harness = makeExecutor({
+    recent,
+    gameText: repeatedText('不该注入的游戏状态', 6000),
+    memory: makeMemory(repeatedText('普通长期记忆', 1000)),
+    peopleText: repeatedText('普通画像', 900)
+  })
+  try {
+    await harness.executor.processChatContent(
+      'Alice',
+      '打扰一下，陪我聊聊天可以吗',
+      'owkowk 打扰一下，陪我聊聊天可以吗',
+      'trigger'
+    )
+    assert.equal(harness.calls.length, 1)
+    const call = harness.calls[0]
+    assert.equal(call.body.tools, undefined)
+    const text = promptTextFromCall(call)
+    assert.doesNotMatch(text, /不该注入的游戏状态/)
+    assert.ok(providerInputTokensFromCall(call) <= 3000, `expected lightweight chat input <= 3000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
