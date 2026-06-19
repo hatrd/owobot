@@ -104,7 +104,7 @@
 - 会话摘要发给外部模型前会压缩聊天摘录：最多保留 48 行、单行约 100 字、摘录约 3200 字；短会话本地摘要且规则无命中时不会继续触发 `people_inspector`；显式放开 `people_inspector` 时只发送最多 48 行、单行约 120 字、摘录约 3000 字，并只携带一份字段级裁剪的画像/承诺 JSON 快照（profile≈180 字、commitment≈160 字、每类≤12 条），输出预算固定 256 tokens。
 - 显式放开 `dialogue_aggregation` 时，小时/日/周聚合只发送头尾最多 24 条既有摘要，单条约 80 字、摘要列表约 2200 字内，输出预算固定 96 tokens。
 - `state.aiRecent` 溢出时的 `overflow_summary` 只在后台源被允许时触发；请求会压到最近 40 行、单行 80 字、prompt 约 2200 字内，输出预算固定 96 tokens，避免为 20-40 字摘要预留大额 completion。
-- `memory_rewrite` 是默认后台源之一，开启 background 后会整理玩家显式“记住”指令；发给模型前会裁剪 request/original/recent/context/existing triggers，输出预算固定 256 tokens，避免单条记忆整理预留大额 completion 或携带整段上下文。
+- `memory_rewrite` 是默认后台源之一，开启 background 后会整理玩家显式“记住”指令；同一玩家同一记忆文本在待处理/同批队列里会去重，避免重复指令触发多次外部调用；发给模型前会裁剪 request/original/recent/context/existing triggers，输出预算固定 256 tokens，避免单条记忆整理预留大额 completion 或携带整段上下文。
 - 存储：`state.aiDialogues`（max 60，持久化到 `data/ai-memory.json`）
 - 注入：`memory.dialogue.buildPrompt(username)` → `对话记忆：\n...`
 - 选取策略：优先包含该玩家的记录，并按时间桶挑选（3d/7d/15d/30d，各自有上限）

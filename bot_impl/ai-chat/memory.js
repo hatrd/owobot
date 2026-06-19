@@ -1168,6 +1168,13 @@ function createMemoryService ({
     }
   }
 
+  function memoryRewriteJobKey (job) {
+    const player = normalizeActorName(job?.player || '').toLowerCase() || 'any'
+    const text = normalizeMemoryText(job?.text || '').toLowerCase()
+    if (!text) return ''
+    return `${player}:${text}`
+  }
+
   async function invokeMemoryRewrite (job) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) return { status: 'error', code: 'no_key', reason: 'no_key', retryable: false }
@@ -1239,10 +1246,16 @@ function createMemoryService ({
     if (!Array.isArray(state.aiMemory.queue) || !state.aiMemory.queue.length) return
     if (!state.ai?.key) return
     memoryCtrl.running = true
+    const seenBatchKeys = new Set()
     try {
       while (Array.isArray(state.aiMemory.queue) && state.aiMemory.queue.length) {
         const job = state.aiMemory.queue.shift()
         if (!job) continue
+        const key = memoryRewriteJobKey(job)
+        if (key) {
+          if (seenBatchKeys.has(key)) continue
+          seenBatchKeys.add(key)
+        }
         job.attempts = (job.attempts || 0) + 1
         const result = await invokeMemoryRewrite(job)
         const status = result && result.status ? String(result.status).toLowerCase() : null
@@ -1322,6 +1335,8 @@ function createMemoryService ({
   function enqueueMemoryJob (job) {
     if (!job) return
     if (!Array.isArray(state.aiMemory.queue)) state.aiMemory.queue = []
+    const key = memoryRewriteJobKey(job)
+    if (key && state.aiMemory.queue.some(existing => memoryRewriteJobKey(existing) === key)) return
     state.aiMemory.queue.push(job)
     processMemoryQueue().catch(() => {})
   }

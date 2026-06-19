@@ -329,6 +329,70 @@ test('memory rewrite sends compact payload and small output budget when backgrou
   }
 })
 
+test('memory rewrite dedupes duplicate pending jobs before external calls', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiMemory: {
+      entries: [],
+      queue: [
+        {
+          id: 'job_duplicate_1',
+          player: 'Alice',
+          text: '基地在这里',
+          original: '记住基地在这里',
+          recent: []
+        },
+        {
+          id: 'job_duplicate_2',
+          player: 'Alice',
+          text: '基地在这里',
+          original: '请记住 基地在这里',
+          recent: []
+        }
+      ]
+    },
+    aiRecent: []
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const oldFetch = global.fetch
+  let calls = 0
+  global.fetch = async () => {
+    calls += 1
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"status":"reject","reason":"重复测试"}' } }]
+      })
+    }
+  }
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+      defaults,
+      bot: { username: 'bot' },
+      aiCallMonitor: monitor,
+      now: () => 1000
+    })
+
+    await memory.rewrite.processQueue()
+
+    assert.equal(calls, 1)
+    assert.equal(state.aiCallMonitor.bySource.memory_rewrite.ok, 1)
+    assert.equal(state.aiMemory.queue.length, 0)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('executor tags auto-look greet as a blocked non-mainline AI call', async () => {
   const state = {
     ai: {
