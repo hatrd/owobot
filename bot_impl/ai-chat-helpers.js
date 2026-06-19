@@ -19,12 +19,20 @@ function buildContextPrompt (username, recent, options = {}) {
   const ctx = Object.assign({ include: true, recentCount: DEFAULT_RECENT_COUNT, recentWindowSec: DEFAULT_RECENT_WINDOW_SEC }, options)
   if (!ctx.include) return ''
   const now = Date.now()
-  const cutoff = now - (Math.max(10, (ctx.recentWindowSec || DEFAULT_RECENT_WINDOW_SEC)) * 1000)
+  const recentWindowSec = Number.isFinite(Number(ctx.recentWindowSec))
+    ? Math.max(0, Math.floor(Number(ctx.recentWindowSec)))
+    : DEFAULT_RECENT_WINDOW_SEC
+  const recentCount = Number.isFinite(Number(ctx.recentCount))
+    ? Math.max(0, Math.floor(Number(ctx.recentCount)))
+    : DEFAULT_RECENT_COUNT
+  const cutoff = now - (recentWindowSec * 1000)
   const lines = (Array.isArray(recent) ? recent : [])
-  const recentKept = lines
-    .filter(r => (r?.t ?? cutoff) >= cutoff)
-    .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
-    .slice(-(ctx.recentCount || DEFAULT_RECENT_COUNT))
+  const recentKept = recentCount <= 0
+    ? []
+    : lines
+      .filter(r => (r?.t ?? cutoff) >= cutoff)
+      .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0))
+      .slice(-recentCount)
   const fmtTime = (ts) => {
     if (!Number.isFinite(ts)) return ''
     try {

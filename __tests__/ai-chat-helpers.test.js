@@ -107,6 +107,18 @@ test('buildContextPrompt limits to recent window/count', () => {
   assert.doesNotMatch(ctx, /Old: \[.*\] past/)
 })
 
+test('buildContextPrompt honors explicit zero recent count', () => {
+  const now = Date.now()
+  const recent = [
+    { t: now - 2 * 1000, user: 'A', text: 'this line should be omitted' },
+    { t: now - 1 * 1000, user: 'B', text: 'this line should also be omitted' }
+  ]
+  const ctx = buildContextPrompt('Me', recent, { include: true, recentCount: 0, recentWindowSec: 60 })
+  assert.match(ctx, /当前对话玩家: Me/)
+  assert.match(ctx, /最近聊天顺序（旧→新）：无/)
+  assert.doesNotMatch(ctx, /should be omitted/)
+})
+
 test('selectContextProfile maps structured intent to explicit context budgets', () => {
   const greet = selectContextProfile({ topic: 'greet', kind: 'chat', nearby: true }, { reason: 'look_greet' })
   assert.equal(greet.name, 'greet_minimal')
