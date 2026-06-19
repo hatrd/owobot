@@ -631,6 +631,7 @@ test('low-signal memory commands do not enqueue memory rewrite LLM calls', async
     })
 
     await executor.processChatContent('Alice', '记住 好', '记住 好', 'trigger')
+    await executor.processChatContent('Alice', '记住 666666666666', '记住 666666666666', 'trigger')
     await new Promise(resolve => setTimeout(resolve, 30))
 
     assert.equal(calls, 0)

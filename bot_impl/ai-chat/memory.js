@@ -1621,8 +1621,11 @@ function createMemoryService ({
   function shouldRejectMemoryCommandLocally (content) {
     const text = normalizeMemoryText(content)
     if (!text) return { reject: true, reason: '空内容' }
-    if (text.length > MEMORY_COMMAND_LOW_SIGNAL_MAX_CHARS) return { reject: false }
     if (/^\p{P}+$/u.test(text)) return { reject: true, reason: '只有标点' }
+    if (/^\d+$/u.test(text)) return { reject: true, reason: '只有数字，缺少可长期记住的信息' }
+    if (text.length >= 6 && /^([\p{L}\p{N}])\1+$/u.test(text)) return { reject: true, reason: '重复字符，缺少可长期记住的信息' }
+    if (!/[\p{Script=Han}A-Za-z]/u.test(text)) return { reject: true, reason: '缺少可长期记住的信息' }
+    if (text.length > MEMORY_COMMAND_LOW_SIGNAL_MAX_CHARS) return { reject: false }
     if (/^(好|好的|嗯|嗯嗯|恩|哦|噢|行|可以|ok|OK|哈哈|hhh|在|在的|收到|了解|知道了|是|不是|对|不对)$/u.test(text)) {
       return { reject: true, reason: '内容太短，缺少可长期记住的信息' }
     }
