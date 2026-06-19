@@ -41,6 +41,7 @@ const COMBAT_TOOL_NAMES = ['hunt_player', 'defend_area', 'defend_player', 'cull_
 const STATS_TOOL_NAMES = ['query_player_stats', 'query_leaderboard', 'announce_daily_star']
 const PEOPLE_TOOL_NAMES = ['people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
 const READ_ONLY_QUERY_TOOL_NAMES = ['observe_detail', 'observe_players', 'read_book', 'voice_status']
+const DETERMINISTIC_RESULT_TOOL_NAMES = ['read_book', 'voice_status']
 const OUTBOUND_EFFECT_TOOL_NAMES = ['voice_speak']
 const DETERMINISTIC_SHORT_ACTION_TOOL_NAMES = ['use_item', 'equip', 'toss', 'dismount']
 const CONTROL_STATE_TOOL_NAMES = ['reset', 'stop', 'stop_all', 'skill_status', 'skill_cancel']
@@ -1057,6 +1058,7 @@ function createChatExecutor ({
     return LONG_TASK_TOOLS.has(low) ||
       STATS_TOOL_NAMES.includes(low) ||
       PEOPLE_TOOL_NAMES.includes(low) ||
+      DETERMINISTIC_RESULT_TOOL_NAMES.includes(low) ||
       OUTBOUND_EFFECT_TOOL_NAMES.includes(low) ||
       DETERMINISTIC_SHORT_ACTION_TOOL_NAMES.includes(low) ||
       CONTROL_STATE_TOOL_NAMES.includes(low)
