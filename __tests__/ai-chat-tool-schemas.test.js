@@ -5,6 +5,7 @@ import { extractToolCallsFromApiResponse } from '../bot_impl/ai-chat-helpers.js'
 import toolSchemas from '../bot_impl/ai-chat/tool-schemas.js'
 
 const buildToolFunctionList = toolSchemas.buildToolFunctionList
+const buildProviderToolFunctionList = toolSchemas.buildProviderToolFunctionList
 const listActionToolDefinitions = toolSchemas.listActionToolDefinitions
 
 test('AI tool function names are unique', () => {
@@ -12,6 +13,19 @@ test('AI tool function names are unique', () => {
   const names = tools.map(tool => tool?.function?.name).filter(Boolean)
   const duplicates = names.filter((name, idx) => names.indexOf(name) !== idx)
   assert.deepEqual([...new Set(duplicates)], [])
+})
+
+test('provider tool schemas strip nested parameter descriptions', () => {
+  const full = buildToolFunctionList()
+  const compact = buildProviderToolFunctionList()
+  assert.deepEqual(
+    compact.map(tool => tool?.function?.name),
+    full.map(tool => tool?.function?.name)
+  )
+  const say = compact.find(tool => tool?.function?.name === 'say')
+  assert.ok(say?.function?.description, 'top-level tool description stays available to the model')
+  assert.equal(say.function.parameters?.properties?.text?.description, undefined)
+  assert.equal(say.function.parameters?.properties?.steps?.items?.anyOf?.[1]?.properties?.text?.description, undefined)
 })
 
 test('say action schema exposes pulse script arguments', () => {

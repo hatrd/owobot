@@ -506,6 +506,8 @@ test('plan context keeps broader context but caps log-shaped prompt below plan b
     assert.match(text, /长期记忆/)
     assert.match(text, /对话摘要/)
     assert.equal(Array.isArray(harness.calls[0].body.tools), true)
+    const toolTokens = H.estTokensFromText(JSON.stringify(harness.calls[0].body.tools))
+    assert.ok(toolTokens < 5000, `expected compact plan tool schema < 5000 tokens, got ${toolTokens}`)
     assert.equal((text.match(/<p |<b /g) || []).length <= 20, true)
   } finally {
     harness.restore()

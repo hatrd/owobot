@@ -797,6 +797,17 @@ function assertUniqueToolDefinitions (defs) {
   }
 }
 
+function stripParameterDescriptions (value) {
+  if (!value || typeof value !== 'object') return cloneObject(value)
+  if (Array.isArray(value)) return value.map(stripParameterDescriptions)
+  const out = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'description') continue
+    out[key] = stripParameterDescriptions(item)
+  }
+  return out
+}
+
 function buildToolFunctionList () {
   const defs = ACTION_TOOL_DEFINITIONS.concat(SPECIAL_TOOLS)
   assertUniqueToolDefinitions(defs)
@@ -806,6 +817,19 @@ function buildToolFunctionList () {
       name: def.name,
       description: def.description,
       parameters: def.parameters || { type: 'object', properties: {}, additionalProperties: true }
+    }
+  }))
+}
+
+function buildProviderToolFunctionList () {
+  const defs = ACTION_TOOL_DEFINITIONS.concat(SPECIAL_TOOLS)
+  assertUniqueToolDefinitions(defs)
+  return defs.map(def => ({
+    type: 'function',
+    function: {
+      name: def.name,
+      description: def.description,
+      parameters: stripParameterDescriptions(def.parameters || { type: 'object', properties: {}, additionalProperties: true })
     }
   }))
 }
@@ -822,5 +846,6 @@ module.exports = {
   listActionToolDefinitions,
   getActionToolSchemaReport,
   buildToolFunctionList,
+  buildProviderToolFunctionList,
   isActionToolAllowed
 }

@@ -1,11 +1,12 @@
-const { buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
+const { buildProviderToolFunctionList, buildToolFunctionList, isActionToolAllowed } = require('./tool-schemas')
 const timeUtils = require('../time-utils')
 const feedbackPool = require('./feedback-pool')
 const { buildMemoryQuery } = require('./memory-query')
 const { createAiCallMonitor } = require('./call-monitor')
 
-const TOOL_FUNCTIONS = buildToolFunctionList()
+const TOOL_FUNCTIONS = buildProviderToolFunctionList()
 const TOOL_FUNCTION_MAP = new Map(TOOL_FUNCTIONS.map(def => [String(def?.function?.name || '').trim(), def]).filter(([name]) => name))
+const INLINE_TOOL_FUNCTIONS = buildToolFunctionList()
 const LONG_TASK_TOOLS = new Set([
   'goto', 'goto_block', 'follow_player', 'hunt_player', 'defend_area', 'defend_player',
   'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest',
@@ -14,7 +15,7 @@ const LONG_TASK_TOOLS = new Set([
   'withdraw_all'
 ])
 const TELEPORT_COMMANDS = new Set(['tpa', 'tpaccept', 'tpahere', 'back', 'home', 'spawn', 'warp', 'rtp'])
-const INLINE_TOOL_NAMES = TOOL_FUNCTIONS
+const INLINE_TOOL_NAMES = INLINE_TOOL_FUNCTIONS
   .map(def => String(def?.function?.name || '').trim())
   .filter(Boolean)
   .sort((a, b) => b.length - a.length)
