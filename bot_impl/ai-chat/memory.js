@@ -43,6 +43,10 @@ const DIALOGUE_AGGREGATION_MAX_ENTRIES = 24
 const DIALOGUE_AGGREGATION_MAX_SUMMARY_CHARS = 80
 const DIALOGUE_AGGREGATION_MAX_PROMPT_CHARS = 2200
 const DIALOGUE_AGGREGATION_MAX_MODEL_CALLS_PER_RUN = 2
+const DIALOGUE_AGGREGATION_LOW_SIGNAL_MAX_ENTRIES = 24
+const DIALOGUE_AGGREGATION_LOW_SIGNAL_MAX_CHARS = 720
+const DIALOGUE_AGGREGATION_LOW_SIGNAL_MAX_UNIQUE_TEXTS = 8
+const DIALOGUE_AGGREGATION_LOW_SIGNAL_SHORT_TEXT_CHARS = 28
 const PEOPLE_INSPECTOR_MAX_TOKENS = 256
 const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
 const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
@@ -2015,6 +2019,41 @@ function createMemoryService ({
     return sample
   }
 
+  function extractLowSignalFallbackSummaryText (raw) {
+    const text = sanitizeSummaryText(raw, { maxLen: DIALOGUE_AGGREGATION_MAX_SUMMARY_CHARS })
+    if (!text) return ''
+    const marker = text.match(/聊天[：:]\s*(.+)$/u)
+    if (!marker || !marker[1]) return ''
+    const parts = marker[1]
+      .split(/[\/|]/g)
+      .map(part => normalizeMemoryText(part))
+      .filter(Boolean)
+    if (!parts.length) return ''
+    if (!parts.every(part => part.length <= LOCAL_SUMMARY_LOW_SIGNAL_SHORT_TEXT_CHARS)) return ''
+    return parts.join(' / ')
+  }
+
+  function localLowSignalDialogueAggregation (entries) {
+    const rows = Array.isArray(entries) ? entries.filter(Boolean) : []
+    if (!rows.length || rows.length > DIALOGUE_AGGREGATION_LOW_SIGNAL_MAX_ENTRIES) return ''
+    const texts = rows
+      .map(entry => extractLowSignalFallbackSummaryText(entry?.summary || ''))
+      .filter(Boolean)
+    if (texts.length !== rows.length) return ''
+    const totalChars = texts.reduce((sum, text) => sum + text.length, 0)
+    if (totalChars > DIALOGUE_AGGREGATION_LOW_SIGNAL_MAX_CHARS) return ''
+    const unique = new Set(texts.map(text => text.toLowerCase()))
+    if (unique.size > DIALOGUE_AGGREGATION_LOW_SIGNAL_MAX_UNIQUE_TEXTS) return ''
+    const shortCount = texts.filter(text => text.length <= DIALOGUE_AGGREGATION_LOW_SIGNAL_SHORT_TEXT_CHARS).length
+    const repeatedCount = texts.length - unique.size
+    const lowSignal = shortCount >= Math.ceil(texts.length * 0.7) || repeatedCount >= Math.ceil(texts.length * 0.4)
+    if (!lowSignal) return ''
+    const names = aggregateParticipants(rows)
+    const who = names.length ? names.join('、') : '玩家们'
+    const sample = Array.from(unique).slice(0, 4).join(' / ')
+    return `${who} 闲聊：${sample}`.slice(0, 80)
+  }
+
   function sanitizeSummaryText (raw, { maxLen = 120 } = {}) {
     const cleaned = normalizeMemoryText(String(raw || '')).replace(/\s+/g, ' ').trim()
     if (!cleaned) return ''
@@ -2039,6 +2078,8 @@ function createMemoryService ({
 
   async function summarizeDialogueWindow (entries, label, tierName) {
     const fallback = summarizationFallback(entries)
+    const localLowSignal = localLowSignalDialogueAggregation(entries)
+    if (localLowSignal) return localLowSignal
     const names = aggregateParticipants(entries)
     const rows = Array.isArray(entries) ? entries.filter(Boolean) : []
     const maxEntries = Math.max(1, DIALOGUE_AGGREGATION_MAX_ENTRIES)

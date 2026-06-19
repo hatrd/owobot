@@ -812,6 +812,72 @@ test('explicit dialogue aggregation uses compact summary payload and small outpu
   }
 })
 
+test('low-signal dialogue aggregation uses local fallback without external LLM call', async () => {
+  const nowTs = Date.UTC(2026, 0, 1, 2, 30, 0)
+  const hourStart = (() => {
+    const d = new Date(nowTs)
+    d.setMinutes(0, 0, 0)
+    return d.getTime()
+  })()
+  const sourceStart = hourStart - 60 * 60 * 1000
+  const summaries = ['Alice 聊天：嗯嗯 / 好', 'Bob 聊天：哈哈 / 在的', 'Alice 聊天：好 / 嗯嗯']
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'dialogue_aggregation'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: Array.from({ length: 12 }, (_, i) => ({
+      id: `raw_low_${i}`,
+      tier: 'raw',
+      participants: [i % 2 === 0 ? 'Alice' : 'Bob'],
+      summary: summaries[i % summaries.length],
+      startedAt: sourceStart + i * 60 * 1000,
+      endedAt: sourceStart + i * 60 * 1000 + 30 * 1000
+    })),
+    aiDialogueBuckets: { hourlyEnd: sourceStart },
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob闲聊"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now: () => nowTs })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      now: () => nowTs,
+      aiCallMonitor
+    })
+
+    await memory.dialogue.maybeRunAggregation()
+
+    assert.equal(fetchCalls, 0)
+    assert.equal(state.aiCallMonitor.bySource.dialogue_aggregation?.ok || 0, 0)
+    assert.equal(state.aiDialogues.filter(entry => entry.tier === 'hour').length, 1)
+    assert.match(state.aiDialogues.find(entry => entry.tier === 'hour')?.summary || '', /Alice|Bob/)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('explicit dialogue aggregation caps external calls per aggregation run', async () => {
   const nowTs = Date.UTC(2026, 0, 1, 12, 30, 0)
   const hourStart = (() => {
