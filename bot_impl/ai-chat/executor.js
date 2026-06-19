@@ -384,6 +384,15 @@ function createChatExecutor ({
       return joined ? `${e.username}: ${joined}` : ''
     }).filter(Boolean).join('\n')
     const source = batch.some(e => e && e.source === 'trigger') ? 'trigger' : 'followup'
+    if (source === 'followup') {
+      const allowed = canProceed(owner)
+      if (!allowed.ok) {
+        if (state.ai?.limits?.notify !== false) {
+          pulse.sendChatReply(owner, '太快啦，稍后再试~', { reason: 'limits_followup' })
+        }
+        return
+      }
+    }
     const lastText = (() => {
       const lastEntry = batch[batch.length - 1]
       const parts = Array.isArray(lastEntry?.parts) ? lastEntry.parts : []
