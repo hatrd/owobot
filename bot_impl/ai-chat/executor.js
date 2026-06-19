@@ -1582,6 +1582,13 @@ function createChatExecutor ({
     }
     const memoryText = memory.longTerm.extractCommand(text)
     if (memoryText) {
+      const localReject = typeof memory.longTerm.shouldRejectCommandLocally === 'function'
+        ? memory.longTerm.shouldRejectCommandLocally(memoryText)
+        : null
+      if (localReject?.reject) {
+        pulse.sendChatReply(username, localReject.reason ? `这句记不住：${localReject.reason}` : '这句记不住喵~', { reason: 'memory_reject_local' })
+        return
+      }
       if (!state.ai?.key) {
         pulse.sendChatReply(username, '现在记不住呀，AI 没开~', { reason: 'memory_key' })
         return

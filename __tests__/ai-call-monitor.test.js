@@ -554,6 +554,94 @@ test('memory rewrite caps external calls per queue run', async () => {
   }
 })
 
+test('low-signal memory commands do not enqueue memory rewrite LLM calls', async () => {
+  const sent = []
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      context: { include: true, recentCount: 12, recentWindowSec: 300 },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiMemory: { entries: [], queue: [] },
+    aiRecent: [],
+    aiRecentSeq: 0,
+    aiPulse: {},
+    aiStats: { perUser: new Map() },
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const oldFetch = global.fetch
+  let calls = 0
+  global.fetch = async () => {
+    calls += 1
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"status":"reject","reason":"低价值"}' } }]
+      })
+    }
+  }
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+      defaults,
+      bot: { username: 'bot' },
+      aiCallMonitor: monitor,
+      now: () => 1000
+    })
+    const executor = createChatExecutor({
+      state,
+      bot: { username: 'bot', entity: { position: { x: 0, y: 64, z: 0 } } },
+      log: null,
+      actionsMod: { install: () => ({ run: async () => ({ ok: true }), dry: async () => ({ ok: true }) }) },
+      H,
+      defaults,
+      now: () => 1000,
+      traceChat: () => {},
+      pulse: {
+        sendChatReply: (username, text, meta = {}) => { sent.push({ username, text, meta }) },
+        isUserActive: () => false,
+        activateSession: () => {},
+        touchConversationSession: () => {},
+        captureAiReply: () => {}
+      },
+      memory,
+      people: {
+        buildAllProfilesContext: () => '',
+        buildAllCommitmentsContext: () => ''
+      },
+      canAfford: () => ({ ok: true, proj: 0, rem: { day: Infinity, month: Infinity, total: Infinity } }),
+      applyUsage: () => {},
+      buildGameContext: () => '',
+      contextBus: { buildXml: () => '', getStore: () => [], pushEvent: () => {} },
+      aiCallMonitor: monitor
+    })
+
+    await executor.processChatContent('Alice', '记住 好', '记住 好', 'trigger')
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    assert.equal(calls, 0)
+    assert.equal(state.aiCallMonitor.bySource.memory_rewrite?.ok || 0, 0)
+    assert.equal(state.aiMemory.queue.length, 0)
+    assert.equal(sent.some(row => row.meta?.reason === 'memory_queue'), false)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('executor tags auto-look greet as a blocked non-mainline AI call', async () => {
   const state = {
     ai: {

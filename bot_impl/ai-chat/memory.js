@@ -59,6 +59,7 @@ const MEMORY_REWRITE_EXISTING_MAX_ENTRIES = 4
 const MEMORY_REWRITE_EXISTING_MAX_INSTRUCTION_CHARS = 120
 const MEMORY_REWRITE_TRIGGER_MAX_CHARS = 40
 const MEMORY_REWRITE_MAX_MODEL_CALLS_PER_RUN = 2
+const MEMORY_COMMAND_LOW_SIGNAL_MAX_CHARS = 8
 
 function createMemoryService ({
   state,
@@ -1613,6 +1614,17 @@ function createMemoryService ({
     return null
   }
 
+  function shouldRejectMemoryCommandLocally (content) {
+    const text = normalizeMemoryText(content)
+    if (!text) return { reject: true, reason: '空内容' }
+    if (text.length > MEMORY_COMMAND_LOW_SIGNAL_MAX_CHARS) return { reject: false }
+    if (/^\p{P}+$/u.test(text)) return { reject: true, reason: '只有标点' }
+    if (/^(好|好的|嗯|嗯嗯|恩|哦|噢|行|可以|ok|OK|哈哈|hhh|在|在的|收到|了解|知道了|是|不是|对|不对)$/u.test(text)) {
+      return { reject: true, reason: '内容太短，缺少可长期记住的信息' }
+    }
+    return { reject: false }
+  }
+
   function extractForgetCommand (content) {
     if (!content) return null
     const text = String(content).trim()
@@ -2947,6 +2959,7 @@ function createMemoryService ({
     addEntry: addMemoryEntry,
     findLocationAnswer: findLocationMemoryAnswer,
     extractCommand: extractMemoryCommand,
+    shouldRejectCommandLocally: shouldRejectMemoryCommandLocally,
     extractForgetCommand,
     normalizeText: normalizeMemoryText,
     disableMemories,
