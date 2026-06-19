@@ -2578,8 +2578,12 @@ function createMemoryService ({
       if (!summary) return false
       const record = {
         id: job.id,
+        summaryKey: summaryJobKey(job),
+        username: job.username,
         participants,
         summary,
+        startSeq,
+        endSeq,
         startedAt: job.startedAt || now(),
         endedAt: job.endedAt || now(),
         tier: 'raw'
@@ -2611,6 +2615,15 @@ function createMemoryService ({
     const end = Number(job?.endSeq)
     if (!Number.isFinite(start) || !Number.isFinite(end)) return ''
     return `${user}:${start}:${end}`
+  }
+
+  function hasSavedSummaryJob (key) {
+    if (!key || !Array.isArray(state.aiDialogues)) return false
+    return state.aiDialogues.some(entry => {
+      if (!entry || entryTier(entry) !== 'raw') return false
+      if (entry.summaryKey === key) return true
+      return summaryJobKey(entry) === key
+    })
   }
 
   async function runSummaryQueue () {
@@ -2668,6 +2681,7 @@ function createMemoryService ({
       const queue = ensureSummaryQueue()
       const exists = summaryCtrl.activeKey === key || queue.some(job => summaryJobKey(job) === key)
       if (exists) return Promise.resolve(false)
+      if (hasSavedSummaryJob(key)) return Promise.resolve(false)
       if (state.ai?.trace) {
         try { traceChat('[chat] summary queued', { id: payload.id, username, reason, seq: [startSeq, endSeq] }) } catch {}
       }

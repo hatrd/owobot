@@ -254,6 +254,79 @@ test('short low-signal dialogue summary uses local fallback without external LLM
   }
 })
 
+test('conversation summary does not repeat external calls for an already saved seq window', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = { load: () => ({ profiles: {}, commitments: [] }), save: () => {} }
+  const now = () => 2850
+  const people = createPeopleService({ state, peopleStore, now })
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob整理矿洞路线"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    state.aiRecent = [
+      { t: now(), user: 'Alice', text: '今天先把矿洞入口清出来，路上火把补齐，别再迷路。', kind: 'player', seq: 1 },
+      { t: now(), user: 'Bob', text: '我带箱子和木头，顺便把铁和煤都标记一下。', kind: 'player', seq: 2 },
+      { t: now(), user: 'bot', text: '路线和补给都记录一下，回来时按火把走。', kind: 'bot', seq: 3 },
+      { t: now(), user: 'Alice', text: '回头我们把箱子搬到入口旁边，先不要深入太远。', kind: 'player', seq: 4 },
+      { t: now(), user: 'Bob', text: '好的，先整理路线，再搬物资。', kind: 'player', seq: 5 }
+    ]
+    state.aiRecentSeq = 5
+    const entry = {
+      startSeq: 1,
+      lastSeq: 5,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }
+
+    const first = await memory.dialogue.queueSummary('Alice', entry, 'expire')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const second = await memory.dialogue.queueSummary('Alice', entry, 'reset')
+
+    assert.equal(first, true)
+    assert.equal(second, false)
+    assert.equal(fetchCalls, 1)
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary.ok, 1)
+    assert.equal(state.aiDialogues.filter(d => d?.tier === 'raw').length, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('explicit people inspector skips short low-signal dialogue after local summary', async () => {
   const state = {
     ai: {
