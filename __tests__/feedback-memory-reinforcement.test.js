@@ -66,6 +66,35 @@ test('explicit negative feedback decays memory without refreshing updatedAt', as
   assert.equal(entry.updatedAt, 1)
 })
 
+test('duplicate player feedback message is counted once per feedback window', async () => {
+  let t = 1000
+  const now = () => t
+  const state = {
+    ai: { context: { memory: { include: true, max: 6 } } },
+    aiMemory: { entries: [] },
+    aiIntrospection: { history: [], lastRun: null, consecutiveNegative: 0 }
+  }
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }), saveEvolution: () => {} }
+  const defaults = { DEFAULT_BASE: '', DEFAULT_PATH: '', DEFAULT_MODEL: '' }
+  const memory = createMemoryService({ state, memoryStore, defaults, bot: { username: 'bot' }, now })
+
+  const feedback = createFeedbackCollector({ state, bot: { username: 'bot' }, log: null, now, memoryStore, memory })
+  const windowId = feedback.openFeedbackWindow({ botMessage: 'hi', targetUser: 'kuleizi', memoryRefs: [] })
+
+  t += 1000
+  const first = feedback.processPlayerMessage('kuleizi', '别这样')
+  const duplicate = feedback.processPlayerMessage('kuleizi', '别这样')
+
+  assert.equal(first?.signals?.length, 1)
+  assert.equal(duplicate, null)
+  assert.equal(state.aiFeedback.windows.get(windowId).signals.length, 1)
+
+  t += 1000
+  const record = feedback.resolveWindow(windowId)
+  assert.equal(record.signals.length, 1)
+  assert.equal(state.aiIntrospection.consecutiveNegative, 1)
+})
+
 test('explicit positive feedback updates lastPositiveFeedback and affects v2 recency without touching updatedAt', async () => {
   const day = 24 * 60 * 60 * 1000
   let t = 1000 * day

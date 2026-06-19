@@ -29,6 +29,21 @@ const REACTION_SIGNALS = {
   CONFUSION: { weight: -0.5, patterns: [/什么意思|没听懂|不懂|啥意思|\?\?\?|不明白/i] }
 }
 
+function normalizeFeedbackText (text) {
+  try {
+    return String(text || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase()
+  } catch {
+    return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase()
+  }
+}
+
+function feedbackMessageKey (username, text) {
+  const user = String(username || '').trim().toLowerCase()
+  const msg = normalizeFeedbackText(text)
+  if (!user || !msg) return ''
+  return `${user}#${msg}`
+}
+
 function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), memoryStore, memory }) {
   function debug (...args) {
     if (log?.debug) log.debug('[REFS:feedback]', ...args)
@@ -64,6 +79,7 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
       toolUsed,
       context,
       signals: [],
+      seenMessages: new Map(),
       resolved: false
     }
     state.aiFeedback.windows.set(windowId, windowData)
@@ -136,6 +152,13 @@ function createFeedbackCollector ({ state, bot, log, now = () => Date.now(), mem
     if (!targetWindow) {
       if (signals.length) debug('no active window for', username, 'signals:', signals.map(s => s.type).join(','))
       return null
+    }
+
+    const msgKey = feedbackMessageKey(username, text)
+    if (msgKey) {
+      if (!(targetWindow.seenMessages instanceof Map)) targetWindow.seenMessages = new Map()
+      if (targetWindow.seenMessages.has(msgKey)) return null
+      targetWindow.seenMessages.set(msgKey, currentTime)
     }
 
     // 如果没有显式信号，把持续聊天视为参与，避免被误记为忽视
