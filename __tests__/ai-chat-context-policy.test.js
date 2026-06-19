@@ -508,6 +508,32 @@ test('non-action Chinese chat containing 打 stays on lightweight chat profile',
   }
 })
 
+test('casual Chinese chat containing 哪有 stays on lightweight chat profile', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
+  const harness = makeExecutor({
+    recent,
+    gameText: repeatedText('不该注入的位置游戏状态', 6000),
+    memory: makeMemory(repeatedText('普通长期记忆', 1000)),
+    peopleText: repeatedText('普通画像', 900)
+  })
+  try {
+    await harness.executor.processChatContent(
+      'Alice',
+      '哪有这么夸张，继续聊聊天',
+      'owkowk 哪有这么夸张，继续聊聊天',
+      'trigger'
+    )
+    assert.equal(harness.calls.length, 1)
+    const call = harness.calls[0]
+    assert.equal(call.body.tools, undefined)
+    const text = promptTextFromCall(call)
+    assert.doesNotMatch(text, /不该注入的位置游戏状态/)
+    assert.ok(providerInputTokensFromCall(call) <= 3000, `expected casual 哪有 chat input <= 3000 tokens, got ${providerInputTokensFromCall(call)}`)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('intent-scoped tool turns do not execute inline text tools outside the selected schema', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({
