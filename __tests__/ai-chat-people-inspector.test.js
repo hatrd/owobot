@@ -122,6 +122,72 @@ test('conversation summary permission does not also allow people inspector LLM c
   }
 })
 
+test('conversation summary records provider usage in AI spend accounting', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'conversation_summary'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = { load: () => ({ profiles: {}, commitments: [] }), save: () => {} }
+  const now = () => 2100
+  const people = createPeopleService({ state, peopleStore, now })
+  const oldFetch = global.fetch
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob讨论矿洞补给"}' } }],
+      usage: { prompt_tokens: 234, completion_tokens: 56 }
+    })
+  })
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  let usage = null
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor,
+      applyUsage: (inTok, outTok) => { usage = { inTok, outTok } }
+    })
+
+    state.aiRecent = Array.from({ length: 8 }, (_, i) => ({
+      t: now() + i,
+      user: i % 2 === 0 ? 'Alice' : 'Bob',
+      text: `${i}: 我们讨论矿洞补给和路线安排`,
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 8
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 8,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }, 'test')
+
+    assert.deepEqual(usage, { inTok: 234, outTok: 56 })
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary.ok, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('background toggle allows conversation summary without chaining people inspector LLM calls', async () => {
   const state = {
     ai: {

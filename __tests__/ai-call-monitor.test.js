@@ -329,6 +329,59 @@ test('memory rewrite sends compact payload and small output budget when backgrou
   }
 })
 
+test('memory rewrite records provider usage in AI spend accounting', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiMemory: {
+      entries: [],
+      queue: [{
+        id: 'job_usage',
+        player: 'Alice',
+        text: '基地在这里',
+        original: '记住基地在这里',
+        recent: []
+      }]
+    },
+    aiRecent: []
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const oldFetch = global.fetch
+  let usage = null
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '{"status":"reject","reason":"测试"}' } }],
+      usage: { prompt_tokens: 123, completion_tokens: 45 }
+    })
+  })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+      defaults,
+      bot: { username: 'bot' },
+      aiCallMonitor: monitor,
+      now: () => 1000,
+      applyUsage: (inTok, outTok) => { usage = { inTok, outTok } }
+    })
+
+    await memory.rewrite.processQueue()
+
+    assert.deepEqual(usage, { inTok: 123, outTok: 45 })
+    assert.equal(state.aiCallMonitor.bySource.memory_rewrite.ok, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('memory rewrite dedupes duplicate pending jobs before external calls', async () => {
   const state = {
     ai: {

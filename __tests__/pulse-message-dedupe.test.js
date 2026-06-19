@@ -43,7 +43,7 @@ function makePulse (overrides = {}) {
   return { state, contextBus, pulse }
 }
 
-function makePulseWithOverflowFetch () {
+function makePulseWithOverflowFetch (overrides = {}) {
   const now = makeNow()
   const calls = []
   const state = {
@@ -70,7 +70,8 @@ function makePulseWithOverflowFetch () {
     return {
       ok: true,
       json: async () => ({
-        choices: [{ message: { role: 'assistant', content: '玩家们讨论了挖矿和补给。' } }]
+        choices: [{ message: { role: 'assistant', content: '玩家们讨论了挖矿和补给。' } }],
+        usage: { prompt_tokens: 77, completion_tokens: 12 }
       })
     }
   }
@@ -78,7 +79,11 @@ function makePulseWithOverflowFetch () {
     buildAiUrl: ({ baseUrl, path }) => `${baseUrl}${path}`,
     isResponsesApiPath: () => false,
     extractAssistantTextFromApiResponse: (data) => String(data?.choices?.[0]?.message?.content || ''),
-    extractAssistantText: (msg) => String(msg?.content || '')
+    extractAssistantText: (msg) => String(msg?.content || ''),
+    extractUsageFromApiResponse: (data) => ({
+      inTok: Number.isFinite(data?.usage?.prompt_tokens) ? data.usage.prompt_tokens : null,
+      outTok: Number.isFinite(data?.usage?.completion_tokens) ? data.usage.completion_tokens : null
+    })
   }
   const pulse = createPulseService({
     state,
@@ -88,7 +93,7 @@ function makePulseWithOverflowFetch () {
     H,
     defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
     canAfford: () => ({ ok: true }),
-    applyUsage: () => {},
+    applyUsage: typeof overrides.applyUsage === 'function' ? overrides.applyUsage : () => {},
     traceChat: () => {},
     memory: { dialogue: { maybeRunAggregation: () => {}, queueSummary: () => {} }, longTerm: { persistState: () => {} } },
     feedbackCollector: null,
@@ -204,6 +209,29 @@ test('overflow summary sends compact input and small output budget', async () =>
     const userPrompt = String(body.messages?.find(m => m.role === 'user')?.content || '')
     assert.ok(userPrompt.length <= 2400, `expected compact overflow prompt <= 2400 chars, got ${userPrompt.length}`)
     assert.ok(state.aiRecent.length <= 20)
+  } finally {
+    restore()
+  }
+})
+
+test('overflow summary records provider usage in AI spend accounting', async () => {
+  let usage = null
+  const { state, pulse, restore } = makePulseWithOverflowFetch({
+    applyUsage: (inTok, outTok) => { usage = { inTok, outTok } }
+  })
+  try {
+    const long = '聊天内容'.repeat(40)
+    state.aiRecent = Array.from({ length: 70 }, (_, i) => ({
+      t: Date.now() - (70 - i) * 1000,
+      user: `old${i % 4}`,
+      text: `${i} ${long}`,
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 70
+    pulse.captureChat('player0', `new ${long}`)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.deepEqual(usage, { inTok: 77, outTok: 12 })
   } finally {
     restore()
   }

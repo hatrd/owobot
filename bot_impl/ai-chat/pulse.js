@@ -21,10 +21,35 @@ function createPulseService ({
   memory,
   feedbackCollector = null,
   contextBus = null,
-  aiCallMonitor = null
+  aiCallMonitor = null,
+  canAfford = null,
+  applyUsage = null
 }) {
   const sayCtrlByUser = new Map()
   const callMonitor = aiCallMonitor || createAiCallMonitor({ state, log, now })
+  const estTokensFromText = (text) => {
+    if (typeof H?.estTokensFromText === 'function') return H.estTokensFromText(text)
+    return Math.ceil(String(text || '').length / 4)
+  }
+
+  function estimateMessagesTokens (messages) {
+    return estTokensFromText((Array.isArray(messages) ? messages : []).map(m => m?.content || '').join(' '))
+  }
+
+  function canAffordBackgroundCall (messages, maxOut) {
+    if (typeof canAfford !== 'function') return { ok: true }
+    return canAfford(estimateMessagesTokens(messages), maxOut)
+  }
+
+  function recordBackgroundUsage (data, messages, maxOut, replyText = '') {
+    if (typeof applyUsage !== 'function') return
+    const usage = typeof H?.extractUsageFromApiResponse === 'function'
+      ? H.extractUsageFromApiResponse(data)
+      : { inTok: null, outTok: null }
+    const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estimateMessagesTokens(messages)
+    const outTok = Number.isFinite(usage.outTok) ? usage.outTok : estTokensFromText(replyText || '')
+    applyUsage(inTok, outTok || maxOut || 0)
+  }
 
   const SAY_LIMITS = {
     maxSteps: 24,
@@ -387,6 +412,8 @@ function createPulseService ({
         const prompt = buildOverflowSummaryPrompt(overflow)
         if (!prompt) return
         const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
+        const afford = canAffordBackgroundCall(messages, OVERFLOW_SUMMARY_MAX_TOKENS)
+        if (!afford.ok) return
         const apiPath = state.ai.pathOverride || state.ai.path || defaults.DEFAULT_PATH
         const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
         const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
@@ -419,6 +446,7 @@ function createPulseService ({
           const sum = typeof H.extractAssistantTextFromApiResponse === 'function'
             ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false }).trim()
             : H.extractAssistantText(data?.choices?.[0]?.message ?? data?.choices?.[0] ?? data, { allowReasoning: false }).trim()
+          recordBackgroundUsage(data, messages, OVERFLOW_SUMMARY_MAX_TOKENS, sum)
           if (!sum) return
           if (!Array.isArray(state.aiLong)) state.aiLong = []
           state.aiLong.push({ t: Date.now(), summary: sum })

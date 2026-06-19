@@ -134,7 +134,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   }
   const aiCallMonitor = createAiCallMonitor({ state, log, now })
   const people = createPeopleService({ state, peopleStore, now, trace: traceChat })
-  const memory = createMemoryService({ state, log, memoryStore, defaults, bot, people, traceChat, now, aiCallMonitor })
+  const memory = createMemoryService({ state, log, memoryStore, defaults, bot, people, traceChat, now, aiCallMonitor, canAfford, applyUsage })
   const persistedMemory = memoryStore.load()
   const persistedEvolution = memoryStore.loadEvolution()
   prepareAiState(state, {

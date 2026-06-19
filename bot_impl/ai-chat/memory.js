@@ -65,11 +65,37 @@ function createMemoryService ({
   people = null,
   traceChat = () => {},
   now = () => Date.now(),
-  aiCallMonitor = null
+  aiCallMonitor = null,
+  canAfford = null,
+  applyUsage = null
 }) {
   const memoryCtrl = { running: false }
   let messenger = () => {}
   const callMonitor = aiCallMonitor || createAiCallMonitor({ state, log, now })
+  const estTokensFromText = (text) => {
+    if (typeof H.estTokensFromText === 'function') return H.estTokensFromText(text)
+    return Math.ceil(String(text || '').length / 4)
+  }
+
+  function estimateMessagesTokens (messages) {
+    return estTokensFromText((Array.isArray(messages) ? messages : []).map(m => m?.content || '').join(' '))
+  }
+
+  function canAffordBackgroundCall (messages, maxOut) {
+    if (typeof canAfford !== 'function') return { ok: true }
+    const estIn = estimateMessagesTokens(messages)
+    return canAfford(estIn, maxOut)
+  }
+
+  function recordBackgroundUsage (data, messages, maxOut, replyText = '') {
+    if (typeof applyUsage !== 'function') return
+    const usage = typeof H.extractUsageFromApiResponse === 'function'
+      ? H.extractUsageFromApiResponse(data)
+      : { inTok: null, outTok: null }
+    const inTok = Number.isFinite(usage.inTok) ? usage.inTok : estimateMessagesTokens(messages)
+    const outTok = Number.isFinite(usage.outTok) ? usage.outTok : estTokensFromText(replyText || '')
+    applyUsage(inTok, outTok || maxOut || 0)
+  }
 
   function setMessenger (fn) {
     messenger = typeof fn === 'function' ? fn : () => {}
@@ -1188,6 +1214,8 @@ function createMemoryService ({
       { role: 'system', content: MEMORY_REWRITE_SYSTEM_PROMPT },
       { role: 'user', content: JSON.stringify(payload) }
     ]
+    const afford = canAffordBackgroundCall(messages, MEMORY_REWRITE_MAX_TOKENS)
+    if (!afford.ok) return { status: 'error', code: 'budget_exceeded', reason: 'budget_exceeded', retryable: false }
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
     const body = useResponses
       ? {
@@ -1231,6 +1259,7 @@ function createMemoryService ({
         ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false })
         : H.extractAssistantText(data?.choices?.[0]?.message, { allowReasoning: false })
       const reply = (typeof H.stripReasoningText === 'function' ? H.stripReasoningText(replyRaw) : String(replyRaw || '')).trim()
+      recordBackgroundUsage(data, messages, MEMORY_REWRITE_MAX_TOKENS, reply)
       const jsonRaw = extractJsonLoose(reply)
       if (!jsonRaw) return { status: 'error', code: 'no_json', reason: 'no_json', retryable: true }
       let parsed = null
@@ -2229,6 +2258,8 @@ function createMemoryService ({
     }
     const apiPath = state.ai.pathOverride || state.ai.path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
+    const afford = canAffordBackgroundCall(messages, maxTokens)
+    if (!afford.ok) return null
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
     const body = useResponses
       ? {
@@ -2269,6 +2300,7 @@ function createMemoryService ({
       const extracted = typeof H.extractAssistantTextFromApiResponse === 'function'
         ? H.extractAssistantTextFromApiResponse(data, { allowReasoning: false }).trim()
         : H.extractAssistantText(data?.choices?.[0]?.message ?? data?.choices?.[0] ?? data, { allowReasoning: false }).trim()
+      recordBackgroundUsage(data, messages, maxTokens, extracted)
       if (state.ai?.trace) {
         try {
           const preview = extracted || '(empty)'
