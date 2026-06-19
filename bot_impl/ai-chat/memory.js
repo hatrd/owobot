@@ -33,6 +33,10 @@ const SUMMARY_CHAT_MAX_LINE_CHARS = 100
 const SUMMARY_CHAT_MAX_EXCERPT_CHARS = 3200
 const LOCAL_SUMMARY_MAX_LINES = 4
 const LOCAL_SUMMARY_MAX_CHARS = 240
+const LOCAL_SUMMARY_LOW_SIGNAL_MAX_LINES = 12
+const LOCAL_SUMMARY_LOW_SIGNAL_MAX_CHARS = 360
+const LOCAL_SUMMARY_LOW_SIGNAL_MAX_UNIQUE_TEXTS = 6
+const LOCAL_SUMMARY_LOW_SIGNAL_SHORT_TEXT_CHARS = 8
 const CONVERSATION_SUMMARY_MAX_MODEL_CALLS_PER_RUN = 2
 const DIALOGUE_AGGREGATION_MAX_TOKENS = 96
 const DIALOGUE_AGGREGATION_MAX_ENTRIES = 24
@@ -2329,6 +2333,23 @@ function createMemoryService ({
     return totalChars <= LOCAL_SUMMARY_MAX_CHARS
   }
 
+  function shouldUseLocalLowSignalSummary (lines) {
+    const rows = Array.isArray(lines) ? lines.filter(Boolean) : []
+    if (!rows.length) return true
+    if (rows.length > LOCAL_SUMMARY_LOW_SIGNAL_MAX_LINES) return false
+    const texts = rows
+      .map(row => normalizeMemoryText(row?.text || ''))
+      .filter(Boolean)
+    if (!texts.length) return true
+    const totalChars = texts.reduce((sum, text) => sum + text.length, 0)
+    if (totalChars > LOCAL_SUMMARY_LOW_SIGNAL_MAX_CHARS) return false
+    const unique = new Set(texts.map(text => text.toLowerCase()))
+    if (unique.size > LOCAL_SUMMARY_LOW_SIGNAL_MAX_UNIQUE_TEXTS) return false
+    const shortCount = texts.filter(text => text.length <= LOCAL_SUMMARY_LOW_SIGNAL_SHORT_TEXT_CHARS).length
+    const repeatedCount = texts.length - unique.size
+    return shortCount >= Math.ceil(texts.length * 0.7) || repeatedCount >= Math.ceil(texts.length * 0.4)
+  }
+
   function consumeModelBudget (budget) {
     if (!budget) return true
     if (budget.remaining <= 0) return false
@@ -2339,7 +2360,7 @@ function createMemoryService ({
   async function summarizeConversationLines (lines, participants, budget = null) {
     if (!lines.length) return ''
     const fallback = fallbackConversationSummary(lines, participants)
-    if (shouldUseLocalConversationSummary(lines)) return fallback
+    if (shouldUseLocalConversationSummary(lines) || shouldUseLocalLowSignalSummary(lines)) return fallback
     const joined = compactChatExcerptForModel(lines, {
       maxLines: SUMMARY_CHAT_MAX_LINES,
       maxLineChars: SUMMARY_CHAT_MAX_LINE_CHARS,

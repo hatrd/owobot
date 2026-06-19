@@ -320,6 +320,80 @@ test('short low-signal dialogue summary uses local fallback without external LLM
   }
 })
 
+test('multi-line low-signal dialogue summary uses local fallback without external LLM call', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = { load: () => ({ profiles: {}, commitments: [] }), save: () => {} }
+  const now = () => 2760
+  const people = createPeopleService({ state, peopleStore, now })
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob闲聊"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    const rows = [
+      ['Alice', '嗯嗯'],
+      ['Bob', '好'],
+      ['Alice', '哈哈'],
+      ['bot', '嘿嘿'],
+      ['Bob', '在的'],
+      ['Alice', '行']
+    ]
+    rows.forEach(([user, text], idx) => {
+      const seq = idx + 1
+      state.aiRecentSeq = seq
+      state.aiRecent.push({ t: now(), user, text, kind: user === 'bot' ? 'bot' : 'player', seq })
+    })
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: rows.length,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }, 'test')
+
+    assert.equal(fetchCalls, 0)
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary?.ok || 0, 0)
+    assert.equal(state.aiDialogues.length, 1)
+    assert.match(state.aiDialogues[0].summary, /Alice|Bob/)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('conversation summary does not repeat external calls for an already saved seq window', async () => {
   const state = {
     ai: {
