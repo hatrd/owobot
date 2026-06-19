@@ -618,7 +618,7 @@ test('executor coalesces rapid pending followups into one request interrupt', as
       aiCallMonitor: monitor
     })
 
-    const first = executor.handleChat('Alice', 'owk 你好')
+    const first = executor.handleChat('Alice', 'bot 你好')
     await new Promise(resolve => setTimeout(resolve, 20))
     t += 100
     await executor.handleChat('Alice', '还有一句')
@@ -630,6 +630,102 @@ test('executor coalesces rapid pending followups into one request interrupt', as
     await first
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(calls, 2)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
+test('executor delays and merges idle followups into one main chat call', async () => {
+  let t = 1000
+  const now = () => t
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      context: { include: true, recentCount: 12, recentWindowSec: 300 },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      followupDelayMs: 40,
+      externalCalls: buildDefaultExternalCallPolicy()
+    },
+    aiPulse: {},
+    aiStats: { perUser: new Map() },
+    aiRecent: [],
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now })
+  const oldFetch = global.fetch
+  const bodies = []
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    bodies.push(body)
+    const text = bodies.length === 1 ? '触发回复' : '合并跟进'
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: text } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2 }
+      })
+    }
+  }
+  try {
+    const executor = createChatExecutor({
+      state,
+      bot: { username: 'bot', entity: { position: { x: 0, y: 64, z: 0 } } },
+      log: null,
+      actionsMod: { install: () => ({ run: async () => ({ ok: true }), dry: async () => ({ ok: true }) }) },
+      H,
+      defaults,
+      now,
+      traceChat: () => {},
+      pulse: {
+        sendChatReply: () => {},
+        isUserActive: () => true,
+        activateSession: () => {},
+        touchConversationSession: () => {}
+      },
+      memory: {
+        longTerm: {
+          buildContext: async () => ({ text: '', refs: [] }),
+          extractCommand: () => null,
+          extractForgetCommand: () => null
+        },
+        dialogue: { buildPrompt: () => '' }
+      },
+      people: {
+        buildAllProfilesContext: () => '',
+        buildAllCommitmentsContext: () => ''
+      },
+      canAfford: () => ({ ok: true, proj: 0, rem: { day: Infinity, month: Infinity, total: Infinity } }),
+      applyUsage: () => {},
+      buildGameContext: () => '',
+      contextBus: { buildXml: () => '', getStore: () => [] },
+      aiCallMonitor: monitor
+    })
+
+    await executor.handleChat('Alice', 'bot 你好')
+    assert.equal(bodies.length, 1)
+
+    t += 100
+    await executor.handleChat('Alice', '还有一句')
+    t += 100
+    await executor.handleChat('Alice', '再补一句')
+    assert.equal(bodies.length, 1, 'followups should wait for the silence window instead of calling LLM immediately')
+
+    await new Promise(resolve => setTimeout(resolve, 70))
+    assert.equal(bodies.length, 2)
+    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 2)
+    const text = (bodies[1].messages || bodies[1].input || []).map(m => m.content || '').join('\n')
+    assert.match(text, /还有一句/)
+    assert.match(text, /再补一句/)
   } finally {
     global.fetch = oldFetch
   }

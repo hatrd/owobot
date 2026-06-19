@@ -52,7 +52,17 @@ function createChatExecutor ({
   contextBus = null,
   aiCallMonitor = null
 }) {
-  const ctrl = { busy: false, abort: null, pending: [], plan: null, planTimer: null, planDriving: false, lastUser: null, pendingInterruptSeq: 0 }
+  const ctrl = {
+    busy: false,
+    abort: null,
+    pending: [],
+    followupTimer: null,
+    plan: null,
+    planTimer: null,
+    planDriving: false,
+    lastUser: null,
+    pendingInterruptSeq: 0
+  }
   const actions = actionsMod.install(bot, { log })
   const callMonitor = aiCallMonitor || createAiCallMonitor({ state, log, now })
 
@@ -81,6 +91,18 @@ function createChatExecutor ({
       ? state.ai.timeoutMs
       : defaults.DEFAULT_TIMEOUT_MS
     return Math.max(8000, timeoutMs + 2000)
+  }
+
+  function followupDelayMs () {
+    const raw = Number(state.ai?.followupDelayMs)
+    if (Number.isFinite(raw) && raw >= 0) return Math.max(0, Math.floor(raw))
+    return 5000
+  }
+
+  function clearFollowupTimer () {
+    if (!ctrl.followupTimer) return
+    try { clearTimeout(ctrl.followupTimer) } catch {}
+    ctrl.followupTimer = null
   }
 
   function requestPendingInterrupt (reason = 'pending_interrupt') {
@@ -363,7 +385,7 @@ function createChatExecutor ({
     ctrl.lastUser = owner
     try {
       if (state.ai.trace && log?.info) log.info('ask(pending) <-', content)
-      const { reply, memoryRefs } = await callAI(owner, content, intent)
+      const { reply, memoryRefs } = await callAI(owner, content, intent, { inlineUserContent: true })
       if (reply) {
         noteUsage(owner)
         pulse.sendChatReply(owner, reply, { reason: 'llm_pending', from: 'LLM', memoryRefs, suppressFeedback: true })
@@ -378,9 +400,21 @@ function createChatExecutor ({
 
   function flushPending () {
     if (ctrl.busy) return false
+    clearFollowupTimer()
     const batch = takePendingBatch()
     if (!batch) return false
     setTimeout(() => { processPendingBatch(batch).catch(() => {}) }, 0)
+    return true
+  }
+
+  function scheduleFollowupFlush () {
+    if (ctrl.busy) return false
+    clearFollowupTimer()
+    ctrl.followupTimer = setTimeout(() => {
+      ctrl.followupTimer = null
+      flushPending()
+    }, followupDelayMs())
+    try { ctrl.followupTimer.unref && ctrl.followupTimer.unref() } catch {}
     return true
   }
 
@@ -1207,6 +1241,7 @@ function createChatExecutor ({
       const fallback = !fromArgs && speech ? H.trimReply(speech, replyLimit) : ''
       if (!state.ai || typeof state.ai !== 'object') state.ai = {}
       state.ai.listenEnabled = false
+      clearFollowupTimer()
       ctrl.pending = []
       clearPlan('stop_listen')
       try { pulse.cancelSay(username, 'stop_listen') } catch {}
@@ -1490,6 +1525,12 @@ function createChatExecutor ({
       queuePending(username, text, raw, source)
       return
     }
+    if (source === 'followup') {
+      try { state.aiPulse.lastFlushAt = now() } catch {}
+      queuePending(username, text, raw, source)
+      scheduleFollowupFlush()
+      return
+    }
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
@@ -1570,11 +1611,13 @@ function createChatExecutor ({
     let content = trimmed.replace(new RegExp('^(' + trig + '[:：,，。.!！\\s]*)+', 'i'), '')
     content = content.replace(/^[:：,，。.!！\s]+/, '')
     traceChat('[chat] trigger matched', { username, text: content })
+    clearFollowupTimer()
     pulse.activateSession(username, 'trigger', { restart: true })
     await processChatContent(username, content, raw, 'trigger')
   }
 
   function abortActive () {
+    clearFollowupTimer()
     if (ctrl.abort && typeof ctrl.abort.abort === 'function') {
       try { ctrl.abort.abort('cleanup') } catch {}
     }
