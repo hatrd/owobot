@@ -41,6 +41,7 @@ const COMBAT_TOOL_NAMES = ['hunt_player', 'defend_area', 'defend_player', 'cull_
 const STATS_TOOL_NAMES = ['query_player_stats', 'query_leaderboard', 'announce_daily_star']
 const PEOPLE_TOOL_NAMES = ['people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
 const READ_ONLY_QUERY_TOOL_NAMES = ['observe_detail', 'observe_players', 'read_book', 'voice_status']
+const OUTBOUND_EFFECT_TOOL_NAMES = ['voice_speak']
 
 function createChatExecutor ({
   state,
@@ -1032,7 +1033,7 @@ function createChatExecutor ({
 
   function shouldHaltAfterActionTool (toolName) {
     const low = String(toolName || '').toLowerCase()
-    return LONG_TASK_TOOLS.has(low) || STATS_TOOL_NAMES.includes(low) || PEOPLE_TOOL_NAMES.includes(low)
+    return LONG_TASK_TOOLS.has(low) || STATS_TOOL_NAMES.includes(low) || PEOPLE_TOOL_NAMES.includes(low) || OUTBOUND_EFFECT_TOOL_NAMES.includes(low)
   }
 
   function shouldHaltAfterToolResult (toolName, intent = {}) {
