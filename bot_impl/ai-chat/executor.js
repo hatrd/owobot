@@ -672,6 +672,15 @@ function createChatExecutor ({
       return
     }
     if (ctrl.busy) { schedulePlanTick(200); return }
+    const allowed = canProceed(plan.owner)
+    if (!allowed.ok) {
+      if (state.ai?.limits?.notify !== false) {
+        pulse.sendChatReply(plan.owner, '计划先暂停一下，稍后再继续吧~', { reason: 'plan_limits' })
+      }
+      clearPlan('limits')
+      flushPending()
+      return
+    }
     ctrl.planDriving = true
     ctrl.busy = true
     const stepText = String(plan.steps[plan.index])
@@ -686,6 +695,7 @@ function createChatExecutor ({
     let memoryRefs = []
     try {
       const res = await callAI(plan.owner, content, { topic: 'plan', kind: 'chat' }, { inlineUserContent: true })
+      noteUsage(plan.owner)
       reply = res.reply
       memoryRefs = res.memoryRefs
     } catch (e) {
