@@ -35,7 +35,7 @@
 
 工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；计划模式才发送更宽的工具集。模型把 `tool{JSON}` 作为纯文本输出时，也只能匹配本轮已发送的工具名；无工具 profile 仅兼容 `say{...}` 回复脚本。
 
-外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。需要临时放开时用 `.ai calls background on`，并通过 `.ai calls` / `.ai calls recent` 观察实际调用。
+外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。需要临时放开时用 `.ai calls background on`，并通过 `.ai calls` / `.ai calls recent` 观察实际调用；如果只想放开会话摘要，不要把 `dialogue_aggregation` 或 `people_inspector` 一并加入 allowSources。
 
 ## 2.1 LLM 输出回放
 

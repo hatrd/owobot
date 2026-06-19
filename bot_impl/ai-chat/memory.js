@@ -1855,7 +1855,7 @@ function createMemoryService ({
       { role: 'system', content: sys },
       { role: 'user', content: `时间段：${label}\n层级：${tierName}\n参与者：${names.join('、') || '玩家们'}\n摘要列表：${combined}\n请输出严格JSON：{"summary":"..."}` }
     ]
-    const raw = await runSummaryModel(messages, 120, 0.2)
+    const raw = await runSummaryModel(messages, 120, 0.2, 'dialogue_aggregation')
     const summary = parseStructuredSummary(raw, { maxLen: 80 })
     if (!summary) return fallback
     return summary
@@ -2043,7 +2043,7 @@ function createMemoryService ({
     return cleaned
   }
 
-  async function runSummaryModel (messages, maxTokens = 60, temperature = 0.2) {
+  async function runSummaryModel (messages, maxTokens = 60, temperature = 0.2, source = 'conversation_summary') {
     const { key, model } = state.ai || {}
     if (!key) {
       if (state.ai?.trace) {
@@ -2064,7 +2064,7 @@ function createMemoryService ({
       : { model: model || defaults.DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
     try {
       const res = await callMonitor.request({
-        source: 'conversation_summary',
+        source,
         kind: 'chat',
         model: body.model,
         url,
@@ -2309,7 +2309,7 @@ function createMemoryService ({
       { role: 'system', content: PEOPLE_INSPECTOR_SYSTEM_PROMPT },
       { role: 'user', content: user }
     ]
-    const raw = await runSummaryModel(messages, 1024, 0.1)
+    const raw = await runSummaryModel(messages, 1024, 0.1, 'people_inspector')
     if (!raw) return null
     const jsonText = extractJsonLoose(raw) || raw
     try {
