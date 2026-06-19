@@ -1030,7 +1030,8 @@ function createChatExecutor ({
   }
 
   function shouldHaltAfterActionTool (toolName) {
-    return LONG_TASK_TOOLS.has(String(toolName || '').toLowerCase())
+    const low = String(toolName || '').toLowerCase()
+    return LONG_TASK_TOOLS.has(low) || STATS_TOOL_NAMES.includes(low)
   }
 
   function shortText (value, limit = 64) {
