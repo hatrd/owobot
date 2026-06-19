@@ -489,3 +489,101 @@ test('explicit people inspector uses compact chat excerpt and small output budge
     global.fetch = oldFetch
   }
 })
+
+test('people inspector sends one compact known-state snapshot without duplicate prose blocks', async () => {
+  const bigProfile = '喜欢红石机器、矿洞补给、末地交通和猫屋装饰，讨厌被叫错名字。'.repeat(40)
+  const bigAction = '在主基地北门旁边整理大型物资墙并把矿洞补给路线标记成清晰路牌。'.repeat(25)
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'conversation_summary', 'people_inspector'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = {
+    load: () => ({
+      profiles: {
+        Alice: { name: 'Alice', profile: bigProfile },
+        Bob: { name: 'Bob', profile: bigProfile }
+      },
+      commitments: [
+        { id: 'c1', player: 'Alice', action: bigAction, status: 'pending' },
+        { id: 'c2', player: 'Bob', action: bigAction, status: 'ongoing' }
+      ]
+    }),
+    save: () => {}
+  }
+  const now = () => 3100
+  const people = createPeopleService({ state, peopleStore, now })
+  const bodies = []
+  const oldFetch = global.fetch
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    bodies.push(body)
+    const messages = Array.isArray(body.messages) ? body.messages : body.input
+    const system = String(messages?.[0]?.content || '')
+    const content = system.includes('人物画像/承诺')
+      ? '{"profiles":[],"commitments":[]}'
+      : '{"summary":"Alice和Bob讨论矿洞补给与承诺状态"}'
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    state.aiRecent = [
+      { t: now(), user: 'Alice', text: '今天先把矿洞补给路线重新标出来，之前承诺那个北门物资墙也快好了。', kind: 'player', seq: 1 },
+      { t: now(), user: 'Bob', text: '我还会继续维护末地交通，别把这个长期承诺关掉。', kind: 'player', seq: 2 },
+      { t: now(), user: 'bot', text: '我记得你们的安排，会按现有承诺更新。', kind: 'bot', seq: 3 },
+      { t: now(), user: 'Alice', text: '如果 c1 算完成了就标完成，还没完成就保持待办。', kind: 'player', seq: 4 },
+      { t: now(), user: 'Bob', text: '这段对话应该只用一份紧凑状态，不要重复塞上下文。', kind: 'player', seq: 5 }
+    ]
+    state.aiRecentSeq = 5
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 5,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }, 'test')
+
+    const inspectorBody = bodies.find(body => {
+      const messages = Array.isArray(body.messages) ? body.messages : body.input
+      return String(messages?.[0]?.content || '').includes('人物画像/承诺')
+    })
+    assert.ok(inspectorBody, 'expected people_inspector request')
+    const messages = Array.isArray(inspectorBody.messages) ? inspectorBody.messages : inspectorBody.input
+    const userPrompt = String(messages?.find(m => m.role === 'user')?.content || '')
+    assert.doesNotMatch(userPrompt, /当前已知人物画像/)
+    assert.doesNotMatch(userPrompt, /当前已知 bot 承诺/)
+    assert.equal((userPrompt.match(/已知人物画像\/承诺/g) || []).length, 1)
+    assert.ok(userPrompt.length <= 2400, `expected compact people_inspector known-state prompt <= 2400 chars, got ${userPrompt.length}`)
+    assert.ok(!userPrompt.includes(bigProfile.slice(0, 260)), 'expected long profiles to be clipped before LLM call')
+    assert.ok(!userPrompt.includes(bigAction.slice(0, 220)), 'expected long commitments to be clipped before LLM call')
+  } finally {
+    global.fetch = oldFetch
+  }
+})

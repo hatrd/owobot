@@ -41,6 +41,9 @@ const PEOPLE_INSPECTOR_MAX_TOKENS = 256
 const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
 const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
 const PEOPLE_INSPECTOR_CHAT_MAX_EXCERPT_CHARS = 3000
+const PEOPLE_INSPECTOR_PROFILE_MAX_CHARS = 180
+const PEOPLE_INSPECTOR_COMMITMENT_MAX_CHARS = 160
+const PEOPLE_INSPECTOR_STATE_MAX_ITEMS = 12
 const MEMORY_REWRITE_MAX_TOKENS = 256
 const MEMORY_REWRITE_MAX_TEXT_CHARS = 420
 const MEMORY_REWRITE_CONTEXT_HINT_MAX_CHARS = 220
@@ -2315,11 +2318,42 @@ function createMemoryService ({
       const snap = people.dumpForLLM() || {}
       const prof = Array.isArray(snap.profiles) ? snap.profiles : []
       const com = Array.isArray(snap.commitments) ? snap.commitments : []
-      if (!Array.isArray(participants) || !participants.length) return { profiles: prof, commitments: com }
+      const compactProfiles = (list) => list
+        .map(p => {
+          const player = normalizeActorName(p?.player || p?.name || '')
+          const profile = clipModelText(p?.profile || '', PEOPLE_INSPECTOR_PROFILE_MAX_CHARS)
+          if (!player || !profile) return null
+          return { player, profile }
+        })
+        .filter(Boolean)
+        .slice(0, PEOPLE_INSPECTOR_STATE_MAX_ITEMS)
+      const compactCommitments = (list) => list
+        .map(c => {
+          const player = normalizeActorName(c?.player || c?.name || '')
+          const action = clipModelText(c?.action || c?.text || '', PEOPLE_INSPECTOR_COMMITMENT_MAX_CHARS)
+          if (!player || !action) return null
+          const status = normalizeInspectorStatus(c?.status)
+          const id = normalizeMemoryText(c?.id || '').slice(0, 80)
+          const deadlineMs = Number.isFinite(c?.deadlineMs)
+            ? c.deadlineMs
+            : (Number.isFinite(c?.deadline) ? c.deadline : (Number.isFinite(c?.deadline_ms) ? c.deadline_ms : null))
+          return {
+            ...(id ? { id } : null),
+            player,
+            action,
+            status,
+            ...(Number.isFinite(deadlineMs) ? { deadlineMs } : null)
+          }
+        })
+        .filter(Boolean)
+        .slice(0, PEOPLE_INSPECTOR_STATE_MAX_ITEMS)
+      if (!Array.isArray(participants) || !participants.length) {
+        return { profiles: compactProfiles(prof), commitments: compactCommitments(com) }
+      }
       const allow = new Set(participants.map(p => normalizeActorName(p).toLowerCase()).filter(Boolean))
       return {
-        profiles: prof.filter(p => allow.has(normalizeActorName(p?.player || p?.name || '').toLowerCase())),
-        commitments: com.filter(c => allow.has(normalizeActorName(c?.player || c?.name || '').toLowerCase()))
+        profiles: compactProfiles(prof.filter(p => allow.has(normalizeActorName(p?.player || p?.name || '').toLowerCase()))),
+        commitments: compactCommitments(com.filter(c => allow.has(normalizeActorName(c?.player || c?.name || '').toLowerCase())))
       }
     } catch {
       return { profiles: [], commitments: [] }
@@ -2431,31 +2465,6 @@ function createMemoryService ({
     if (!Array.isArray(lines) || !lines.length) return null
 
     const snap = buildPeopleSnapshotForInspector(participants && participants.length ? participants : (owner ? [owner] : []))
-    const knownProfiles = (() => {
-      const list = Array.isArray(snap.profiles) ? snap.profiles : []
-      const out = []
-      for (const p of list) {
-        const player = normalizeActorName(p?.player || p?.name || '')
-        if (!player) continue
-        const profile = normalizeMemoryText(p?.profile || '')
-        out.push(`- ${player}: ${profile || '（空）'}`)
-      }
-      return out.length ? out.join('\n') : '(empty)'
-    })()
-    const knownCommitments = (() => {
-      const list = Array.isArray(snap.commitments) ? snap.commitments : []
-      const out = []
-      for (const c of list) {
-        const player = normalizeActorName(c?.player || c?.name || '')
-        const action = normalizeMemoryText(c?.action || c?.text || '')
-        if (!player || !action) continue
-        const status = normalizeInspectorStatus(c?.status)
-        if (status !== 'pending') continue
-        const id = normalizeMemoryText(c?.id || '').slice(0, 80)
-        out.push(`- ${id ? `id=${id} ` : ''}${player}: ${action}`)
-      }
-      return out.length ? out.join('\n') : '(empty)'
-    })()
     const joined = compactChatExcerptForModel(lines, {
       maxLines: PEOPLE_INSPECTOR_CHAT_MAX_LINES,
       maxLineChars: PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS,
@@ -2465,9 +2474,7 @@ function createMemoryService ({
     if (!joined) return null
     const user = [
       `玩家：${(participants && participants.length) ? participants.join('、') : (owner || '未知')}`,
-      `当前已知人物画像（覆盖写入前的内容；如需更新请保留旧要点）：\n${knownProfiles}`,
-      `当前已知 bot 承诺（仅供参考）：\n${knownCommitments}`,
-      `已知人物画像/承诺（JSON快照，供合并更新）：${JSON.stringify(snap)}`,
+      `已知人物画像/承诺（裁剪JSON快照，供合并更新）：${JSON.stringify(snap)}`,
       `聊天记录（旧→新）：\n${joined}`,
       '请只输出严格 JSON：'
     ].join('\n')
