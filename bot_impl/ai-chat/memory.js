@@ -35,6 +35,14 @@ const PEOPLE_INSPECTOR_MAX_TOKENS = 256
 const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
 const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
 const PEOPLE_INSPECTOR_CHAT_MAX_EXCERPT_CHARS = 3000
+const MEMORY_REWRITE_MAX_TOKENS = 256
+const MEMORY_REWRITE_MAX_TEXT_CHARS = 420
+const MEMORY_REWRITE_CONTEXT_HINT_MAX_CHARS = 220
+const MEMORY_REWRITE_RECENT_MAX_LINES = 4
+const MEMORY_REWRITE_RECENT_MAX_LINE_CHARS = 120
+const MEMORY_REWRITE_EXISTING_MAX_ENTRIES = 4
+const MEMORY_REWRITE_EXISTING_MAX_INSTRUCTION_CHARS = 120
+const MEMORY_REWRITE_TRIGGER_MAX_CHARS = 40
 
 function createMemoryService ({
   state,
@@ -1098,20 +1106,65 @@ function createMemoryService ({
     return lines.map(r => ({ user: r.user, text: r.text })).filter(Boolean)
   }
 
+  function compactMemoryRewriteRecent (recent) {
+    const rows = Array.isArray(recent) ? recent.slice(-MEMORY_REWRITE_RECENT_MAX_LINES) : []
+    return rows.map(row => {
+      const user = normalizeActorName(row?.user || '??') || '??'
+      const text = clipModelText(row?.text || '', MEMORY_REWRITE_RECENT_MAX_LINE_CHARS)
+      return text ? { user, text } : null
+    }).filter(Boolean)
+  }
+
+  function compactMemoryRewriteContext (context) {
+    if (!context || typeof context !== 'object' || Array.isArray(context)) return null
+    const out = {}
+    if (context.position && typeof context.position === 'object') {
+      const x = Number(context.position.x)
+      const y = Number(context.position.y)
+      const z = Number(context.position.z)
+      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) out.position = { x, y, z }
+    }
+    const dim = normalizeMemoryText(context.dimension || context.dim || '')
+    if (dim) out.dimension = dim.slice(0, 80)
+    const radius = Number(context.radius)
+    if (Number.isFinite(radius)) out.radius = Math.max(0, Math.min(1000, radius))
+    const featureHint = clipModelText(context.featureHint || context.feature || '', MEMORY_REWRITE_CONTEXT_HINT_MAX_CHARS)
+    if (featureHint) out.featureHint = featureHint
+    return Object.keys(out).length ? out : null
+  }
+
+  function compactMemoryRewriteExistingTriggers () {
+    return recentMemories(MEMORY_REWRITE_EXISTING_MAX_ENTRIES)
+      .map(it => {
+        const instruction = clipModelText(it?.instruction || it?.text || '', MEMORY_REWRITE_EXISTING_MAX_INSTRUCTION_CHARS)
+        const triggers = uniqueStrings(it?.triggers || [])
+          .map(t => clipModelText(t, MEMORY_REWRITE_TRIGGER_MAX_CHARS))
+          .filter(Boolean)
+          .slice(0, 6)
+        if (!instruction && !triggers.length) return null
+        return { instruction, triggers }
+      })
+      .filter(Boolean)
+  }
+
+  function buildMemoryRewritePayload (job) {
+    return {
+      job_id: clipModelText(job?.id || '', 80),
+      player: normalizeActorName(job?.player || ''),
+      request: clipModelText(job?.text || '', MEMORY_REWRITE_MAX_TEXT_CHARS),
+      original_message: clipModelText(job?.original || '', MEMORY_REWRITE_MAX_TEXT_CHARS),
+      recent_chat: compactMemoryRewriteRecent(job?.recent),
+      memory_context: compactMemoryRewriteContext(job?.context || null),
+      existing_triggers: compactMemoryRewriteExistingTriggers()
+    }
+  }
+
   async function invokeMemoryRewrite (job) {
     const { key, baseUrl, path, model } = state.ai || {}
     if (!key) return { status: 'error', code: 'no_key', reason: 'no_key', retryable: false }
     const apiPath = state.ai?.pathOverride || path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
-    const payload = {
-      job_id: job.id,
-      player: job.player,
-      request: job.text,
-      original_message: job.original,
-      recent_chat: job.recent,
-      memory_context: job.context || null,
-      existing_triggers: recentMemories(10).map(it => ({ instruction: it.instruction || it.text, triggers: it.triggers || [] }))
-    }
+    const payload = buildMemoryRewritePayload(job)
     const messages = [
       { role: 'system', content: MEMORY_REWRITE_SYSTEM_PROMPT },
       { role: 'user', content: JSON.stringify(payload) }
@@ -1121,14 +1174,14 @@ function createMemoryService ({
       ? {
           model: model || defaults.DEFAULT_MODEL,
           input: messages,
-          max_output_tokens: 1024,
+          max_output_tokens: MEMORY_REWRITE_MAX_TOKENS,
           ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
         }
       : {
           model: model || defaults.DEFAULT_MODEL,
           messages,
           temperature: 0.2,
-          max_tokens: 1024,
+          max_tokens: MEMORY_REWRITE_MAX_TOKENS,
           stream: false
         }
     try {

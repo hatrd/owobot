@@ -258,6 +258,74 @@ test('memory rewrite does not retry permanent HTTP errors', async () => {
   }
 })
 
+test('memory rewrite sends compact payload and small output budget when background is enabled', async () => {
+  const longText = '这是一段很长的记忆内容，包含玩家描述的位置、路线、偏好和上下文。'.repeat(120)
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiMemory: {
+      entries: Array.from({ length: 30 }, (_, i) => ({
+        instruction: `${i}: ${longText}`,
+        text: `${i}: ${longText}`,
+        triggers: [`触发词${i}`, longText]
+      })),
+      queue: [{
+        id: 'job_compact',
+        player: 'Alice',
+        text: longText,
+        original: `owk 记住 ${longText}`,
+        recent: Array.from({ length: 20 }, (_, i) => ({ user: i % 2 ? 'Bob' : 'Alice', text: `${i}: ${longText}` })),
+        context: { position: { x: 1, y: 64, z: 2 }, dimension: 'minecraft:overworld', radius: 50, featureHint: longText }
+      }]
+    },
+    aiRecent: []
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const oldFetch = global.fetch
+  let requestBody = null
+  global.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body || '{}'))
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"status":"reject","reason":"测试"}' } }]
+      })
+    }
+  }
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+      defaults,
+      bot: { username: 'bot' },
+      aiCallMonitor: monitor,
+      now: () => 1000
+    })
+
+    await memory.rewrite.processQueue()
+
+    assert.ok(requestBody, 'expected memory_rewrite request')
+    assert.ok(Number(requestBody.max_tokens) <= 256, `expected memory_rewrite max_tokens <= 256, got ${requestBody.max_tokens}`)
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : requestBody.input
+    const userPrompt = String(messages?.find(m => m.role === 'user')?.content || '')
+    assert.ok(userPrompt.length <= 3600, `expected compact memory_rewrite payload <= 3600 chars, got ${userPrompt.length}`)
+    const payload = JSON.parse(userPrompt)
+    assert.ok(String(payload.request || '').length <= 600)
+    assert.ok(String(payload.original_message || '').length <= 600)
+    assert.ok(Array.isArray(payload.recent_chat) && payload.recent_chat.length <= 4)
+    assert.ok(Array.isArray(payload.existing_triggers) && payload.existing_triggers.length <= 6)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('executor tags auto-look greet as a blocked non-mainline AI call', async () => {
   const state = {
     ai: {
