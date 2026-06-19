@@ -146,6 +146,14 @@ test('selectContextProfile maps structured intent to explicit context budgets', 
   assert.ok(action.memoryQueryRecentCount > 0)
   assert.ok(action.maxInputTokens <= 5000)
 
+  const localObserve = selectContextProfile({ topic: 'drops', kind: 'action' }, {})
+  assert.equal(localObserve.name, 'local_observe_context')
+  assert.equal(localObserve.includeGame, true)
+  assert.equal(localObserve.includeMemory, false)
+  assert.equal(localObserve.includeCommitments, false)
+  assert.equal(localObserve.withTools, true)
+  assert.ok(localObserve.maxInputTokens <= 3600)
+
   const plan = selectContextProfile({ topic: 'plan', kind: 'chat' }, { contextProfile: 'plan' })
   assert.equal(plan.name, 'plan_context')
   assert.equal(plan.includeGame, true)

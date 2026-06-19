@@ -111,6 +111,22 @@ function selectContextProfile (intent = {}, options = {}) {
       withTools: true,
       maxInputTokens: 5000
     },
+    local_observe_context: {
+      name: 'local_observe_context',
+      recentCount: 12,
+      recentWindowSec: 30 * 60,
+      memoryQueryRecentCount: 0,
+      includeSystem: true,
+      includeMeta: true,
+      includeGame: true,
+      includeMemory: false,
+      includePeople: false,
+      includeCommitments: false,
+      includeDialogue: false,
+      includeRecent: true,
+      withTools: true,
+      maxInputTokens: 3600
+    },
     plan_context: {
       name: 'plan_context',
       recentCount: 20,
@@ -138,6 +154,7 @@ function selectContextProfile (intent = {}, options = {}) {
   if (reason === 'look_greet' || reason === 'auto-look' || reason === 'auto_look') return clone('greet_minimal')
   if (topic === 'greet' && nearby) return clone('greet_minimal')
   if (topic === 'plan') return clone('plan_context')
+  if (['drops', 'players'].includes(topic)) return clone('local_observe_context')
   if (kind === 'action' || kind === 'command') return clone('task_context')
   if (['position', 'players', 'drops', 'observe'].includes(topic)) return clone('task_context')
   return clone('chat_light')

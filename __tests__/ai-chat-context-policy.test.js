@@ -1050,6 +1050,33 @@ test('2026-01-31 action/query shape keeps world tools but stays below 5000 token
   }
 })
 
+test('observe and drops actions do not spend prompt tokens on memory or commitments context', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 40, chars: 180 })
+  const hugeMemory = makeMemory(repeatedText('观察动作不需要的长期记忆', 10000))
+  const hugePeopleText = repeatedText('观察动作不需要的承诺上下文', 8000)
+  const harness = makeExecutor({
+    recent,
+    memory: hugeMemory,
+    peopleText: hugePeopleText
+  })
+  try {
+    await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 看看附近有什么掉落然后捡起来',
+      { topic: 'drops', kind: 'action', nearby: true },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.doesNotMatch(text, /长期记忆/)
+    assert.doesNotMatch(text, /承诺/)
+    assert.match(text, /游戏上下文/)
+    const tokens = providerInputTokensFromCall(harness.calls[0])
+    assert.ok(tokens <= 3600, `expected observe/drop provider input <= 3600 tokens, got ${tokens}`)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('task profile accounts for tool schema inside the provider input budget', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 100, chars: 320 })
   const harness = makeExecutor({
