@@ -538,12 +538,24 @@ function createChatExecutor ({
     }
     const includeRecent = profile ? profile.includeRecent !== false : ctx.include !== false
     if (!includeRecent) return `当前对话玩家: ${username}`
-    const recentCount = profile && Number.isFinite(profile.recentCount)
+    const profileRecentCount = profile && Number.isFinite(profile.recentCount)
       ? Math.max(0, Math.floor(profile.recentCount))
       : null
-    const recentWindowSec = profile && Number.isFinite(profile.recentWindowSec)
+    const userRecentCount = ctx.userRecentOverride === true && Number.isFinite(Number(ctx.recentCount))
+      ? Math.max(0, Math.floor(Number(ctx.recentCount)))
+      : null
+    const recentCount = profileRecentCount != null && userRecentCount != null
+      ? Math.min(profileRecentCount, userRecentCount)
+      : (profileRecentCount != null ? profileRecentCount : userRecentCount)
+    const profileRecentWindowSec = profile && Number.isFinite(profile.recentWindowSec)
       ? Math.max(0, Math.floor(profile.recentWindowSec))
       : null
+    const userRecentWindowSec = ctx.userWindowOverride === true && Number.isFinite(Number(ctx.recentWindowSec))
+      ? Math.max(0, Math.floor(Number(ctx.recentWindowSec)))
+      : null
+    const recentWindowSec = profileRecentWindowSec != null && userRecentWindowSec != null
+      ? Math.min(profileRecentWindowSec, userRecentWindowSec)
+      : (profileRecentWindowSec != null ? profileRecentWindowSec : userRecentWindowSec)
     if (contextBus) {
       const maxEntries = recentCount != null
         ? Math.max(0, recentCount)

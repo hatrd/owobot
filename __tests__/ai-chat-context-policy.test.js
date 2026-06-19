@@ -85,7 +85,8 @@ function makeExecutor ({
   people = null,
   assistantContent = '收到',
   assistantMessages = null,
-  contextBus = null
+  contextBus = null,
+  aiContext = null
 }) {
   const calls = []
   const sent = []
@@ -116,7 +117,7 @@ function makeExecutor ({
       baseUrl: 'https://example.invalid',
       path: '/v1/chat/completions',
       model: 'deepseek-chat',
-      context: { include: true, recentCount: 50, recentWindowSec: 24 * 60 * 60 },
+      context: aiContext || { include: true, recentCount: 50, recentWindowSec: 24 * 60 * 60 },
       maxTokensPerCall: 1024,
       maxToolCalls: 6
     },
@@ -287,6 +288,34 @@ test('chat profile enforces maxInputTokens even when memory and people context g
     assert.match(text, /长期记忆/)
     assert.match(text, /玩家画像/)
     assert.match(text, /当前对话玩家/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('explicit context recent zero disables online context bus history', async () => {
+  const now = Date.now()
+  const recent = [
+    { t: now, user: 'Alice', text: '这条历史聊天不应该进 prompt', kind: 'player' },
+    { t: now + 1000, user: 'owkowk', text: '这条 bot 历史也不应该进 prompt', kind: 'bot' }
+  ]
+  const harness = makeExecutor({
+    recent,
+    contextBus: makeRealContextBusFromRecent(recent),
+    aiContext: { include: true, recentCount: 0, userRecentOverride: true, recentWindowSec: 24 * 60 * 60 }
+  })
+  try {
+    await harness.executor.callAI(
+      'Alice',
+      'owkowk 你好',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.match(text, /当前对话玩家: Alice/)
+    assert.doesNotMatch(text, /这条历史聊天不应该进 prompt/)
+    assert.doesNotMatch(text, /这条 bot 历史也不应该进 prompt/)
+    assert.equal((text.match(/<p |<b /g) || []).length, 0)
   } finally {
     harness.restore()
   }

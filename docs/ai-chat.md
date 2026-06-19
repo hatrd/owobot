@@ -87,7 +87,7 @@
    - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
 7. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
    - `当前对话玩家: <name>`
-   - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）；默认注入视图会截短过长玩家行，并限制已发给游戏的 bot/tool echo（各保留最近 3 条，单条也截短），只压 prompt，不丢 `state.aiContextBus` 原始记录；显式设置 `recentCount=0` 时只保留当前玩家锚点，不注入历史聊天
+   - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）；默认注入视图会截短过长玩家行，并限制已发给游戏的 bot/tool echo（各保留最近 3 条，单条也截短），只压 prompt，不丢 `state.aiContextBus` 原始记录；profile 的 recent/window 是场景上限，用户显式设置更小值时取更小值，`recentCount=0` 时只保留当前玩家锚点，不注入历史聊天
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
 8. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
 
