@@ -84,3 +84,21 @@ test('buildMemoryContext injects nearby location memories by distance', async ()
   assert.match(ctx, /0,64,0/)
   assert.doesNotMatch(ctx, /far/)
 })
+
+test('buildMemoryContext does not inject nearby location memories for unrelated non-location chat', async () => {
+  const state = {
+    ai: { context: { memory: { include: true, max: 3 } } },
+    aiMemory: { entries: [] }
+  }
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const defaults = { DEFAULT_BASE: '', DEFAULT_PATH: '', DEFAULT_MODEL: '' }
+  const bot = { username: 'bot', game: { dimension: 'minecraft:overworld' }, entity: { position: { x: 10, y: 64, z: 0 } } }
+  const memory = createMemoryService({ state, memoryStore, defaults, bot })
+
+  state.aiMemory.entries = [
+    { text: 'spawn', instruction: 'spawn', summary: 'spawn', count: 1, createdAt: 1, updatedAt: 1, lastAuthor: 'A', location: { x: 0, y: 64, z: 0, radius: 30, dim: 'minecraft:overworld' } }
+  ]
+
+  const ctx = await memory.longTerm.buildContext({ query: '晚饭吃什么', withRefs: false, actor: 'Alice' })
+  assert.equal(ctx, '')
+})

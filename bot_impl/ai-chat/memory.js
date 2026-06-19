@@ -275,7 +275,6 @@ function createMemoryService ({
     }
     return {
       include: src.include !== false,
-      alwaysRange: toPosNum(src.alwaysRange ?? src.always_range, 48),
       nearRange: toPosNum(src.nearRange ?? src.near_range ?? src.nearbyRange ?? src.range, 160),
       nearMax: Math.min(toPosInt(src.nearMax ?? src.near_max ?? src.max, 3), Math.max(1, Math.floor(limit || 6))),
       requireDimMatch: src.requireDimMatch !== false,
@@ -1462,13 +1461,6 @@ function createMemoryService ({
         let inject = []
         if (!askNorm || askIsLocation || askWantsHere) {
           inject = pickNearbyLocationEntries({ actor, limit: locCfg.nearMax, cfg: locCfg })
-        } else {
-          const nearest = pickNearbyLocationEntries({ actor, limit: 1, cfg: locCfg, includeOutsideRange: true })
-          const me = getBotLocationSnapshot()
-          const first = nearest && nearest[0] ? nearest[0] : null
-          const loc = first?.location ? normalizeLocationValue(first.location) : null
-          const d = (me && loc) ? distanceToLocation(me, loc) : Infinity
-          if (first && Number.isFinite(d) && d <= locCfg.alwaysRange) inject = [first]
         }
         if (inject.length) {
           const merged = []

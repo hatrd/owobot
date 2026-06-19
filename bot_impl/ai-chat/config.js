@@ -42,9 +42,7 @@ function buildDefaultContext () {
       // Location context injection (long-term memory is primarily places now)
       location: {
         include: true,
-        // Always inject the nearest place if the bot is very close (even without explicit location question)
-        alwaysRange: 48,
-        // When user asks about "here/where", inject nearby places within this range
+        // When user asks about "here/where/location", inject nearby places within this range
         nearRange: 160,
         nearMax: 3,
         requireDimMatch: true,
