@@ -2459,6 +2459,18 @@ function createMemoryService ({
     return out
   }
 
+  function hasPeoplePatchEntries (patch) {
+    return !!(patch && (
+      (Array.isArray(patch.profiles) && patch.profiles.length) ||
+      (Array.isArray(patch.commitments) && patch.commitments.length)
+    ))
+  }
+
+  function shouldSkipPeopleInspectorLLM (lines, rules) {
+    if (hasPeoplePatchEntries(rules)) return false
+    return shouldUseLocalConversationSummary(lines)
+  }
+
   async function extractPeoplePatchByLLM (lines, participants, owner) {
     if (!state.ai?.key) return null
     if (!people || typeof people.applyPatch !== 'function') return null
@@ -2500,19 +2512,19 @@ function createMemoryService ({
 
     try {
       const rules = extractPeoplePatchByRules(lines, owner)
-      const hasRules = (rules.profiles && rules.profiles.length) || (rules.commitments && rules.commitments.length)
+      const hasRules = hasPeoplePatchEntries(rules)
       if (hasRules) {
         const res = people.applyPatch({ ...rules, source: `rules:${reason || 'dialogue'}` })
         if (res?.changed) changed = true
       }
+      if (shouldSkipPeopleInspectorLLM(lines, rules)) return changed
     } catch (e) {
       traceChat('[chat] people rules error', e?.message || e)
     }
 
     try {
       const llm = await extractPeoplePatchByLLM(lines, participants, owner)
-      const hasLLM = llm && ((llm.profiles && llm.profiles.length) || (llm.commitments && llm.commitments.length))
-      if (hasLLM) {
+      if (hasPeoplePatchEntries(llm)) {
         const res = people.applyPatch({ ...llm, source: `llm:${reason || 'dialogue'}` })
         if (res?.changed) changed = true
       }
