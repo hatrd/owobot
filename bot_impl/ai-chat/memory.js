@@ -33,6 +33,7 @@ const SUMMARY_CHAT_MAX_LINE_CHARS = 100
 const SUMMARY_CHAT_MAX_EXCERPT_CHARS = 3200
 const LOCAL_SUMMARY_MAX_LINES = 4
 const LOCAL_SUMMARY_MAX_CHARS = 240
+const CONVERSATION_SUMMARY_MAX_MODEL_CALLS_PER_RUN = 2
 const DIALOGUE_AGGREGATION_MAX_TOKENS = 96
 const DIALOGUE_AGGREGATION_MAX_ENTRIES = 24
 const DIALOGUE_AGGREGATION_MAX_SUMMARY_CHARS = 80
@@ -2296,7 +2297,14 @@ function createMemoryService ({
     return totalChars <= LOCAL_SUMMARY_MAX_CHARS
   }
 
-  async function summarizeConversationLines (lines, participants) {
+  function consumeModelBudget (budget) {
+    if (!budget) return true
+    if (budget.remaining <= 0) return false
+    budget.remaining -= 1
+    return true
+  }
+
+  async function summarizeConversationLines (lines, participants, budget = null) {
     if (!lines.length) return ''
     const fallback = fallbackConversationSummary(lines, participants)
     if (shouldUseLocalConversationSummary(lines)) return fallback
@@ -2307,6 +2315,7 @@ function createMemoryService ({
       separator: ' | '
     })
     if (!joined) return fallback
+    if (!consumeModelBudget(budget)) return fallback
     const sys = '你是Minecraft服务器里的聊天总结助手。请用中文≤40字，概括玩家互动主题，提到参与者名字和关键行动/地点，不要编造。仅输出JSON对象。'
     const messages = [
       { role: 'system', content: sys },
@@ -2497,7 +2506,7 @@ function createMemoryService ({
     return shouldUseLocalConversationSummary(lines)
   }
 
-  async function extractPeoplePatchByLLM (lines, participants, owner) {
+  async function extractPeoplePatchByLLM (lines, participants, owner, budget = null) {
     if (!state.ai?.key) return null
     if (!people || typeof people.applyPatch !== 'function') return null
     if (!Array.isArray(lines) || !lines.length) return null
@@ -2510,6 +2519,7 @@ function createMemoryService ({
       separator: '\n'
     })
     if (!joined) return null
+    if (!consumeModelBudget(budget)) return null
     const user = [
       `玩家：${(participants && participants.length) ? participants.join('、') : (owner || '未知')}`,
       `已知人物画像/承诺（裁剪JSON快照，供合并更新）：${JSON.stringify(snap)}`,
@@ -2532,7 +2542,7 @@ function createMemoryService ({
     }
   }
 
-  async function maybeWritePeopleMemoryFromConversation (lines, participants, owner, reason) {
+  async function maybeWritePeopleMemoryFromConversation (lines, participants, owner, reason, budget = null) {
     if (!people || typeof people.applyPatch !== 'function') return false
     let changed = false
 
@@ -2549,7 +2559,7 @@ function createMemoryService ({
     }
 
     try {
-      const llm = await extractPeoplePatchByLLM(lines, participants, owner)
+      const llm = await extractPeoplePatchByLLM(lines, participants, owner, budget)
       if (hasPeoplePatchEntries(llm)) {
         const res = people.applyPatch({ ...llm, source: `llm:${reason || 'dialogue'}` })
         if (res?.changed) changed = true
@@ -2561,7 +2571,7 @@ function createMemoryService ({
     return changed
   }
 
-  async function processConversationSummary (job) {
+  async function processConversationSummary (job, budget = null) {
     try {
       const startSeq = Number(job.startSeq)
       const endSeq = Number(job.endSeq)
@@ -2585,7 +2595,7 @@ function createMemoryService ({
           })
         } catch {}
       }
-      const summary = await summarizeConversationLines(lines, participants)
+      const summary = await summarizeConversationLines(lines, participants, budget)
       if (!summary) return false
       const record = {
         id: job.id,
@@ -2606,7 +2616,7 @@ function createMemoryService ({
       if (state.ai?.trace) {
         try { traceChat('[chat] summary saved', { id: record.id, summary: record.summary.slice(0, 160) }) } catch {}
       }
-      try { await maybeWritePeopleMemoryFromConversation(lines, record.participants, job.username, job.reason || 'summary') } catch {}
+      try { await maybeWritePeopleMemoryFromConversation(lines, record.participants, job.username, job.reason || 'summary', budget) } catch {}
       return true
     } catch (e) {
       traceChat('[chat] process summary error', e?.message || e)
@@ -2642,13 +2652,14 @@ function createMemoryService ({
     const queue = ensureSummaryQueue()
     if (!queue.length) return
     summaryCtrl.running = true
+    const summaryModelBudget = { remaining: CONVERSATION_SUMMARY_MAX_MODEL_CALLS_PER_RUN }
     try {
       while (queue.length) {
         const job = queue.shift()
         if (!job) continue
         summaryCtrl.activeKey = summaryJobKey(job)
         try {
-          const ok = await processConversationSummary(job)
+          const ok = await processConversationSummary(job, summaryModelBudget)
           if (typeof job._resolve === 'function') {
             try { job._resolve(Boolean(ok)) } catch {}
           }

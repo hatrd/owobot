@@ -327,6 +327,75 @@ test('conversation summary does not repeat external calls for an already saved s
   }
 })
 
+test('conversation summary caps external calls per queue run and falls back locally', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const now = () => 2900
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob整理积压聊天摘要"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      now,
+      aiCallMonitor
+    })
+
+    const long = '这段聊天在讨论矿洞路线、补给箱、火把标记和回程坐标，需要摘要但不值得一次性打爆外部模型。'.repeat(8)
+    state.aiRecent = Array.from({ length: 30 }, (_, i) => ({
+      t: now() + i,
+      user: i % 2 === 0 ? 'Alice' : 'Bob',
+      text: `${i}: ${long}`,
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 30
+
+    const promises = Array.from({ length: 6 }, (_, i) => memory.dialogue.queueSummary('Alice', {
+      startSeq: i * 5 + 1,
+      lastSeq: i * 5 + 5,
+      startedAt: now() - 100 + i,
+      lastAt: now() + i,
+      participants: new Set(['Alice', 'Bob'])
+    }, 'burst'))
+
+    const results = await Promise.all(promises)
+
+    assert.deepEqual(results, [true, true, true, true, true, true])
+    assert.equal(fetchCalls, 2)
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary.ok, 2)
+    assert.equal(state.aiDialogues.filter(d => d?.tier === 'raw').length, 6)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('explicit people inspector skips short low-signal dialogue after local summary', async () => {
   const state = {
     ai: {
