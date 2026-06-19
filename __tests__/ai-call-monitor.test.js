@@ -859,3 +859,72 @@ test('AI chat install processes duplicate player chat events as one billable mai
     global.fetch = oldFetch
   }
 })
+
+test('auto-look greet provider failures enter cooldown to avoid repeated external calls', async () => {
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      refsEnabled: false,
+      context: {
+        include: true,
+        recentCount: 4,
+        recentWindowSec: 300,
+        game: { include: false },
+        memory: { include: false }
+      },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'auto_look_greet'] }
+    },
+    aiRecent: [],
+    aiRecentSeq: 0,
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const bot = new EventEmitter()
+  bot.username = 'owkowk'
+  bot.chat = () => {}
+  bot.entity = { position: { x: 0, y: 64, z: 0 } }
+  bot.health = 20
+  bot.food = 20
+  const cleanups = []
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: false,
+      status: 500,
+      text: async () => 'upstream failed'
+    }
+  }
+  try {
+    installAiChat(bot, {
+      on: (event, handler) => bot.on(event, handler),
+      dlog: () => {},
+      state,
+      registerCleanup: fn => cleanups.push(fn),
+      log: null
+    })
+
+    bot.emit('auto-look:greet', { username: 'kuleizi', reason: 'test' })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    bot.emit('auto-look:greet', { username: 'kuleizi', reason: 'test' })
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    assert.equal(fetchCalls, 1, `expected failed auto-look greet to cooldown after one provider call, got ${fetchCalls}`)
+    assert.equal(state.aiCallMonitor.bySource.auto_look_greet.error, 1)
+  } finally {
+    for (const fn of cleanups.reverse()) {
+      try { fn() } catch {}
+    }
+    global.fetch = oldFetch
+  }
+})

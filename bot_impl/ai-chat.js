@@ -365,6 +365,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
         cooldowned = true
       } catch (err) {
         log?.warn && log.warn('auto-look greet error:', err?.message || err)
+        cooldowned = true
       } finally {
         slice.inFlight.delete(key)
         if (cooldowned) slice.cooldowns.set(key, nowTs)
