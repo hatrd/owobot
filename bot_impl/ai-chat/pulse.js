@@ -9,6 +9,10 @@ const OVERFLOW_SUMMARY_MAX_LINES = 40
 const OVERFLOW_SUMMARY_MAX_LINE_CHARS = 80
 const OVERFLOW_SUMMARY_MAX_PROMPT_CHARS = 2200
 const OVERFLOW_SUMMARY_MAX_TOKENS = 96
+const OVERFLOW_LOW_SIGNAL_MAX_LINES = 80
+const OVERFLOW_LOW_SIGNAL_MAX_CHARS = 960
+const OVERFLOW_LOW_SIGNAL_MAX_UNIQUE_TEXTS = 8
+const OVERFLOW_LOW_SIGNAL_SHORT_TEXT_CHARS = 8
 
 function createPulseService ({
   state,
@@ -404,6 +408,11 @@ function createPulseService ({
 
   function scheduleOverflowSummary (overflow) {
     if (!overflow || overflow.length < 20) return
+    const localSummary = buildLocalLowSignalOverflowSummary(overflow)
+    if (localSummary) {
+      saveOverflowSummary(localSummary)
+      return
+    }
     ;(async () => {
       try {
         if (!state.ai?.key) return
@@ -448,14 +457,52 @@ function createPulseService ({
             : H.extractAssistantText(data?.choices?.[0]?.message ?? data?.choices?.[0] ?? data, { allowReasoning: false }).trim()
           recordBackgroundUsage(data, messages, OVERFLOW_SUMMARY_MAX_TOKENS, sum)
           if (!sum) return
-          if (!Array.isArray(state.aiLong)) state.aiLong = []
-          state.aiLong.push({ t: Date.now(), summary: sum })
-          if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
-          try { memory?.longTerm?.persistState?.() } catch {}
+          saveOverflowSummary(sum)
           if (state.ai.trace && log?.info) log.info('long summary ->', sum)
         } catch {}
       } catch {}
     })()
+  }
+
+  function saveOverflowSummary (summary) {
+    const sum = String(summary || '').replace(/\s+/g, ' ').trim()
+    if (!sum) return false
+    if (!Array.isArray(state.aiLong)) state.aiLong = []
+    state.aiLong.push({ t: Date.now(), summary: sum })
+    if (state.aiLong.length > 50) state.aiLong.splice(0, state.aiLong.length - 50)
+    try { memory?.longTerm?.persistState?.() } catch {}
+    return true
+  }
+
+  function buildLocalLowSignalOverflowSummary (overflow) {
+    const rows = Array.isArray(overflow) ? overflow.filter(Boolean) : []
+    if (!rows.length || rows.length > OVERFLOW_LOW_SIGNAL_MAX_LINES) return ''
+    const texts = rows
+      .map(row => String(row?.text || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+    if (!texts.length) return ''
+    const totalChars = texts.reduce((sum, text) => sum + text.length, 0)
+    if (totalChars > OVERFLOW_LOW_SIGNAL_MAX_CHARS) return ''
+    const unique = new Set(texts.map(text => text.toLowerCase()))
+    if (unique.size > OVERFLOW_LOW_SIGNAL_MAX_UNIQUE_TEXTS) return ''
+    const shortCount = texts.filter(text => text.length <= OVERFLOW_LOW_SIGNAL_SHORT_TEXT_CHARS).length
+    const repeatedCount = texts.length - unique.size
+    const lowSignal = shortCount >= Math.ceil(texts.length * 0.7) || repeatedCount >= Math.ceil(texts.length * 0.4)
+    if (!lowSignal) return ''
+    const participants = []
+    const seen = new Set()
+    for (const row of rows) {
+      const name = String(row?.user || '').trim().slice(0, 32)
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      participants.push(name)
+      if (participants.length >= 4) break
+    }
+    const who = participants.length ? participants.join('、') : '玩家们'
+    const sample = Array.from(unique).slice(0, 4).join(' / ')
+    return `${who} 闲聊：${sample}`.slice(0, 80)
   }
 
   function compactOverflowLine (row) {

@@ -214,6 +214,30 @@ test('overflow summary sends compact input and small output budget', async () =>
   }
 })
 
+test('low-signal overflow summary uses local fallback without external LLM call', async () => {
+  const { state, pulse, calls, restore } = makePulseWithOverflowFetch()
+  try {
+    const texts = ['嗯嗯', '好', '哈哈', '在的']
+    state.aiRecent = Array.from({ length: 70 }, (_, i) => ({
+      t: Date.now() - (70 - i) * 1000,
+      user: `old${i % 4}`,
+      text: texts[i % texts.length],
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 70
+    pulse.captureChat('player0', '好')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(calls.length, 0)
+    assert.equal(state.aiCallMonitor.bySource.overflow_summary?.ok || 0, 0)
+    assert.equal(state.aiLong.length, 1)
+    assert.match(state.aiLong[0].summary, /old0|old1|old2|old3/)
+    assert.ok(state.aiRecent.length <= 20)
+  } finally {
+    restore()
+  }
+})
+
 test('overflow summary records provider usage in AI spend accounting', async () => {
   let usage = null
   const { state, pulse, restore } = makePulseWithOverflowFetch({
