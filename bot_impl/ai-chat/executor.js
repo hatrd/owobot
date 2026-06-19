@@ -631,10 +631,72 @@ function createChatExecutor ({
     if (/座标|坐标|坐標|在哪|哪里|哪儿|哪边|where|location|position|位置/.test(lower)) intent.topic = 'position'
     if (/谁在线|在线.*谁|附近.*谁|谁.*附近|附近.*玩家|玩家.*附近|player|玩家|同行|online/.test(lower)) intent.topic = 'players'
     if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
+    if (/排行榜|排行|榜单|leaderboard|rank(ing)?/.test(lower)) intent.topic = 'leaderboard'
+    if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
     if (/附近|near|around|周围/.test(lower)) intent.nearby = true
     if (/攻击|追击|清怪|清理|守护|防守|击杀|打怪|打架|kill|defend|hunt/.test(lower)) intent.kind = 'action'
     if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
     return intent
+  }
+
+  function stripBotMentionPrefix (text) {
+    try {
+      const trig = triggerWord()
+      const raw = String(text || '').trim()
+      if (!trig) return raw
+      return raw
+        .replace(new RegExp('^(' + trig + '[:：,，。.!！\\s]*)+', 'i'), '')
+        .replace(/^[:：,，。.!！\s]+/, '')
+        .trim()
+    } catch {
+      return String(text || '').trim()
+    }
+  }
+
+  function extractPlayerNameForStats (text, fallback) {
+    const cleaned = stripBotMentionPrefix(text)
+    const fallbackName = String(fallback || '').trim()
+    const tokens = String(cleaned || '').match(/[A-Za-z0-9_]{2,32}/g) || []
+    const ignored = new Set([
+      String(bot?.username || '').toLowerCase(),
+      'stats', 'stat', 'rank', 'ranking', 'leaderboard', 'online', 'chat', 'death', 'deaths', 'score', 'today', 'yesterday'
+    ])
+    for (const token of tokens) {
+      const lower = token.toLowerCase()
+      if (ignored.has(lower)) continue
+      return token
+    }
+    return fallbackName
+  }
+
+  function inferStatsType (text) {
+    const raw = String(text || '')
+    const lower = raw.toLowerCase()
+    if (/在线时长|在线|online/.test(lower)) return 'online'
+    if (/发言|聊天次数|聊天|chat/.test(lower)) return 'chat'
+    if (/死亡次数|死亡|death|deaths/.test(lower)) return 'deaths'
+    return 'all'
+  }
+
+  function inferStatsPeriod (text) {
+    const raw = String(text || '')
+    const lower = raw.toLowerCase()
+    if (/今天|今日|today/.test(lower)) return 'today'
+    if (/昨天|昨日|yesterday/.test(lower)) return 'yesterday'
+    return 'all'
+  }
+
+  function inferPlayerStatsPeriod (text) {
+    return inferStatsPeriod(text) === 'today' ? 'today' : 'all'
+  }
+
+  function inferLeaderboardType (text) {
+    const raw = String(text || '')
+    const lower = raw.toLowerCase()
+    if (/在线时长|在线|online/.test(lower)) return 'online'
+    if (/发言|聊天|chat/.test(lower)) return 'chat'
+    if (/死亡|death|deaths/.test(lower)) return 'deaths'
+    return 'score'
   }
 
   function clearPlan (reason = 'unknown') {
@@ -1685,7 +1747,7 @@ function createChatExecutor ({
     try { state.aiPulse.lastFlushAt = now() } catch {}
     const intent = classifyIntent(text)
     if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
-    const acted = await Promise.resolve(false)
+    const acted = await maybeHandleLocalQuery({ username, text, raw, source, intent, reasonTag })
     if (acted) return
     ctrl.busy = true
     ctrl.lastUser = username
@@ -1709,6 +1771,40 @@ function createChatExecutor ({
       ctrl.busy = false
       flushPending()
     }
+  }
+
+  async function maybeHandleLocalQuery ({ username, text, raw, source, intent, reasonTag }) {
+    const topic = String(intent?.topic || '').toLowerCase()
+    if (topic !== 'stats' && topic !== 'leaderboard') return false
+    const tool = topic === 'leaderboard' ? 'query_leaderboard' : 'query_player_stats'
+    const args = topic === 'leaderboard'
+      ? {
+          type: inferLeaderboardType(text),
+          period: inferStatsPeriod(text),
+          limit: 5
+        }
+      : {
+          name: extractPlayerNameForStats(text, username),
+          period: inferPlayerStatsPeriod(text),
+          type: inferStatsType(text)
+        }
+    try { contextBus?.pushEvent('tool.intent', tool) } catch {}
+    let res
+    try {
+      res = await actions.run(tool, args)
+    } catch (err) {
+      log?.warn && log.warn('local query tool error', err?.message || err)
+      res = { ok: false, msg: '查询失败，请稍后再试~', error: String(err?.message || err) }
+    }
+    const msg = res && typeof res === 'object' ? (res.msg || res.error || '') : ''
+    const textOut = H.trimReply(msg || (res?.ok === false ? '查询失败' : '查到了'), state.ai?.maxReplyLen)
+    if (textOut) {
+      pulse.sendChatReply(username, textOut, {
+        reason: `${reasonTag || source || 'chat'}_local_${topic}`,
+        toolUsed: tool
+      })
+    }
+    return true
   }
 
   function collectMemoryContext (memoryText) {

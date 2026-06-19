@@ -763,6 +763,46 @@ test('local stats tool result halts without a second model call', async () => {
   }
 })
 
+test('obvious player stats chat is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      query_player_stats: { ok: true, msg: 'Alice 总计: 在线1h20m, 发言12条, 死亡0次' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 查一下 Alice 的统计')
+    assert.equal(harness.calls.length, 0, `expected player stats query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['query_player_stats'])
+    assert.equal(harness.toolRuns[0].args.name, 'Alice')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /Alice 总计/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('obvious leaderboard chat is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      query_leaderboard: { ok: true, msg: '总活跃度榜: 1.Alice(42) 2.Bob(30)' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 活跃度排行榜')
+    assert.equal(harness.calls.length, 0, `expected leaderboard query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['query_leaderboard'])
+    assert.equal(harness.toolRuns[0].args.type, 'score')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /活跃度榜/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('local people commitment tool result halts without a second model call', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({
