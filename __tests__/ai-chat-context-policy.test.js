@@ -65,6 +65,7 @@ function makeExecutor ({
   gameText = repeatedText('游戏状态', 1800),
   memory = makeMemory(),
   peopleText = repeatedText('玩家画像', 1200),
+  people = null,
   assistantContent = '收到'
 }) {
   const calls = []
@@ -126,7 +127,7 @@ function makeExecutor ({
       captureAiReply: () => {}
     },
     memory,
-    people: {
+    people: people || {
       buildAllProfilesContext: () => `玩家画像:\n${peopleText}`,
       buildAllCommitmentsContext: () => `承诺:\n${peopleText}`
     },
@@ -219,6 +220,70 @@ test('chat profile enforces maxInputTokens even when memory and people context g
     assert.match(text, /长期记忆/)
     assert.match(text, /玩家画像/)
     assert.match(text, /当前对话玩家/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('chat profile scopes people context to the active player', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 20, chars: 120 })
+  const harness = makeExecutor({
+    recent,
+    people: {
+      buildAllProfilesContext: ({ player } = {}) => {
+        assert.equal(player, 'Alice')
+        return '<people>\n<profile n="Alice">喜欢被叫阿猫</profile>\n</people>'
+      },
+      buildAllCommitmentsContext: ({ player } = {}) => {
+        assert.equal(player, 'Alice')
+        return '承诺（未完成）：\nAlice：帮 Alice 找回家路线'
+      }
+    }
+  })
+  try {
+    await harness.executor.callAI(
+      'Alice',
+      'owkowk 你还记得我是谁吗',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.match(text, /Alice/)
+    assert.doesNotMatch(text, /Bob/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('chat profile does not spend prompt tokens on unrelated people records', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 20, chars: 120 })
+  const unrelated = Array.from({ length: 80 }, (_, i) => `<profile n="Other${i}">${repeatedText(`无关画像${i}`, 120)}</profile>`).join('\n')
+  const harness = makeExecutor({
+    recent,
+    people: {
+      buildAllProfilesContext: ({ player } = {}) => {
+        assert.equal(player, 'Alice')
+        return '<people>\n<profile n="Alice">喜欢被叫阿猫</profile>\n</people>'
+      },
+      buildAllCommitmentsContext: ({ player } = {}) => {
+        assert.equal(player, 'Alice')
+        return ''
+      }
+    }
+  })
+  try {
+    await harness.executor.callAI(
+      'Alice',
+      'owkowk 我想确认你记得我的称呼',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    const scopedTokens = H.estTokensFromText(text)
+    const oldFullPeopleTokens = H.estTokensFromText(`${text}\n${unrelated}`)
+    assert.ok(scopedTokens < oldFullPeopleTokens / 3, `expected scoped prompt to avoid unrelated people records: scoped=${scopedTokens}, old=${oldFullPeopleTokens}`)
+    assert.doesNotMatch(text, /Other0/)
+    assert.doesNotMatch(text, /无关画像/)
   } finally {
     harness.restore()
   }

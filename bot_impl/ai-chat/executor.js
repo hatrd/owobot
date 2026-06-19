@@ -676,11 +676,11 @@ function createChatExecutor ({
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     const peopleProfilesCtx = (() => {
       if (profile.includePeople === false) return ''
-      try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
+      try { return people?.buildAllProfilesContext?.({ player: username }) || '' } catch { return '' }
     })()
     const peopleCommitmentsCtx = (() => {
       if (profile.includeCommitments === false) return ''
-      try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
+      try { return people?.buildAllCommitmentsContext?.({ player: username }) || '' } catch { return '' }
     })()
     const metaCtx = profile.includeMeta === false ? '' : buildMetaContext()
     const inlineUserContent = options?.inlineUserContent === true

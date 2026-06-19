@@ -64,8 +64,8 @@
 3. `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
    - 开关：`state.ai.context.game.include=false`
    - 参数：`invTop/nearPlayerRange/nearPlayerMax/dropsRange/dropsMax`（hostileRange 固定 24）
-4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext()` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，会注入**全部**已录入画像的玩家）
-5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext()` 输出（`承诺（未完成）：...`，会注入全部 pending 承诺）
+4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext({ player })` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，主对话只注入当前玩家画像）
+5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext({ player })` 输出（`承诺（未完成）：...`，主对话只注入当前玩家 pending 承诺）
 6. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路

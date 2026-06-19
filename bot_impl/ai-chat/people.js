@@ -244,8 +244,34 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     })
   }
 
-  function buildAllProfilesContext () {
-    const items = listProfiles().filter(p => p.profile).sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  function normalizePeopleContextOptions (opts = {}) {
+    const playersRaw = []
+    if (typeof opts.player === 'string') playersRaw.push(opts.player)
+    if (typeof opts.username === 'string') playersRaw.push(opts.username)
+    if (Array.isArray(opts.players)) playersRaw.push(...opts.players)
+    const players = new Set(playersRaw.map(name => normalizeKey(normalizeName(name))).filter(Boolean))
+    const max = Number.isFinite(Number(opts.max)) && Number(opts.max) > 0 ? Math.floor(Number(opts.max)) : null
+    return { players, max }
+  }
+
+  function limitPeopleItems (items, opts = {}) {
+    const { players, max } = normalizePeopleContextOptions(opts)
+    let out = Array.isArray(items) ? items : []
+    if (players.size) {
+      out = out.filter(item => {
+        const key = normalizeKey(item?.name || item?.player || item?.playerKey || '')
+        return key && players.has(key)
+      })
+    }
+    if (max !== null && out.length > max) out = out.slice(0, max)
+    return out
+  }
+
+  function buildAllProfilesContext (opts = {}) {
+    const items = limitPeopleItems(
+      listProfiles().filter(p => p.profile).sort((a, b) => a.name.localeCompare(b.name, 'zh')),
+      opts
+    )
     if (!items.length) return ''
     const lines = [
       '<people>',
@@ -281,9 +307,12 @@ function createPeopleService ({ state, peopleStore, now = () => Date.now(), trac
     }).filter(c => c.playerKey && c.action)
   }
 
-  function buildAllCommitmentsContext () {
-    const items = listCommitments().filter(c => c.status === 'pending')
-      .sort((a, b) => (a.player.localeCompare(b.player, 'zh')) || (a.action.localeCompare(b.action, 'zh')))
+  function buildAllCommitmentsContext (opts = {}) {
+    const items = limitPeopleItems(
+      listCommitments().filter(c => c.status === 'pending')
+        .sort((a, b) => (a.player.localeCompare(b.player, 'zh')) || (a.action.localeCompare(b.action, 'zh'))),
+      opts
+    )
     if (!items.length) return ''
     const lines = ['承诺（未完成）：']
     for (const c of items) {

@@ -80,3 +80,22 @@ test('people.buildAllProfilesContext only includes non-empty profiles', async ()
   assert.doesNotMatch(ctx, /Alice/)
   assert.match(ctx, /<profile n="Bob">喜欢被叫鲍勃<\/profile>/)
 })
+
+test('people context can be scoped to the active player', async () => {
+  const state = {}
+  const { store } = makeStore({ profiles: {}, commitments: [] })
+  const people = createPeopleService({ state, peopleStore: store, now: () => 1 })
+
+  people.setProfile({ player: 'Alice', profile: '喜欢被叫阿猫', source: 'test' })
+  people.setProfile({ player: 'Bob', profile: '喜欢挖矿', source: 'test' })
+  people.upsertCommitment({ player: 'Alice', action: '帮 Alice 找回家路线', source: 'test' })
+  people.upsertCommitment({ player: 'Bob', action: '帮 Bob 修房子', source: 'test' })
+
+  const profiles = people.buildAllProfilesContext({ player: 'Alice' })
+  const commitments = people.buildAllCommitmentsContext({ player: 'Alice' })
+
+  assert.match(profiles, /Alice/)
+  assert.doesNotMatch(profiles, /Bob/)
+  assert.match(commitments, /Alice/)
+  assert.doesNotMatch(commitments, /Bob/)
+})
