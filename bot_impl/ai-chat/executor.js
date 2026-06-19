@@ -821,6 +821,7 @@ function createChatExecutor ({
 
     const loopNotes = []
     const loopOutputs = []
+    const seenToolCalls = new Set()
     let totalToolCalls = 0
     let lastReply = ''
     let fallbackReply = ''
@@ -855,6 +856,12 @@ function createChatExecutor ({
 
         const payload = normalizeToolPayload(call)
         if (!payload || !payload.tool) continue
+        const toolKey = toolCallFingerprint(payload)
+        if (toolKey && seenToolCalls.has(toolKey)) {
+          const duplicateReply = fallbackReply || '我刚刚已经查过这个了，不重复调用同一个工具。'
+          return finish(H.trimReply(duplicateReply, replyLimit))
+        }
+        if (toolKey) seenToolCalls.add(toolKey)
         const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun, dryEvents })
         speech = ''
         totalToolCalls += 1
@@ -902,6 +909,28 @@ function createChatExecutor ({
       }
     }
     return { tool: fn.name, args }
+  }
+
+  function stableJson (value) {
+    if (value == null) return 'null'
+    if (typeof value === 'number' || typeof value === 'boolean') return JSON.stringify(value)
+    if (typeof value === 'string') return JSON.stringify(value)
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+    if (typeof value === 'object') {
+      const keys = Object.keys(value).sort()
+      return `{${keys.map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+    }
+    return JSON.stringify(String(value))
+  }
+
+  function toolCallFingerprint (payload) {
+    try {
+      const tool = String(payload?.tool || '').trim().toLowerCase()
+      if (!tool) return ''
+      return `${tool}:${stableJson(payload?.args || {})}`
+    } catch {
+      return ''
+    }
   }
 
   function extractInlineToolCallFromText (text, allowedNames = INLINE_TOOL_NAMES) {

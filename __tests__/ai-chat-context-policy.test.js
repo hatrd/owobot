@@ -308,6 +308,26 @@ test('intent-scoped tool turns do not execute inline text tools outside the sele
   }
 })
 
+test('tool loop does not repeat identical tool calls from a stuck model', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    assistantContent: 'observe_detail{"what":"entities","radius":32,"max":20}'
+  })
+  try {
+    const res = await harness.executor.dryDialogue(
+      'kuleizi',
+      'owkowk 看看附近有什么实体',
+      { withTools: true, maxToolCalls: 3, intent: { topic: 'observe', kind: 'action', nearby: true } }
+    )
+    const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
+    assert.deepEqual(calledTools, ['observe_detail'])
+    assert.ok(harness.calls.length <= 2, `expected at most one follow-up model call after observe, got ${harness.calls.length}`)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('2026-01-31 action/query shape keeps world tools but stays below 5000 tokens', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 80, chars: 240 })
   const harness = makeExecutor({ recent })
