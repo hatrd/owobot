@@ -1478,7 +1478,7 @@ function createMemoryService ({
       }
     } catch {}
 
-    if (!selected.length && mode === 'keyword') selected = recentMemories(limit, { actor })
+    if (!selected.length && mode === 'keyword' && !askNorm) selected = recentMemories(limit, { actor })
     if (selected.length) {
       const slice = selected.slice(0, limit)
       for (const m of slice) {

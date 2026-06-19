@@ -45,6 +45,24 @@ test('buildMemoryContext legacy keyword mode can still fall back to most recent 
   assert.doesNotMatch(ctx, /old/)
 })
 
+test('buildMemoryContext legacy keyword mode does not inject unrelated recent memories for nonempty queries', async () => {
+  const state = {
+    ai: { context: { memory: { include: true, max: 2, mode: 'keyword' } } },
+    aiMemory: { entries: [] }
+  }
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const defaults = { DEFAULT_BASE: '', DEFAULT_PATH: '', DEFAULT_MODEL: '' }
+  const memory = createMemoryService({ state, memoryStore, defaults, bot: { username: 'bot' } })
+
+  state.aiMemory.entries = [
+    { text: '钻石矿洞在 120,64,320', instruction: '钻石矿洞在 120,64,320', summary: '钻石矿洞坐标', count: 1, createdAt: 100, updatedAt: 100, lastAuthor: 'A' },
+    { text: '基地仓库缺少木头', instruction: '基地仓库缺少木头', summary: '仓库木头库存', count: 1, createdAt: 101, updatedAt: 101, lastAuthor: 'B' }
+  ]
+
+  const ctx = await memory.longTerm.buildContext({ query: '晚饭吃什么', withRefs: false })
+  assert.equal(ctx, '')
+})
+
 test('buildMemoryContext injects nearby location memories by distance', async () => {
   const state = {
     ai: { context: { memory: { include: true, max: 3, mode: 'keyword' } } },
