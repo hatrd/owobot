@@ -97,14 +97,18 @@ test('conversation summary permission does not also allow people inspector LLM c
       aiCallMonitor
     })
 
-    state.aiRecentSeq = 3
-    state.aiRecent.push({ t: now(), user: 'Alice', text: '今天挖矿还挺顺利', kind: 'player', seq: 1 })
-    state.aiRecent.push({ t: now(), user: 'Bob', text: '我也去看看', kind: 'player', seq: 2 })
-    state.aiRecent.push({ t: now(), user: 'bot', text: '注意安全', kind: 'bot', seq: 3 })
+    state.aiRecent = [
+      { t: now(), user: 'Alice', text: '今天挖矿还挺顺利，矿洞入口在村庄东边，路上有很多火把。', kind: 'player', seq: 1 },
+      { t: now(), user: 'Bob', text: '我也去看看，顺便带点食物和木头，免得下面补给不够。', kind: 'player', seq: 2 },
+      { t: now(), user: 'bot', text: '注意安全，最好先看一下附近有没有怪物，再决定要不要继续深入。', kind: 'bot', seq: 3 },
+      { t: now(), user: 'Alice', text: '如果能找到铁和煤就先标记路线，回头我们一起搬箱子过去。', kind: 'player', seq: 4 },
+      { t: now(), user: 'Bob', text: '好，我负责带盾牌，Alice 负责记坐标，bot 你之后提醒我们别迷路。', kind: 'player', seq: 5 }
+    ]
+    state.aiRecentSeq = 5
 
     await memory.dialogue.queueSummary('Alice', {
       startSeq: 1,
-      lastSeq: 3,
+      lastSeq: 5,
       startedAt: now() - 100,
       lastAt: now(),
       participants: new Set(['Alice', 'Bob'])
@@ -161,14 +165,18 @@ test('background toggle allows conversation summary without chaining people insp
       aiCallMonitor
     })
 
-    state.aiRecentSeq = 3
-    state.aiRecent.push({ t: now(), user: 'Alice', text: '今天挖矿还挺顺利', kind: 'player', seq: 1 })
-    state.aiRecent.push({ t: now(), user: 'Bob', text: '我也去看看', kind: 'player', seq: 2 })
-    state.aiRecent.push({ t: now(), user: 'bot', text: '注意安全', kind: 'bot', seq: 3 })
+    state.aiRecent = [
+      { t: now(), user: 'Alice', text: '今天挖矿还挺顺利，矿洞入口在村庄东边，路上有很多火把。', kind: 'player', seq: 1 },
+      { t: now(), user: 'Bob', text: '我也去看看，顺便带点食物和木头，免得下面补给不够。', kind: 'player', seq: 2 },
+      { t: now(), user: 'bot', text: '注意安全，最好先看一下附近有没有怪物，再决定要不要继续深入。', kind: 'bot', seq: 3 },
+      { t: now(), user: 'Alice', text: '如果能找到铁和煤就先标记路线，回头我们一起搬箱子过去。', kind: 'player', seq: 4 },
+      { t: now(), user: 'Bob', text: '好，我负责带盾牌，Alice 负责记坐标，bot 你之后提醒我们别迷路。', kind: 'player', seq: 5 }
+    ]
+    state.aiRecentSeq = 5
 
     await memory.dialogue.queueSummary('Alice', {
       startSeq: 1,
-      lastSeq: 3,
+      lastSeq: 5,
       startedAt: now() - 100,
       lastAt: now(),
       participants: new Set(['Alice', 'Bob'])
@@ -177,6 +185,70 @@ test('background toggle allows conversation summary without chaining people insp
     assert.equal(fetchCalls, 1)
     assert.equal(state.aiCallMonitor.bySource.conversation_summary.ok, 1)
     assert.equal(state.aiCallMonitor.bySource.people_inspector.blocked, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
+test('short low-signal dialogue summary uses local fallback without external LLM call', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = { load: () => ({ profiles: {}, commitments: [] }), save: () => {} }
+  const now = () => 2750
+  const people = createPeopleService({ state, peopleStore, now })
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice打招呼"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    state.aiRecentSeq = 2
+    state.aiRecent.push({ t: now(), user: 'Alice', text: 'owkowk 你好', kind: 'player', seq: 1 })
+    state.aiRecent.push({ t: now(), user: 'bot', text: '你好呀', kind: 'bot', seq: 2 })
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 2,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice'])
+    }, 'test')
+
+    assert.equal(fetchCalls, 0)
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary?.ok || 0, 0)
+    assert.equal(state.aiDialogues.length, 1)
+    assert.match(state.aiDialogues[0].summary, /Alice/)
   } finally {
     global.fetch = oldFetch
   }

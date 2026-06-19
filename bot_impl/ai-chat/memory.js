@@ -31,6 +31,8 @@ const PEOPLE_INSPECTOR_SYSTEM_PROMPT = [
 const SUMMARY_CHAT_MAX_LINES = 48
 const SUMMARY_CHAT_MAX_LINE_CHARS = 100
 const SUMMARY_CHAT_MAX_EXCERPT_CHARS = 3200
+const LOCAL_SUMMARY_MAX_LINES = 4
+const LOCAL_SUMMARY_MAX_CHARS = 240
 const PEOPLE_INSPECTOR_MAX_TOKENS = 256
 const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
 const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
@@ -2245,9 +2247,18 @@ function createMemoryService ({
     return `${parts} 聊天：${recent.slice(0, 50)}`
   }
 
+  function shouldUseLocalConversationSummary (lines) {
+    const rows = Array.isArray(lines) ? lines.filter(Boolean) : []
+    if (!rows.length) return true
+    if (rows.length > LOCAL_SUMMARY_MAX_LINES) return false
+    const totalChars = rows.reduce((sum, row) => sum + normalizeMemoryText(row?.text || '').length, 0)
+    return totalChars <= LOCAL_SUMMARY_MAX_CHARS
+  }
+
   async function summarizeConversationLines (lines, participants) {
     if (!lines.length) return ''
     const fallback = fallbackConversationSummary(lines, participants)
+    if (shouldUseLocalConversationSummary(lines)) return fallback
     const joined = compactChatExcerptForModel(lines, {
       maxLines: SUMMARY_CHAT_MAX_LINES,
       maxLineChars: SUMMARY_CHAT_MAX_LINE_CHARS,
