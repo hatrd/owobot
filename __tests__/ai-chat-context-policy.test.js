@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createChatExecutor } from '../bot_impl/ai-chat/executor.js'
 import H from '../bot_impl/ai-chat-helpers.js'
+import ctxMod from '../bot_impl/ai-chat/context-bus.js'
 
 const HISTORICAL_2026_02_14_AVG_INPUT_TOKENS = 10843
 const HISTORICAL_2026_01_31_AVG_INPUT_TOKENS = 8923
@@ -49,6 +50,20 @@ function makeContextBusFromRecent (recent) {
   }
 }
 
+function makeRealContextBusFromRecent (recent) {
+  const state = { ai: { context: {} } }
+  let t = 1
+  const bus = ctxMod.createContextBus({ state, now: () => t })
+  for (const row of recent) {
+    t = Number.isFinite(row.t) ? row.t : t + 1000
+    if (row.kind === 'bot') bus.pushBotFrom(row.text, 'LLM')
+    else if (row.kind === 'tool') bus.pushTool(row.text)
+    else if (row.kind === 'server') bus.pushServer(row.text)
+    else bus.pushPlayer(row.user || 'player', row.text)
+  }
+  return bus
+}
+
 function makeMemory (longText = repeatedText('长期记忆', 2400)) {
   return {
     longTerm: {
@@ -66,7 +81,8 @@ function makeExecutor ({
   memory = makeMemory(),
   peopleText = repeatedText('玩家画像', 1200),
   people = null,
-  assistantContent = '收到'
+  assistantContent = '收到',
+  contextBus = null
 }) {
   const calls = []
   const oldFetch = global.fetch
@@ -134,7 +150,7 @@ function makeExecutor ({
     canAfford: () => ({ ok: true, proj: 0, rem: { day: Infinity, month: Infinity, total: Infinity } }),
     applyUsage: () => {},
     buildGameContext: () => `游戏上下文:\n${gameText}`,
-    contextBus: makeContextBusFromRecent(recent)
+    contextBus: contextBus || makeContextBusFromRecent(recent)
   })
 
   return {
@@ -250,6 +266,35 @@ test('chat profile scopes people context to the active player', async () => {
     const text = promptTextFromCall(harness.calls[0])
     assert.match(text, /Alice/)
     assert.doesNotMatch(text, /Bob/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('chat prompt caps repeated bot/tool context bus echoes without dropping player turns', async () => {
+  const now = Date.now()
+  const recent = []
+  for (let i = 0; i < 10; i++) {
+    recent.push({ t: now + i * 3000, user: 'Alice', text: `玩家问题 ${i}`, kind: 'player' })
+    recent.push({ t: now + i * 3000 + 1000, user: 'owkowk', text: repeatedText(`机器人长回复${i}`, 180), kind: 'bot' })
+    recent.push({ t: now + i * 3000 + 2000, user: 'tool', text: repeatedText(`工具长结果${i}`, 180), kind: 'tool' })
+  }
+  const harness = makeExecutor({
+    recent,
+    contextBus: makeRealContextBusFromRecent(recent)
+  })
+  try {
+    await harness.executor.callAI(
+      'Alice',
+      'owkowk 继续说',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.equal((text.match(/<p n="Alice">/g) || []).length, 3)
+    assert.ok((text.match(/<b f="LLM">/g) || []).length <= 3)
+    assert.ok((text.match(/<b f="tool">/g) || []).length <= 3)
+    assert.ok(H.estTokensFromText(text) < 3000)
   } finally {
     harness.restore()
   }

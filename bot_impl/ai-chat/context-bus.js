@@ -3,6 +3,10 @@ const DEFAULT_MAX_ENTRIES = 200
 const DEFAULT_WINDOW_SEC = 24 * 60 * 60
 const STACK_WINDOW_MS = 5000
 const EVENT_DATA_MAX = 100
+const DEFAULT_BOT_XML_MAX_ENTRIES = 3
+const DEFAULT_TOOL_XML_MAX_ENTRIES = 3
+const DEFAULT_BOT_XML_MAX_CHARS = 80
+const DEFAULT_TOOL_XML_MAX_CHARS = 120
 const NUMERIC_STACK_EVENTS = ['heal']
 const DROPPED_EVENT_TYPES = new Set(['minimalSelf.score'])
 
@@ -204,7 +208,17 @@ function createContextBus ({ state, now = () => Date.now() }) {
     return `${days}d`
   }
 
-  function serializeEntry (entry) {
+  function truncateText (value, maxChars) {
+    const text = String(value ?? '')
+    const n = Number(maxChars)
+    if (!Number.isFinite(n) || n <= 0) return text
+    const max = Math.floor(n)
+    if (text.length <= max) return text
+    if (max <= 1) return text.slice(0, max)
+    return `${text.slice(0, max - 1)}…`
+  }
+
+  function serializeEntry (entry, view = null) {
     const type = entry?.type
     const payload = entry?.payload || {}
     switch (type) {
@@ -212,12 +226,14 @@ function createContextBus ({ state, now = () => Date.now() }) {
         return `<p n="${escapeXml(payload.name)}">${escapeXml(payload.content)}</p>`
       case 'server':
         return `<s>${escapeXml(payload.content)}</s>`
-      case 'bot':
+      case 'bot': {
+        const content = truncateText(payload.content, view?.botMaxChars)
         return payload.from
-          ? `<b f="${escapeXml(payload.from)}">${escapeXml(payload.content)}</b>`
-          : `<b>${escapeXml(payload.content)}</b>`
+          ? `<b f="${escapeXml(payload.from)}">${escapeXml(content)}</b>`
+          : `<b>${escapeXml(content)}</b>`
+      }
       case 'tool':
-        return `<b f="tool">${escapeXml(payload.content)}</b>`
+        return `<b f="tool">${escapeXml(truncateText(payload.content, view?.toolMaxChars))}</b>`
       case 'event':
         if (DROPPED_EVENT_TYPES.has(String(payload.eventType || ''))) return ''
         return `<e t="${escapeXml(payload.eventType)}" d="${escapeXml(payload.data)}"/>`
@@ -246,6 +262,18 @@ function createContextBus ({ state, now = () => Date.now() }) {
       ? Math.max(0, Math.floor(Number(options.gapThresholdMs)))
       : GAP_THRESHOLD_MS
     const includeGaps = options.includeGaps !== false
+    const botMaxEntries = Number.isFinite(Number(options.botMaxEntries))
+      ? Math.max(0, Math.floor(Number(options.botMaxEntries)))
+      : DEFAULT_BOT_XML_MAX_ENTRIES
+    const toolMaxEntries = Number.isFinite(Number(options.toolMaxEntries))
+      ? Math.max(0, Math.floor(Number(options.toolMaxEntries)))
+      : DEFAULT_TOOL_XML_MAX_ENTRIES
+    const botMaxChars = Number.isFinite(Number(options.botMaxChars))
+      ? Math.max(0, Math.floor(Number(options.botMaxChars)))
+      : DEFAULT_BOT_XML_MAX_CHARS
+    const toolMaxChars = Number.isFinite(Number(options.toolMaxChars))
+      ? Math.max(0, Math.floor(Number(options.toolMaxChars)))
+      : DEFAULT_TOOL_XML_MAX_CHARS
 
     const nowTs = now()
     const windowSec = Number.isFinite(Number(options.windowSec))
@@ -264,6 +292,26 @@ function createContextBus ({ state, now = () => Date.now() }) {
     }
     if (!filtered.length) return ''
     filtered.reverse()
+    const includeSeq = new Set()
+    let botKept = 0
+    let toolKept = 0
+    for (let i = filtered.length - 1; i >= 0; i--) {
+      const entry = filtered[i]
+      if (!entry || !Number.isFinite(entry.seq)) continue
+      if (entry.type === 'bot') {
+        if (botKept < botMaxEntries) {
+          includeSeq.add(entry.seq)
+          botKept++
+        }
+      } else if (entry.type === 'tool') {
+        if (toolKept < toolMaxEntries) {
+          includeSeq.add(entry.seq)
+          toolKept++
+        }
+      } else {
+        includeSeq.add(entry.seq)
+      }
+    }
 
     const lines = [
       '<ctx>',
@@ -278,7 +326,11 @@ function createContextBus ({ state, now = () => Date.now() }) {
           lines.push(`<g d="${formatDuration(gap)}"/>`)
         }
       }
-      const xml = serializeEntry(entry)
+      if (!includeSeq.has(entry.seq)) {
+        prevTs = entry.t
+        continue
+      }
+      const xml = serializeEntry(entry, { botMaxChars, toolMaxChars })
       if (xml) lines.push(xml)
       prevTs = entry.t
     }

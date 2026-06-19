@@ -107,3 +107,26 @@ test('context bus drops minimalSelf.score events', () => {
   const xml = bus.buildXml({ maxEntries: 10, windowSec: 999, includeGaps: false })
   assert.equal(xml, '')
 })
+
+test('context bus default XML view caps repeated bot/tool echoes while keeping player context', () => {
+  const state = { ai: { context: {} } }
+  let now = 1
+  const bus = createContextBus({ state, now: () => now })
+
+  for (let i = 0; i < 10; i++) {
+    bus.pushPlayer('Alice', `玩家问题 ${i}`)
+    bus.pushBotFrom(`机器人长回复 ${i} ${'x'.repeat(180)}`, 'LLM')
+    bus.pushTool(`observe_detail result ${i} ${'y'.repeat(180)}`)
+    now += 1000
+  }
+
+  const xml = bus.buildXml({ maxEntries: 50, windowSec: 999, includeGaps: false })
+  const playerLines = xml.match(/<p n="Alice">/g) || []
+  const botLines = xml.match(/<b f="LLM">/g) || []
+  const toolLines = xml.match(/<b f="tool">/g) || []
+
+  assert.equal(playerLines.length, 10)
+  assert.ok(botLines.length <= 3, `expected at most 3 bot echoes, got ${botLines.length}`)
+  assert.ok(toolLines.length <= 3, `expected at most 3 tool echoes, got ${toolLines.length}`)
+  assert.ok(xml.length < 1800, `expected compact context XML, got ${xml.length} chars`)
+})
