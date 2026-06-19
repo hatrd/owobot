@@ -404,8 +404,8 @@ function createChatExecutor ({
     try {
       if (state.ai.trace && log?.info) log.info('ask(pending) <-', content)
       const { reply, memoryRefs } = await callAI(owner, content, intent, { inlineUserContent: true })
+      noteUsage(owner)
       if (reply) {
-        noteUsage(owner)
         pulse.sendChatReply(owner, reply, { reason: 'llm_pending', from: 'LLM', memoryRefs, suppressFeedback: true })
       }
     } catch (e) {
@@ -1599,8 +1599,8 @@ function createChatExecutor ({
     try {
       if (state.ai.trace && log?.info) log.info('ask <-', text)
       const { reply, memoryRefs } = await callAI(username, text, intent)
+      noteUsage(username)
       if (reply) {
-        noteUsage(username)
         if (state.ai.trace && log?.info) log.info('reply ->', reply)
         const replyReason = source === 'followup' ? 'llm_followup' : 'llm_reply'
         pulse.sendChatReply(username, reply, { reason: replyReason, from: 'LLM', memoryRefs })
