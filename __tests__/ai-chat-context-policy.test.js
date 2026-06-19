@@ -171,6 +171,12 @@ function promptTextFromCall (call) {
   return (call.body.messages || call.body.input || []).map(m => m.content || '').join('\n')
 }
 
+function providerInputTokensFromCall (call) {
+  const messageTokens = H.estTokensFromText(promptTextFromCall(call))
+  const toolTokens = Array.isArray(call.body.tools) ? H.estTokensFromText(JSON.stringify(call.body.tools)) : 0
+  return messageTokens + toolTokens
+}
+
 test('2026-05-16/17 auto-look greet shape sends minimal context under 1200 tokens', async () => {
   const recent = [
     ...makeRecentFromLogShape({ day: '2026-05-16', count: 40, chars: 220 }),
@@ -483,6 +489,37 @@ test('2026-01-31 action/query shape keeps world tools but stays below 5000 token
     assert.ok(toolNames.includes('say'), 'tool turns should still expose say')
     assert.equal(toolNames.includes('skill_start'), false, 'unrelated skill tools should not be sent')
     assert.equal((text.match(/<p |<b /g) || []).length <= 16, true)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('task profile accounts for tool schema inside the provider input budget', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 100, chars: 320 })
+  const harness = makeExecutor({
+    recent,
+    gameText: repeatedText('膨胀游戏状态', 8000),
+    memory: makeMemory(repeatedText('膨胀长期记忆', 12000)),
+    peopleText: repeatedText('膨胀玩家画像', 9000)
+  })
+  try {
+    await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 去基地帮我整理箱子并拿些木头',
+      { topic: 'generic', kind: 'action', nearby: true },
+      { inlineUserContent: true }
+    )
+    const call = harness.calls[0]
+    assert.equal(Array.isArray(call.body.tools), true)
+    const totalTokens = providerInputTokensFromCall(call)
+    assert.ok(totalTokens <= 5000, `expected task provider input <= 5000 tokens including tools, got ${totalTokens}`)
+    const text = promptTextFromCall(call)
+    assert.match(text, /去基地帮我整理箱子/)
+    assert.match(text, /当前对话玩家/)
+    const toolNames = call.body.tools.map(tool => tool?.function?.name).filter(Boolean)
+    assert.ok(toolNames.includes('observe_detail'))
+    assert.ok(toolNames.includes('goto'))
+    assert.ok(toolNames.includes('collect'))
   } finally {
     harness.restore()
   }

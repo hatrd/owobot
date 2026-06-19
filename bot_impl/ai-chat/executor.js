@@ -212,8 +212,11 @@ function createChatExecutor ({
       }
       const minTokens = Math.max(0, Math.floor(Number(msg.minTokens) || 0))
       const maxShare = Math.max(minTokens, Math.floor(Number(msg.maxTokens) || 0))
-      const flexibleLeft = flexible.filter(item => !out.includes(item) && item !== msg).length
-      const reservedForLater = flexibleLeft * 24
+      const laterFlexible = flexible.filter(item => !out.includes(item) && item !== msg)
+      const reservedForLater = laterFlexible.reduce((sum, item) => {
+        const min = Math.max(0, Math.floor(Number(item?.minTokens) || 0))
+        return sum + min
+      }, 0)
       const allowance = Math.max(0, Math.min(
         maxShare || remaining,
         remaining - Math.min(remaining, reservedForLater)
@@ -501,7 +504,9 @@ function createChatExecutor ({
         includeGaps: true
       })
       const conv = profile && profile.includeDialogue === false ? '' : memory.dialogue.buildPrompt(username)
-      const parts = [`当前对话玩家: ${username}`, xmlCtx, conv].filter(Boolean)
+      const parts = profile && profile.includeDialogue !== false && conv
+        ? [`当前对话玩家: ${username}`, conv, xmlCtx]
+        : [`当前对话玩家: ${username}`, xmlCtx, conv]
       return parts.join('\n\n')
     }
     const base = H.buildContextPrompt(username, state.aiRecent, {
@@ -729,11 +734,11 @@ function createChatExecutor ({
     const baseMessages = [
       profile.includeSystem === false ? null : { role: 'system', content: systemPrompt(), keep: true, label: 'systemPrompt' },
       metaCtx ? { role: 'system', content: metaCtx, keep: true, label: 'metaCtx' } : null,
-      gameCtx ? { role: 'system', content: gameCtx, label: 'gameCtx', maxTokens: sectionBudget('game', profile.name === 'plan_context' ? 900 : 650) } : null,
-      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx, label: 'peopleProfilesCtx', maxTokens: sectionBudget('people', 650) } : null,
-      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx, label: 'peopleCommitmentsCtx', maxTokens: sectionBudget('commitments', 360) } : null,
-      memoryCtx ? { role: 'system', content: memoryCtx, label: 'memoryCtx', maxTokens: sectionBudget('memory', profile.name === 'plan_context' ? 1100 : 850) } : null,
-      { role: 'system', content: contextPrompt, label: 'contextPrompt', maxTokens: sectionBudget('recent', profile.name === 'plan_context' ? 1400 : 850) },
+      gameCtx ? { role: 'system', content: gameCtx, label: 'gameCtx', maxTokens: sectionBudget('game', profile.name === 'plan_context' ? 900 : 650), minTokens: sectionBudget('gameMin', 120) } : null,
+      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx, label: 'peopleProfilesCtx', maxTokens: sectionBudget('people', 650), minTokens: sectionBudget('peopleMin', 64) } : null,
+      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx, label: 'peopleCommitmentsCtx', maxTokens: sectionBudget('commitments', 360), minTokens: sectionBudget('commitmentsMin', 48) } : null,
+      memoryCtx ? { role: 'system', content: memoryCtx, label: 'memoryCtx', maxTokens: sectionBudget('memory', profile.name === 'plan_context' ? 1100 : 850), minTokens: sectionBudget('memoryMin', profile.name === 'plan_context' ? 160 : 120) } : null,
+      { role: 'system', content: contextPrompt, label: 'contextPrompt', maxTokens: sectionBudget('recent', profile.name === 'plan_context' ? 1400 : 850), minTokens: sectionBudget('recentMin', profile.name === 'plan_context' ? 700 : 180) },
       inlinePrompt ? { role: 'system', content: inlinePrompt, keep: true, label: 'userPrompt' } : null
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
@@ -751,7 +756,11 @@ function createChatExecutor ({
 
     async function requestModel (rawRequestMessages, allowTools) {
       const selectedTools = allowTools ? selectToolFunctionsForIntent(intent, options) : []
-      const requestMessages = fitMessagesToTokenBudget(rawRequestMessages, maxInputTokens)
+      const toolTokens = selectedTools.length ? estTokensFromText(JSON.stringify(selectedTools)) : 0
+      const messageInputBudget = maxInputTokens > 0
+        ? Math.max(1, maxInputTokens - toolTokens)
+        : 0
+      const requestMessages = fitMessagesToTokenBudget(rawRequestMessages, messageInputBudget)
       const estIn = estimatedRequestTokens(requestMessages, selectedTools)
       const afford = canAfford(estIn, maxOut)
       if (state.ai.trace && log?.info) log.info('precheck inTok~=', estIn, 'projCost~=', (afford.proj || 0).toFixed(4), 'rem=', afford.rem)
