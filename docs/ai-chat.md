@@ -32,6 +32,7 @@
 ```
 
 补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。同一轮内模型重复给出完全相同的工具名和参数时会直接短路，不再重复执行工具或继续消耗下一次模型请求。每次请求都会按当前 context profile 的 `maxInputTokens` 对可膨胀上下文段做硬裁剪，保留系统提示、时间元信息和当前用户输入，避免长期记忆/画像/聊天日志增长后把单次请求撑爆。
+主线对话的 completion 预算也按 context profile 分档，而不是所有请求都预留 `state.ai.maxTokensPerCall`：greet≤160、普通聊天≤384、行动/tool loop≤640、plan≤768，并继续受 `state.ai.maxTokensPerCall` 硬上限约束；预算预检按实际分档后的 `max_tokens` 估算，避免普通聊天为 1024 completion 虚高计费预留。
 
 工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；计划模式才发送更宽的工具集。模型把 `tool{JSON}` 作为纯文本输出时，也只能匹配本轮已发送的工具名；无工具 profile 仅兼容 `say{...}` 回复脚本。
 

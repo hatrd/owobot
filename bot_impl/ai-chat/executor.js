@@ -246,6 +246,23 @@ function createChatExecutor ({
     return trimmed.map(stripInternalMessageFields)
   }
 
+  function resolveMaxOutputTokens (profile, options = {}) {
+    const configured = Number(state.ai?.maxTokensPerCall)
+    const hardCap = Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1024
+    const explicit = Number(options?.maxTokens || options?.maxOutputTokens || options?.max_tokens)
+    const profileName = String(profile?.name || '').trim()
+    const target = Number.isFinite(explicit) && explicit > 0
+      ? Math.floor(explicit)
+      : (() => {
+          if (profileName === 'greet_minimal') return 160
+          if (profileName === 'chat_light') return 384
+          if (profileName === 'task_context') return 640
+          if (profileName === 'plan_context') return 768
+          return 512
+        })()
+    return Math.max(120, Math.min(hardCap, target))
+  }
+
   function toolListFromNames (names) {
     const out = []
     const seen = new Set()
@@ -728,14 +745,14 @@ function createChatExecutor ({
         log.info('memoryCtx ->', memoryCtx)
       } catch {}
     }
-    const maxOut = Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 1024))
+    const maxOut = resolveMaxOutputTokens(profile, options)
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
 
     async function requestModel (rawRequestMessages, allowTools) {
       const selectedTools = allowTools ? selectToolFunctionsForIntent(intent, options) : []
       const requestMessages = fitMessagesToTokenBudget(rawRequestMessages, maxInputTokens)
       const estIn = estimatedRequestTokens(requestMessages, selectedTools)
-      const afford = canAfford(estIn)
+      const afford = canAfford(estIn, maxOut)
       if (state.ai.trace && log?.info) log.info('precheck inTok~=', estIn, 'projCost~=', (afford.proj || 0).toFixed(4), 'rem=', afford.rem)
       if (!afford.ok) {
         const msg = state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : ''

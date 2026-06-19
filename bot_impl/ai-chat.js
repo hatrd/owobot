@@ -79,9 +79,12 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     }
   }
 
-  function canAfford (promptTok) {
+  function canAfford (promptTok, outTokMax) {
     const rem = budgetRemaining()
-    const maxOutTok = state.ai.maxTokensPerCall || 512
+    const requestedOut = Number(outTokMax)
+    const maxOutTok = Number.isFinite(requestedOut) && requestedOut > 0
+      ? Math.floor(requestedOut)
+      : (state.ai.maxTokensPerCall || 512)
     const proj = projectedCostForCall(promptTok, maxOutTok)
     const ok = (rem.day >= proj) && (rem.month >= proj) && (rem.total >= proj)
     return { ok, proj, rem }
@@ -397,15 +400,14 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       { role: 'user', content: String(userPrompt || '') }
     ].filter(Boolean)
 
-    const estIn = H.estTokensFromText(messages.map(m => m.content).join(' '))
-    const afford = canAfford(estIn)
-    if (!afford.ok) {
-      throw new Error(state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : 'budget_exceeded')
-    }
-
     const reqMax = Number(maxTokens)
     const maxOut = Number.isFinite(reqMax) && reqMax > 0 ? Math.floor(reqMax) : 256
     const cappedOut = Math.max(60, Math.min(maxOut, state.ai.maxTokensPerCall || 1024))
+    const estIn = H.estTokensFromText(messages.map(m => m.content).join(' '))
+    const afford = canAfford(estIn, cappedOut)
+    if (!afford.ok) {
+      throw new Error(state.ai.notifyOnBudget ? 'AI余额不足，稍后再试~' : 'budget_exceeded')
+    }
     const temp = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.2
 
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)

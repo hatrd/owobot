@@ -186,8 +186,43 @@ test('2026-05-16/17 auto-look greet shape sends minimal context under 1200 token
     assert.doesNotMatch(text, /长期记忆/)
     assert.doesNotMatch(text, /玩家画像/)
     assert.equal(harness.calls[0].body.tools, undefined)
+    assert.ok(Number(harness.calls[0].body.max_tokens) <= 160, `expected greet max_tokens <= 160, got ${harness.calls[0].body.max_tokens}`)
   } finally {
     harness.restore()
+  }
+})
+
+test('context profiles cap completion budget by conversation shape', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 30, chars: 160 })
+  const cases = [
+    {
+      name: 'chat',
+      args: ['Alice', 'owkowk 你好呀', { topic: 'generic', kind: 'chat' }, { inlineUserContent: true }],
+      max: 384
+    },
+    {
+      name: 'action',
+      args: ['Alice', 'owkowk 看看附近有什么掉落然后捡起来', { topic: 'observe', kind: 'action', nearby: true }, { inlineUserContent: true }],
+      max: 640
+    },
+    {
+      name: 'plan',
+      args: ['Alice', '继续执行计划并汇总上一步工具结果', { topic: 'plan', kind: 'chat' }, { inlineUserContent: true, contextProfile: 'plan' }],
+      max: 768
+    }
+  ]
+
+  for (const item of cases) {
+    const harness = makeExecutor({ recent })
+    try {
+      await harness.executor.callAI(...item.args)
+      assert.equal(harness.calls.length, 1)
+      const maxTokens = Number(harness.calls[0].body.max_tokens)
+      assert.ok(maxTokens <= item.max, `expected ${item.name} max_tokens <= ${item.max}, got ${maxTokens}`)
+      assert.ok(maxTokens >= 120, `expected ${item.name} max_tokens >= 120, got ${maxTokens}`)
+    } finally {
+      harness.restore()
+    }
   }
 })
 
