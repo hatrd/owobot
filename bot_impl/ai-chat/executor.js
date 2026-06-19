@@ -43,6 +43,7 @@ const PEOPLE_TOOL_NAMES = ['people_commitments_list', 'people_commitments_dedupe
 const READ_ONLY_QUERY_TOOL_NAMES = ['observe_detail', 'observe_players', 'read_book', 'voice_status']
 const OUTBOUND_EFFECT_TOOL_NAMES = ['voice_speak']
 const DETERMINISTIC_SHORT_ACTION_TOOL_NAMES = ['use_item', 'equip', 'toss', 'dismount']
+const CONTROL_STATE_TOOL_NAMES = ['reset', 'stop', 'stop_all', 'skill_status', 'skill_cancel']
 
 function createChatExecutor ({
   state,
@@ -1057,7 +1058,8 @@ function createChatExecutor ({
       STATS_TOOL_NAMES.includes(low) ||
       PEOPLE_TOOL_NAMES.includes(low) ||
       OUTBOUND_EFFECT_TOOL_NAMES.includes(low) ||
-      DETERMINISTIC_SHORT_ACTION_TOOL_NAMES.includes(low)
+      DETERMINISTIC_SHORT_ACTION_TOOL_NAMES.includes(low) ||
+      CONTROL_STATE_TOOL_NAMES.includes(low)
   }
 
   function shouldHaltAfterToolResult (toolName, intent = {}) {

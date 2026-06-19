@@ -778,6 +778,54 @@ test('short deterministic action tools halt without a second model call', async 
   }
 })
 
+test('control and skill state tools halt without a second model call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const cases = [
+    { tool: 'reset', args: {}, prompt: 'owkowk 重置一下' },
+    { tool: 'stop', args: {}, prompt: 'owkowk 停下' },
+    { tool: 'stop_all', args: {}, prompt: 'owkowk 全部停止' },
+    { tool: 'skill_status', args: { taskId: 'task_1' }, prompt: 'owkowk 查一下任务 task_1 状态' },
+    { tool: 'skill_cancel', args: { taskId: 'task_1' }, prompt: 'owkowk 取消任务 task_1' }
+  ]
+
+  for (const item of cases) {
+    const harness = makeExecutor({
+      recent,
+      assistantMessages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: `call_${item.tool}_1`,
+              type: 'function',
+              function: {
+                name: item.tool,
+                arguments: JSON.stringify(item.args)
+              }
+            }
+          ]
+        },
+        { role: 'assistant', content: '二次总结不应该发生' }
+      ]
+    })
+    try {
+      const res = await harness.executor.callAI(
+        'kuleizi',
+        item.prompt,
+        { topic: 'plan', kind: 'chat' },
+        { inlineUserContent: true, contextProfile: 'plan' }
+      )
+      assert.equal(harness.calls.length, 1, `expected ${item.tool} to avoid follow-up LLM call, got ${harness.calls.length}`)
+      assert.equal(res.reply, '')
+      assert.equal(harness.sent.length, 1)
+      assert.match(harness.sent[0].text, /ok|完成/)
+    } finally {
+      harness.restore()
+    }
+  }
+})
+
 test('2026-01-31 action/query shape keeps world tools but stays below 5000 tokens', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 80, chars: 240 })
   const harness = makeExecutor({ recent })
