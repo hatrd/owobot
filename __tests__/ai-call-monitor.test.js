@@ -4,7 +4,10 @@ import { createAiCallMonitor, buildDefaultExternalCallPolicy } from '../bot_impl
 import { prepareAiState } from '../bot_impl/ai-chat/state-init.js'
 import { prepareSharedState } from '../bot_impl/state.js'
 import { createChatExecutor } from '../bot_impl/ai-chat/executor.js'
+import memoryMod from '../bot_impl/ai-chat/memory.js'
 import H from '../bot_impl/ai-chat-helpers.js'
+
+const { createMemoryService } = memoryMod
 
 const defaults = {
   DEFAULT_MODEL: 'deepseek-chat',
@@ -73,6 +76,130 @@ test('AI call monitor allows and records main chat calls', async () => {
   assert.equal(state.aiCallMonitor.counts.started, 1)
   assert.equal(state.aiCallMonitor.counts.ok, 1)
   assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
+})
+
+test('AI call monitor applies state timeout when callers omit an explicit signal', async () => {
+  const state = {
+    ai: {
+      timeoutMs: 5,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now: () => Date.now() })
+  let signalSeen = null
+
+  await assert.rejects(
+    monitor.request({
+      source: 'conversation_summary',
+      kind: 'chat',
+      model: 'deepseek-chat',
+      url: 'https://example.invalid/v1/chat/completions',
+      body: { model: 'deepseek-chat', messages: [] },
+      fetchImpl: async (_url, init) => {
+        signalSeen = init?.signal || null
+        await new Promise((resolve, reject) => {
+          const onAbort = () => reject(new Error('aborted_by_timeout'))
+          signalSeen?.addEventListener?.('abort', onAbort, { once: true })
+        })
+      }
+    }),
+    /aborted_by_timeout/
+  )
+
+  assert.ok(signalSeen)
+  assert.equal(state.aiCallMonitor.bySource.conversation_summary.error, 1)
+  assert.equal(state.aiCallMonitor.recent.at(-1).status, 'error')
+})
+
+test('memory rewrite does not retry monitor-blocked background calls', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      externalCalls: buildDefaultExternalCallPolicy()
+    },
+    aiMemory: {
+      entries: [],
+      queue: [{
+        id: 'job_blocked',
+        player: 'Alice',
+        text: '记住基地在这里',
+        original: '记住基地在这里',
+        recent: []
+      }]
+    },
+    aiRecent: []
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const memory = createMemoryService({
+    state,
+    memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+    defaults,
+    bot: { username: 'bot' },
+    aiCallMonitor: monitor,
+    now: () => 1000
+  })
+
+  await memory.rewrite.processQueue()
+
+  assert.equal(state.aiCallMonitor.bySource.memory_rewrite.blocked, 1)
+  assert.equal(state.aiMemory.queue.length, 0)
+})
+
+test('memory rewrite does not retry permanent HTTP errors', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      timeoutMs: 1000,
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiMemory: {
+      entries: [],
+      queue: [{
+        id: 'job_unauthorized',
+        player: 'Alice',
+        text: '记住基地在这里',
+        original: '记住基地在这里',
+        recent: []
+      }]
+    },
+    aiRecent: []
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const oldFetch = global.fetch
+  let calls = 0
+  global.fetch = async () => {
+    calls += 1
+    return {
+      ok: false,
+      status: 401,
+      text: async () => 'unauthorized'
+    }
+  }
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore: { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) },
+      defaults,
+      bot: { username: 'bot' },
+      aiCallMonitor: monitor,
+      now: () => 1000
+    })
+
+    await memory.rewrite.processQueue()
+
+    assert.equal(calls, 1)
+    assert.equal(state.aiCallMonitor.bySource.memory_rewrite.error, 1)
+    assert.equal(state.aiMemory.queue.length, 0)
+  } finally {
+    global.fetch = oldFetch
+  }
 })
 
 test('executor tags auto-look greet as a blocked non-mainline AI call', async () => {

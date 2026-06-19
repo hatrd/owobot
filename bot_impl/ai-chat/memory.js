@@ -1092,7 +1092,7 @@ function createMemoryService ({
 
   async function invokeMemoryRewrite (job) {
     const { key, baseUrl, path, model } = state.ai || {}
-    if (!key) return { status: 'error', reason: 'no_key' }
+    if (!key) return { status: 'error', code: 'no_key', reason: 'no_key', retryable: false }
     const apiPath = state.ai?.pathOverride || path || defaults.DEFAULT_PATH
     const url = H.buildAiUrl({ baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
     const payload = {
@@ -1137,7 +1137,14 @@ function createMemoryService ({
       })
       if (!res.ok) {
         const txt = await res.text().catch(() => String(res.status))
-        return { status: 'error', reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` }
+        const statusCode = Number(res.status)
+        return {
+          status: 'error',
+          code: 'http_error',
+          httpStatus: Number.isFinite(statusCode) ? statusCode : null,
+          retryable: Number.isFinite(statusCode) ? ![400, 401, 403, 404].includes(statusCode) : true,
+          reason: `HTTP ${res.status}: ${txt.slice(0, 120)}`
+        }
       }
       const data = await res.json()
       const replyRaw = typeof H.extractAssistantTextFromApiResponse === 'function'
@@ -1145,12 +1152,15 @@ function createMemoryService ({
         : H.extractAssistantText(data?.choices?.[0]?.message, { allowReasoning: false })
       const reply = (typeof H.stripReasoningText === 'function' ? H.stripReasoningText(replyRaw) : String(replyRaw || '')).trim()
       const jsonRaw = extractJsonLoose(reply)
-      if (!jsonRaw) return { status: 'error', reason: 'no_json' }
+      if (!jsonRaw) return { status: 'error', code: 'no_json', reason: 'no_json', retryable: true }
       let parsed = null
-      try { parsed = JSON.parse(jsonRaw) } catch (e) { return { status: 'error', reason: 'invalid_json', detail: e?.message } }
+      try { parsed = JSON.parse(jsonRaw) } catch (e) { return { status: 'error', code: 'invalid_json', reason: 'invalid_json', detail: e?.message, retryable: true } }
       return parsed
     } catch (e) {
-      return { status: 'error', reason: e?.message || e }
+      const code = typeof e?.message === 'string' && e.message.startsWith('ai_call_blocked:')
+        ? 'ai_call_blocked'
+        : 'exception'
+      return { status: 'error', code, reason: e?.message || e, retryable: code !== 'ai_call_blocked' }
     }
   }
 
@@ -1167,7 +1177,8 @@ function createMemoryService ({
         const result = await invokeMemoryRewrite(job)
         const status = result && result.status ? String(result.status).toLowerCase() : null
         if (!result || status === 'error' || !status) {
-          if (job.attempts < 3) {
+          const retryable = result ? result.retryable !== false : true
+          if (retryable && job.attempts < 3) {
             state.aiMemory.queue.push(job)
             await delay(200)
           } else {

@@ -63,6 +63,14 @@ function createAiCallMonitor ({ state, log = null, now = () => Date.now() } = {}
     mon.bySource[key][field] = (Number(mon.bySource[key][field]) || 0) + 1
   }
 
+  function resolveTimeoutMs (timeoutMs) {
+    const explicit = Number(timeoutMs)
+    if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit)
+    const configured = Number(state?.ai?.timeoutMs)
+    if (Number.isFinite(configured) && configured > 0) return Math.floor(configured)
+    return 0
+  }
+
   async function request ({ source, kind = 'chat', model, url, body, headers, signal, timeoutMs, fetchImpl = global.fetch } = {}) {
     const mon = ensureAiCallMonitorState(state, now)
     const normalizedSource = normalizeText(source || 'unknown') || 'unknown'
@@ -95,8 +103,9 @@ function createAiCallMonitor ({ state, log = null, now = () => Date.now() } = {}
       pushRecent({ id, t: startedAt, source: normalizedSource, kind: normalizedKind, model: normalizedModel, status: 'start' })
     }
 
-    const timeoutCtrl = (!signal && Number.isFinite(timeoutMs) && timeoutMs > 0) ? new AbortController() : null
-    const timer = timeoutCtrl ? setTimeout(() => timeoutCtrl.abort('timeout'), Math.floor(timeoutMs)) : null
+    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
+    const timeoutCtrl = (!signal && effectiveTimeoutMs > 0) ? new AbortController() : null
+    const timer = timeoutCtrl ? setTimeout(() => timeoutCtrl.abort('timeout'), effectiveTimeoutMs) : null
     try {
       const res = await fetchImpl(url, {
         method: 'POST',
