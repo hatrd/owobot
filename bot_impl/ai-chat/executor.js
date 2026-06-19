@@ -40,6 +40,7 @@ const DEFAULT_ACTION_TOOL_NAMES = [
 const COMBAT_TOOL_NAMES = ['hunt_player', 'defend_area', 'defend_player', 'cull_hostiles', 'range_attack', 'attack_armor_stand']
 const STATS_TOOL_NAMES = ['query_player_stats', 'query_leaderboard', 'announce_daily_star']
 const PEOPLE_TOOL_NAMES = ['people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
+const READ_ONLY_QUERY_TOOL_NAMES = ['observe_detail', 'observe_players', 'read_book', 'voice_status']
 
 function createChatExecutor ({
   state,
@@ -1034,6 +1035,13 @@ function createChatExecutor ({
     return LONG_TASK_TOOLS.has(low) || STATS_TOOL_NAMES.includes(low) || PEOPLE_TOOL_NAMES.includes(low)
   }
 
+  function shouldHaltAfterToolResult (toolName, intent = {}) {
+    if (shouldHaltAfterActionTool(toolName)) return true
+    const low = String(toolName || '').toLowerCase()
+    const kind = String(intent?.kind || '').toLowerCase()
+    return READ_ONLY_QUERY_TOOL_NAMES.includes(low) && kind !== 'action'
+  }
+
   function shortText (value, limit = 64) {
     const n = Number.isFinite(Number(limit)) ? Math.max(8, Math.floor(Number(limit))) : 64
     const s = String(value == null ? '' : value).replace(/\s+/g, ' ').trim()
@@ -1411,7 +1419,7 @@ function createChatExecutor ({
     const finalText = H.trimReply(baseMsg || fallback, replyLimit)
     if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     const summary = buildActionResultSummary({ toolName, res })
-    if (shouldHaltAfterActionTool(toolName)) return halt(summary)
+    if (shouldHaltAfterToolResult(toolName, intent)) return halt(summary)
     return result(summary)
   }
 
