@@ -629,7 +629,7 @@ function createChatExecutor ({
     if (!trimmed) return intent
     if (/^\/tpa\s+/i.test(trimmed)) return { topic: 'command', nearby: false, kind: 'command' }
     if (/座标|坐标|坐標|在哪|哪里|哪儿|哪边|where|location|position|位置/.test(lower)) intent.topic = 'position'
-    if (/谁|player|玩家|同行|online/.test(lower)) intent.topic = 'players'
+    if (/谁在线|在线.*谁|附近.*谁|谁.*附近|附近.*玩家|玩家.*附近|player|玩家|同行|online/.test(lower)) intent.topic = 'players'
     if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
     if (/附近|near|around|周围/.test(lower)) intent.nearby = true
     if (/攻击|追击|清怪|清理|守护|防守|击杀|打怪|打架|kill|defend|hunt/.test(lower)) intent.kind = 'action'
