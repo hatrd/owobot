@@ -78,7 +78,7 @@ function createMemoryService ({
   canAfford = null,
   applyUsage = null
 }) {
-  const memoryCtrl = { running: false }
+  const memoryCtrl = { running: false, activeRewriteKeys: new Set() }
   let messenger = () => {}
   const callMonitor = aiCallMonitor || createAiCallMonitor({ state, log, now })
   const estTokensFromText = (text) => {
@@ -1297,72 +1297,77 @@ function createMemoryService ({
         if (key) {
           if (seenBatchKeys.has(key)) continue
           seenBatchKeys.add(key)
+          memoryCtrl.activeRewriteKeys.add(key)
         }
-        job.attempts = (job.attempts || 0) + 1
-        modelCallsLeft -= 1
-        const result = await invokeMemoryRewrite(job)
-        const status = result && result.status ? String(result.status).toLowerCase() : null
-        if (!result || status === 'error' || !status) {
-          const retryable = result ? result.retryable !== false : true
-          if (retryable && job.attempts < 3) {
-            state.aiMemory.queue.push(job)
-            await delay(200)
-          } else {
-            safeSend(job.player, '我没能整理好这条记忆，下次再试试~')
-          }
-          continue
-        }
-        if (status === 'reject') {
-          const reason = normalizeMemoryText(result.reason || '')
-          safeSend(job.player, reason ? `这句记不住：${reason}` : '这句记不住喵~')
-          continue
-        }
-        if (status === 'clarify') {
-          const q = normalizeMemoryText(result.question || '')
-          safeSend(job.player, q || '要不要再多给我一点提示呀？')
-          continue
-        }
-        if (status === 'ok') {
-          const instruction = normalizeMemoryText(result.instruction || '')
-          if (!instruction) {
-            safeSend(job.player, '这句话有点复杂，先不记啦~')
+        try {
+          job.attempts = (job.attempts || 0) + 1
+          modelCallsLeft -= 1
+          const result = await invokeMemoryRewrite(job)
+          const status = result && result.status ? String(result.status).toLowerCase() : null
+          if (!result || status === 'error' || !status) {
+            const retryable = result ? result.retryable !== false : true
+            if (retryable && job.attempts < 3) {
+              state.aiMemory.queue.push(job)
+              await delay(200)
+            } else {
+              safeSend(job.player, '我没能整理好这条记忆，下次再试试~')
+            }
             continue
           }
-          const triggers = uniqueStrings(result.triggers || [])
-          const tags = uniqueStrings(result.tags || [])
-          const summary = result.summary ? normalizeMemoryText(result.summary) : ''
-          const tone = result.tone ? normalizeMemoryText(result.tone) : ''
-          let location = normalizeLocationValue(result.location || result.loc || null)
-          if (!location && job.context && job.context.position) {
-            const hint = {
-              x: job.context.position.x,
-              y: job.context.position.y,
-              z: job.context.position.z,
-              radius: job.context.radius,
-              dim: job.context.dimension
-            }
-            location = normalizeLocationValue(hint) || location
+          if (status === 'reject') {
+            const reason = normalizeMemoryText(result.reason || '')
+            safeSend(job.player, reason ? `这句记不住：${reason}` : '这句记不住喵~')
+            continue
           }
-          const featureRaw = result.feature || result.feature_name || null
-          const greetRaw = result.greet_suffix || result.greetSuffix || null
-          const kindRaw = result.kind || null
-          const extra = { instruction, triggers, tags, summary, tone, fromAI: true }
-          if (location) extra.location = location
-          if (typeof featureRaw === 'string' && featureRaw.trim()) extra.feature = featureRaw
-          if (typeof greetRaw === 'string' && greetRaw.trim()) extra.greetSuffix = greetRaw
-          if (typeof kindRaw === 'string' && kindRaw.trim()) extra.kind = kindRaw
-          addMemoryEntry({
-            text: instruction,
-            author: job.player,
-            source: job.source || 'player',
-            importance: 1,
-            extra
-          })
-          const confirm = summary || (location ? `记住啦（${locationLabel(location)}）` : '记住啦~')
-          safeSend(job.player, confirm)
-          continue
+          if (status === 'clarify') {
+            const q = normalizeMemoryText(result.question || '')
+            safeSend(job.player, q || '要不要再多给我一点提示呀？')
+            continue
+          }
+          if (status === 'ok') {
+            const instruction = normalizeMemoryText(result.instruction || '')
+            if (!instruction) {
+              safeSend(job.player, '这句话有点复杂，先不记啦~')
+              continue
+            }
+            const triggers = uniqueStrings(result.triggers || [])
+            const tags = uniqueStrings(result.tags || [])
+            const summary = result.summary ? normalizeMemoryText(result.summary) : ''
+            const tone = result.tone ? normalizeMemoryText(result.tone) : ''
+            let location = normalizeLocationValue(result.location || result.loc || null)
+            if (!location && job.context && job.context.position) {
+              const hint = {
+                x: job.context.position.x,
+                y: job.context.position.y,
+                z: job.context.position.z,
+                radius: job.context.radius,
+                dim: job.context.dimension
+              }
+              location = normalizeLocationValue(hint) || location
+            }
+            const featureRaw = result.feature || result.feature_name || null
+            const greetRaw = result.greet_suffix || result.greetSuffix || null
+            const kindRaw = result.kind || null
+            const extra = { instruction, triggers, tags, summary, tone, fromAI: true }
+            if (location) extra.location = location
+            if (typeof featureRaw === 'string' && featureRaw.trim()) extra.feature = featureRaw
+            if (typeof greetRaw === 'string' && greetRaw.trim()) extra.greetSuffix = greetRaw
+            if (typeof kindRaw === 'string' && kindRaw.trim()) extra.kind = kindRaw
+            addMemoryEntry({
+              text: instruction,
+              author: job.player,
+              source: job.source || 'player',
+              importance: 1,
+              extra
+            })
+            const confirm = summary || (location ? `记住啦（${locationLabel(location)}）` : '记住啦~')
+            safeSend(job.player, confirm)
+            continue
+          }
+          safeSend(job.player, '这句我还没想明白，下次再试试~')
+        } finally {
+          if (key) memoryCtrl.activeRewriteKeys.delete(key)
         }
-        safeSend(job.player, '这句我还没想明白，下次再试试~')
       }
     } catch (e) {
       log?.warn && log.warn('memory queue error:', e?.message || e)
@@ -1379,6 +1384,7 @@ function createMemoryService ({
     if (!job) return
     if (!Array.isArray(state.aiMemory.queue)) state.aiMemory.queue = []
     const key = memoryRewriteJobKey(job)
+    if (key && memoryCtrl.activeRewriteKeys instanceof Set && memoryCtrl.activeRewriteKeys.has(key)) return
     if (key && state.aiMemory.queue.some(existing => memoryRewriteJobKey(existing) === key)) return
     state.aiMemory.queue.push(job)
     processMemoryQueue().catch(() => {})
