@@ -124,6 +124,21 @@ ${data.currentEmotion}
 请分析以上数据，给出调整建议。`
   }
 
+  function hasIntrospectionEvidence () {
+    try {
+      const fbStats = feedbackCollector?.getStats?.() || {}
+      const recentSignals = feedbackCollector?.getRecentSignals?.(INTROSPECTION_INTERVAL_MS) || []
+      if (Array.isArray(recentSignals) && recentSignals.length > 0) return true
+      if (Number(fbStats.totalFeedback || 0) > 0) return true
+      if (Number(fbStats.totalActions || 0) > 0) return true
+      if (Number(fbStats.positive || 0) > 0) return true
+      if (Number(fbStats.negative || 0) > 0) return true
+      return false
+    } catch {
+      return false
+    }
+  }
+
   async function runIntrospection (reason = 'scheduled') {
     if (running) return null
     ensureState()
@@ -136,7 +151,8 @@ ${data.currentEmotion}
       const prompt = buildIntrospectionPrompt()
       let result = null
 
-      if (aiCall && typeof aiCall === 'function') {
+      const shouldUseLLM = reason !== 'scheduled' || hasIntrospectionEvidence()
+      if (shouldUseLLM && aiCall && typeof aiCall === 'function') {
         try {
           const response = await aiCall({
             systemPrompt: INTROSPECTION_SYSTEM_PROMPT,
