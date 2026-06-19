@@ -111,6 +111,62 @@ test('AI call monitor applies state timeout when callers omit an explicit signal
   assert.equal(state.aiCallMonitor.recent.at(-1).status, 'error')
 })
 
+test('background toggle does not implicitly allow expensive chained LLM sources', async () => {
+  const state = {
+    ai: {
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+
+  await assert.rejects(
+    monitor.request({
+      source: 'people_inspector',
+      kind: 'chat',
+      model: 'deepseek-chat',
+      url: 'https://example.invalid/v1/chat/completions',
+      body: { model: 'deepseek-chat', messages: [] },
+      fetchImpl: async () => ({ ok: true, status: 200 })
+    }),
+    /ai_call_blocked:people_inspector/
+  )
+
+  await assert.rejects(
+    monitor.request({
+      source: 'dialogue_aggregation',
+      kind: 'chat',
+      model: 'deepseek-chat',
+      url: 'https://example.invalid/v1/chat/completions',
+      body: { model: 'deepseek-chat', messages: [] },
+      fetchImpl: async () => ({ ok: true, status: 200 })
+    }),
+    /ai_call_blocked:dialogue_aggregation/
+  )
+
+  assert.equal(state.aiCallMonitor.bySource.people_inspector.blocked, 1)
+  assert.equal(state.aiCallMonitor.bySource.dialogue_aggregation.blocked, 1)
+})
+
+test('explicit allowSources can still enable expensive chained LLM sources', async () => {
+  const state = {
+    ai: {
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'people_inspector'] }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  const res = await monitor.request({
+    source: 'people_inspector',
+    kind: 'chat',
+    model: 'deepseek-chat',
+    url: 'https://example.invalid/v1/chat/completions',
+    body: { model: 'deepseek-chat', messages: [] },
+    fetchImpl: async () => ({ ok: true, status: 200 })
+  })
+
+  assert.equal(res.ok, true)
+  assert.equal(state.aiCallMonitor.bySource.people_inspector.ok, 1)
+})
+
 test('memory rewrite does not retry monitor-blocked background calls', async () => {
   const state = {
     ai: {

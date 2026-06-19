@@ -118,6 +118,70 @@ test('conversation summary permission does not also allow people inspector LLM c
   }
 })
 
+test('background toggle allows conversation summary without chaining people inspector LLM calls', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = { load: () => ({ profiles: {}, commitments: [] }), save: () => {} }
+  const now = () => 2500
+  const people = createPeopleService({ state, peopleStore, now })
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob普通聊天"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    state.aiRecentSeq = 3
+    state.aiRecent.push({ t: now(), user: 'Alice', text: '今天挖矿还挺顺利', kind: 'player', seq: 1 })
+    state.aiRecent.push({ t: now(), user: 'Bob', text: '我也去看看', kind: 'player', seq: 2 })
+    state.aiRecent.push({ t: now(), user: 'bot', text: '注意安全', kind: 'bot', seq: 3 })
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 3,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }, 'test')
+
+    assert.equal(fetchCalls, 1)
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary.ok, 1)
+    assert.equal(state.aiCallMonitor.bySource.people_inspector.blocked, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('conversation summary permission does not also allow dialogue aggregation LLM calls', async () => {
   const nowTs = Date.UTC(2026, 0, 1, 2, 30, 0)
   const hourStart = (() => {

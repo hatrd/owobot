@@ -1,4 +1,9 @@
 const DEFAULT_RECENT_LIMIT = 80
+const DEFAULT_BACKGROUND_SOURCES = [
+  'conversation_summary',
+  'memory_rewrite',
+  'overflow_summary'
+]
 
 function normalizeText (value) {
   return String(value == null ? '' : value).trim()
@@ -39,10 +44,16 @@ function createAiCallMonitor ({ state, log = null, now = () => Date.now() } = {}
     const cfg = ai.externalCalls || {}
     const normalized = normalizeText(source || kind || 'unknown')
     if (cfg.blockAll === true) return false
-    if (cfg.allowBackground === true) return true
     if (normalized === 'main_chat') return true
     const allow = Array.isArray(cfg.allowSources) ? cfg.allowSources.map(normalizeText).filter(Boolean) : []
-    return allow.includes(normalized)
+    if (allow.includes(normalized)) return true
+    if (cfg.allowBackground === true) {
+      const bg = Array.isArray(cfg.backgroundSources)
+        ? cfg.backgroundSources.map(normalizeText).filter(Boolean)
+        : DEFAULT_BACKGROUND_SOURCES
+      return bg.includes(normalized)
+    }
+    return false
   }
 
   function pushRecent (entry) {

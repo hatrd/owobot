@@ -35,7 +35,7 @@
 
 工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；计划模式才发送更宽的工具集。模型把 `tool{JSON}` 作为纯文本输出时，也只能匹配本轮已发送的工具名；无工具 profile 仅兼容 `say{...}` 回复脚本。
 
-外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。所有未显式传入 `AbortSignal` 的 monitor 调用都会继承 `state.ai.timeoutMs`（默认 30000ms），后台请求不会无限挂起；记忆改写遇到调用门控或永久 HTTP 错误时不会重试。需要临时放开时用 `.ai calls background on`，并通过 `.ai calls` / `.ai calls recent` 观察实际调用；如果只想放开会话摘要，不要把 `dialogue_aggregation` 或 `people_inspector` 一并加入 allowSources。
+外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。所有未显式传入 `AbortSignal` 的 monitor 调用都会继承 `state.ai.timeoutMs`（默认 30000ms），后台请求不会无限挂起；记忆改写遇到调用门控或永久 HTTP 错误时不会重试。需要临时放开时用 `.ai calls background on`，它只放开默认后台源（`conversation_summary`、`memory_rewrite`、`overflow_summary`）；`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等二级/主动 LLM 源必须显式加入 `allowSources`，防止一次开关触发连锁调用。用 `.ai calls` / `.ai calls recent` 观察实际调用。
 
 ## 2.1 LLM 输出回放
 
@@ -117,7 +117,7 @@
 | `.ai dialog [clear|full|<username>]` | 查看/清空对话摘要 |
 | `.ai budget show` | 查看预算与用量 |
 | `.ai calls` / `.ai calls recent` | 查看外部 AI 调用计数与最近记录 |
-| `.ai calls background on/off` | 临时允许/禁止非主线外部 AI 调用（默认 off） |
+| `.ai calls background on/off` | 临时允许/禁止默认后台外部 AI 调用（默认 off；不含 people inspector / dialogue aggregation 等二级源） |
 | `.ai clear` | 只清空 `state.aiRecent`（不清 `state.aiContextBus`） |
 
 ## 7. 热重载
