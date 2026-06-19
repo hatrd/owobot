@@ -31,7 +31,9 @@
     └── LLM 调用: classifyIntent → callAI → 工具执行或文本回复
 ```
 
-补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。
+补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。每次请求都会按当前 context profile 的 `maxInputTokens` 对可膨胀上下文段做硬裁剪，保留系统提示、时间元信息和当前用户输入，避免长期记忆/画像/聊天日志增长后把单次请求撑爆。
+
+工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；计划模式才发送更宽的工具集。模型把 `tool{JSON}` 作为纯文本输出时，也只能匹配本轮已发送的工具名；无工具 profile 仅兼容 `say{...}` 回复脚本。
 
 外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。需要临时放开时用 `.ai calls background on`，并通过 `.ai calls` / `.ai calls recent` 观察实际调用。
 
@@ -53,7 +55,7 @@
 
 ### 4.1 真正注入到 LLM 的顺序（`executor.callAI()`）
 
-> 注意：这里说的是“LLM 看到的 messages[]”。动作工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接；`say{...}` 是系统 prompt 明示的短回复脚本语法，若模型把它作为纯文本返回，`executor` 会按精确的 `<工具名>{JSON}` 结构解析成 `say`，避免把 `say{}` 原样发到公屏。
+> 注意：这里说的是“LLM 看到的 messages[]”。动作工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接，且会按结构化 intent 分片发送；`say{...}` 是系统 prompt 明示的短回复脚本语法，若模型把它作为纯文本返回，`executor` 会按精确的 `<工具名>{JSON}` 结构解析成 `say`，避免把 `say{}` 原样发到公屏。
 
 顺序（全部为 system message）：
 
@@ -83,6 +85,8 @@
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
 8. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
+
+这些段在进入 provider 请求前会统一过 `maxInputTokens` 裁剪。`systemPrompt/metaCtx/inlinePrompt` 是保留段；`gameCtx/peopleProfilesCtx/peopleCommitmentsCtx/memoryCtx/contextPrompt` 是可裁剪段，并有各自的默认 token 份额。裁剪标记会留在对应 system message 内，内部预算字段不会发送给 provider。
 
 ### 4.2 如何对齐“真实注入内容”
 

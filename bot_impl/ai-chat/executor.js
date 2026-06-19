@@ -5,6 +5,7 @@ const { buildMemoryQuery } = require('./memory-query')
 const { createAiCallMonitor } = require('./call-monitor')
 
 const TOOL_FUNCTIONS = buildToolFunctionList()
+const TOOL_FUNCTION_MAP = new Map(TOOL_FUNCTIONS.map(def => [String(def?.function?.name || '').trim(), def]).filter(([name]) => name))
 const LONG_TASK_TOOLS = new Set([
   'goto', 'goto_block', 'follow_player', 'hunt_player', 'defend_area', 'defend_player',
   'break_blocks', 'place_blocks', 'light_area', 'collect', 'pickup', 'gather', 'harvest',
@@ -17,6 +18,20 @@ const INLINE_TOOL_NAMES = TOOL_FUNCTIONS
   .map(def => String(def?.function?.name || '').trim())
   .filter(Boolean)
   .sort((a, b) => b.length - a.length)
+const REPLY_TOOL_NAMES = ['say', 'feedback', 'skip']
+const CONTROL_TOOL_NAMES = ['stop_listen', 'reset', 'stop', 'stop_all']
+const MEMORY_TOOL_NAMES = ['write_memory', 'add_commitment']
+const PLAN_TOOL_NAMES = ['plan_mode']
+const OBSERVE_TOOL_NAMES = ['observe_detail', 'observe_players', 'read_book', 'voice_status']
+const MOVEMENT_TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'mount_near', 'mount_player', 'dismount', 'use_item', 'equip', 'toss']
+const RESOURCE_TOOL_NAMES = [
+  'pickup', 'collect', 'gather', 'harvest', 'feed_animals', 'mine_ore',
+  'break_blocks', 'place_blocks', 'light_area', 'deposit', 'deposit_all',
+  'withdraw', 'withdraw_all', 'sort_chests', 'autofish'
+]
+const COMBAT_TOOL_NAMES = ['hunt_player', 'defend_area', 'defend_player', 'cull_hostiles', 'range_attack', 'attack_armor_stand']
+const STATS_TOOL_NAMES = ['query_player_stats', 'query_leaderboard', 'announce_daily_star']
+const PEOPLE_TOOL_NAMES = ['people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
 
 function createChatExecutor ({
   state,
@@ -153,6 +168,146 @@ function createChatExecutor ({
     } catch {
       return ''
     }
+  }
+
+  function stripInternalMessageFields (msg) {
+    if (!msg || typeof msg !== 'object') return msg
+    return {
+      role: msg.role || 'system',
+      content: String(msg.content || '')
+    }
+  }
+
+  function messageTokens (msg) {
+    return estTokensFromText(String(msg?.content || ''))
+  }
+
+  function truncateTextForTokens (text, maxTokens, label = '') {
+    const limit = Math.floor(Number(maxTokens) || 0)
+    const raw = String(text || '')
+    if (limit <= 0 || !raw) return ''
+    if (estTokensFromText(raw) <= limit) return raw
+    const prefix = label ? `[${label} 已按预算截断]\n` : '[已按预算截断]\n'
+    const reserveChars = Math.max(0, (limit * 4) - prefix.length - 8)
+    if (reserveChars <= 0) return prefix.trim()
+    return prefix + raw.slice(0, reserveChars)
+  }
+
+  function fitMessagesToTokenBudget (messages, maxInputTokens) {
+    const budget = Math.floor(Number(maxInputTokens) || 0)
+    const list = Array.isArray(messages) ? messages.filter(Boolean) : []
+    if (budget <= 0) return list.map(stripInternalMessageFields)
+    if (list.reduce((sum, msg) => sum + messageTokens(msg), 0) <= budget) return list.map(stripInternalMessageFields)
+
+    const fixed = list.filter(msg => msg.keep === true)
+    const flexible = list.filter(msg => msg.keep !== true)
+    const fixedTokens = fixed.reduce((sum, msg) => sum + messageTokens(msg), 0)
+    let remaining = Math.max(0, budget - fixedTokens)
+    const out = []
+    for (const msg of list) {
+      if (msg.keep === true) {
+        out.push(msg)
+        continue
+      }
+      const minTokens = Math.max(0, Math.floor(Number(msg.minTokens) || 0))
+      const maxShare = Math.max(minTokens, Math.floor(Number(msg.maxTokens) || 0))
+      const flexibleLeft = flexible.filter(item => !out.includes(item) && item !== msg).length
+      const reservedForLater = flexibleLeft * 24
+      const allowance = Math.max(0, Math.min(
+        maxShare || remaining,
+        remaining - Math.min(remaining, reservedForLater)
+      ))
+      if (allowance <= 0) continue
+      const content = truncateTextForTokens(msg.content, allowance, msg.label || '')
+      if (!content) continue
+      const next = { ...msg, content }
+      out.push(next)
+      remaining = Math.max(0, remaining - messageTokens(next))
+    }
+
+    const finalTokens = out.reduce((sum, msg) => sum + messageTokens(msg), 0)
+    if (finalTokens <= budget) return out.map(stripInternalMessageFields)
+
+    const trimmed = []
+    let used = 0
+    for (const msg of out) {
+      const tok = messageTokens(msg)
+      if (used + tok <= budget) {
+        trimmed.push(msg)
+        used += tok
+        continue
+      }
+      if (msg.keep === true) {
+        const content = truncateTextForTokens(msg.content, Math.max(1, budget - used), msg.label || '')
+        if (content) trimmed.push({ ...msg, content })
+        break
+      }
+    }
+    return trimmed.map(stripInternalMessageFields)
+  }
+
+  function toolListFromNames (names) {
+    const out = []
+    const seen = new Set()
+    for (const nameRaw of names) {
+      const name = String(nameRaw || '').trim()
+      if (!name || seen.has(name)) continue
+      const def = TOOL_FUNCTION_MAP.get(name)
+      if (!def) continue
+      seen.add(name)
+      out.push(def)
+    }
+    return out
+  }
+
+  function selectToolFunctionsForIntent (intent = {}, options = {}) {
+    if (options?.toolProfile === 'all' || options?.allTools === true) return TOOL_FUNCTIONS
+    const topic = String(intent?.topic || '').toLowerCase()
+    const kind = String(intent?.kind || '').toLowerCase()
+    const names = [...REPLY_TOOL_NAMES]
+
+    if (topic === 'plan') {
+      names.push(...CONTROL_TOOL_NAMES, ...OBSERVE_TOOL_NAMES, ...MOVEMENT_TOOL_NAMES, ...RESOURCE_TOOL_NAMES, ...COMBAT_TOOL_NAMES, ...STATS_TOOL_NAMES, ...PEOPLE_TOOL_NAMES, ...MEMORY_TOOL_NAMES, 'voice_speak')
+      return toolListFromNames(names)
+    }
+
+    if (kind === 'command') {
+      names.push(...CONTROL_TOOL_NAMES, ...MOVEMENT_TOOL_NAMES)
+      return toolListFromNames(names)
+    }
+
+    if (topic === 'drops') {
+      names.push('observe_detail', 'pickup', 'collect')
+      return toolListFromNames(names)
+    }
+    if (topic === 'players') {
+      names.push('observe_players')
+      return toolListFromNames(names)
+    }
+    if (topic === 'position') {
+      names.push('observe_detail', 'observe_players')
+      return toolListFromNames(names)
+    }
+    if (topic === 'observe') {
+      names.push('observe_detail')
+      if (kind === 'action') names.push('pickup', 'collect')
+      return toolListFromNames(names)
+    }
+    if (kind === 'action') {
+      names.push(...OBSERVE_TOOL_NAMES, ...MOVEMENT_TOOL_NAMES, ...RESOURCE_TOOL_NAMES)
+      if (['attack', 'combat', 'defend'].includes(topic)) names.push(...COMBAT_TOOL_NAMES)
+    }
+    if (['stats', 'leaderboard'].includes(topic)) names.push(...STATS_TOOL_NAMES)
+    if (topic === 'people' || topic === 'commitment') names.push(...PEOPLE_TOOL_NAMES)
+    if (topic === 'voice') names.push('voice_status', 'voice_speak')
+    if (names.length === REPLY_TOOL_NAMES.length) names.push(...OBSERVE_TOOL_NAMES, ...MEMORY_TOOL_NAMES, ...PLAN_TOOL_NAMES)
+    return toolListFromNames(names)
+  }
+
+  function estimatedRequestTokens (requestMessages, tools) {
+    const msgTokens = estTokensFromText((Array.isArray(requestMessages) ? requestMessages : []).map(m => m.content).join(' '))
+    const toolTokens = Array.isArray(tools) && tools.length ? estTokensFromText(JSON.stringify(tools)) : 0
+    return msgTokens + toolTokens
   }
 
   async function processPendingBatch (batch) {
@@ -387,7 +542,7 @@ function createChatExecutor ({
     if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
     if (/附近|near|around|周围/.test(lower)) intent.nearby = true
     if (/攻击|追|清|守|打|kill|defend|hunt/.test(lower)) intent.kind = 'action'
-    if (/观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
+    if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
     return intent
   }
 
@@ -543,15 +698,25 @@ function createChatExecutor ({
       return out
     }
     const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
+    const maxInputTokens = Number.isFinite(profile.maxInputTokens) && profile.maxInputTokens > 0
+      ? Math.floor(profile.maxInputTokens)
+      : 0
+    const sectionBudget = (name, fallback) => {
+      const raw = profile?.sectionTokenBudget && typeof profile.sectionTokenBudget === 'object'
+        ? Number(profile.sectionTokenBudget[name])
+        : NaN
+      if (Number.isFinite(raw) && raw > 0) return Math.floor(raw)
+      return fallback
+    }
     const baseMessages = [
-      profile.includeSystem === false ? null : { role: 'system', content: systemPrompt() },
-      metaCtx ? { role: 'system', content: metaCtx } : null,
-      gameCtx ? { role: 'system', content: gameCtx } : null,
-      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx } : null,
-      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx } : null,
-      memoryCtx ? { role: 'system', content: memoryCtx } : null,
-      { role: 'system', content: contextPrompt },
-      inlinePrompt ? { role: 'system', content: inlinePrompt } : null
+      profile.includeSystem === false ? null : { role: 'system', content: systemPrompt(), keep: true, label: 'systemPrompt' },
+      metaCtx ? { role: 'system', content: metaCtx, keep: true, label: 'metaCtx' } : null,
+      gameCtx ? { role: 'system', content: gameCtx, label: 'gameCtx', maxTokens: sectionBudget('game', profile.name === 'plan_context' ? 900 : 650) } : null,
+      peopleProfilesCtx ? { role: 'system', content: peopleProfilesCtx, label: 'peopleProfilesCtx', maxTokens: sectionBudget('people', 650) } : null,
+      peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx, label: 'peopleCommitmentsCtx', maxTokens: sectionBudget('commitments', 360) } : null,
+      memoryCtx ? { role: 'system', content: memoryCtx, label: 'memoryCtx', maxTokens: sectionBudget('memory', profile.name === 'plan_context' ? 1100 : 850) } : null,
+      { role: 'system', content: contextPrompt, label: 'contextPrompt', maxTokens: sectionBudget('recent', profile.name === 'plan_context' ? 1400 : 850) },
+      inlinePrompt ? { role: 'system', content: inlinePrompt, keep: true, label: 'userPrompt' } : null
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {
@@ -566,8 +731,10 @@ function createChatExecutor ({
     const maxOut = Math.max(120, Math.min(1024, state.ai.maxTokensPerCall || 1024))
     const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
 
-    async function requestModel (requestMessages, allowTools) {
-      const estIn = estTokensFromText(requestMessages.map(m => m.content).join(' '))
+    async function requestModel (rawRequestMessages, allowTools) {
+      const selectedTools = allowTools ? selectToolFunctionsForIntent(intent, options) : []
+      const requestMessages = fitMessagesToTokenBudget(rawRequestMessages, maxInputTokens)
+      const estIn = estimatedRequestTokens(requestMessages, selectedTools)
       const afford = canAfford(estIn)
       if (state.ai.trace && log?.info) log.info('precheck inTok~=', estIn, 'projCost~=', (afford.proj || 0).toFixed(4), 'rem=', afford.rem)
       if (!afford.ok) {
@@ -580,7 +747,7 @@ function createChatExecutor ({
             model: model || defaults.DEFAULT_MODEL,
             input: requestMessages,
             max_output_tokens: maxOut,
-            ...(allowTools ? { tools: TOOL_FUNCTIONS } : null),
+            ...(selectedTools.length ? { tools: selectedTools } : null),
             ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
           }
         : {
@@ -589,7 +756,7 @@ function createChatExecutor ({
             temperature: 0.2,
             max_tokens: maxOut,
             stream: false,
-            ...(allowTools ? { tools: TOOL_FUNCTIONS } : null)
+            ...(selectedTools.length ? { tools: selectedTools } : null)
           }
 
       const ac = new AbortController()
@@ -624,11 +791,15 @@ function createChatExecutor ({
           const delta = (inTok / 1000) * (state.ai.priceInPerKT || 0) + (outTok / 1000) * (state.ai.priceOutPerKT || 0)
           log.info('usage inTok=', inTok, 'outTok=', outTok, 'cost+=', delta.toFixed(4))
         }
-        const toolCalls = allowTools && typeof H.extractToolCallsFromApiResponse === 'function'
+        const toolCalls = selectedTools.length && typeof H.extractToolCallsFromApiResponse === 'function'
           ? H.extractToolCallsFromApiResponse(data)
           : []
         if (!toolCalls.length) {
-          const inlineToolCall = extractInlineToolCallFromText(reply, allowTools ? INLINE_TOOL_NAMES : ['say'])
+          const selectedToolNames = selectedTools
+            .map(def => String(def?.function?.name || '').trim())
+            .filter(Boolean)
+          const inlineAllowedNames = selectedToolNames.length ? selectedToolNames : ['say']
+          const inlineToolCall = extractInlineToolCallFromText(reply, inlineAllowedNames)
           if (inlineToolCall) {
             if (state.ai.trace && log?.info) log.info('inline text tool ->', inlineToolCall.function?.name)
             return { reply: '', toolCalls: [inlineToolCall], interrupted: false }

@@ -60,7 +60,13 @@ function makeMemory (longText = repeatedText('长期记忆', 2400)) {
   }
 }
 
-function makeExecutor ({ recent, gameText = repeatedText('游戏状态', 1800), memory = makeMemory(), peopleText = repeatedText('玩家画像', 1200) }) {
+function makeExecutor ({
+  recent,
+  gameText = repeatedText('游戏状态', 1800),
+  memory = makeMemory(),
+  peopleText = repeatedText('玩家画像', 1200),
+  assistantContent = '收到'
+}) {
   const calls = []
   const oldFetch = global.fetch
   global.fetch = async (url, init) => {
@@ -69,7 +75,7 @@ function makeExecutor ({ recent, gameText = repeatedText('游戏状态', 1800), 
     return {
       ok: true,
       json: async () => ({
-        choices: [{ message: { role: 'assistant', content: '收到' } }],
+        choices: [{ message: { role: 'assistant', content: assistantContent } }],
         usage: {
           prompt_tokens: H.estTokensFromText((body.messages || body.input || []).map(m => m.content || '').join(' ')),
           completion_tokens: 2
@@ -192,6 +198,51 @@ test('2026-02-14 high-token chat shape is trimmed below 3000 tokens', async () =
   }
 })
 
+test('chat profile enforces maxInputTokens even when memory and people context grow', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 120, chars: 320 })
+  const hugeMemory = makeMemory(repeatedText('膨胀长期记忆', 20000))
+  const harness = makeExecutor({
+    recent,
+    memory: hugeMemory,
+    peopleText: repeatedText('膨胀玩家画像', 16000)
+  })
+  try {
+    await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 你好呀',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    const tokens = H.estTokensFromText(text)
+    assert.ok(tokens <= 3000, `expected chat prompt <= 3000 tokens, got ${tokens}`)
+    assert.match(text, /长期记忆/)
+    assert.match(text, /玩家画像/)
+    assert.match(text, /当前对话玩家/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('intent-scoped tool turns do not execute inline text tools outside the selected schema', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    assistantContent: 'skill_start{"name":"mine"}'
+  })
+  try {
+    const res = await harness.executor.dryDialogue(
+      'kuleizi',
+      'owkowk 看看附近有什么掉落然后捡起来',
+      { withTools: true, maxToolCalls: 2, intent: { topic: 'observe', kind: 'action', nearby: true } }
+    )
+    const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
+    assert.equal(calledTools.includes('skill_start'), false, 'skill_start must not bypass intent-scoped tools via inline text')
+  } finally {
+    harness.restore()
+  }
+})
+
 test('2026-01-31 action/query shape keeps world tools but stays below 5000 tokens', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 80, chars: 240 })
   const harness = makeExecutor({ recent })
@@ -209,6 +260,13 @@ test('2026-01-31 action/query shape keeps world tools but stays below 5000 token
     assert.match(text, /游戏上下文/)
     assert.match(text, /长期记忆/)
     assert.equal(Array.isArray(harness.calls[0].body.tools), true)
+    const toolNames = harness.calls[0].body.tools.map(tool => tool?.function?.name).filter(Boolean)
+    const toolTokens = H.estTokensFromText(JSON.stringify(harness.calls[0].body.tools))
+    assert.ok(toolTokens < 1500, `expected intent-scoped tool schema < 1500 tokens, got ${toolTokens}`)
+    assert.ok(toolNames.includes('observe_detail'), 'observe request should expose observe_detail')
+    assert.ok(toolNames.includes('pickup'), 'drop pickup request should expose pickup')
+    assert.ok(toolNames.includes('say'), 'tool turns should still expose say')
+    assert.equal(toolNames.includes('skill_start'), false, 'unrelated skill tools should not be sent')
     assert.equal((text.match(/<p |<b /g) || []).length <= 16, true)
   } finally {
     harness.restore()

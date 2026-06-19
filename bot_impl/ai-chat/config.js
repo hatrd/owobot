@@ -4,7 +4,7 @@ const DEFAULT_CHAT_PATH = process.env.AI_CHAT_PATH || process.env.DEEPSEEK_CHAT_
 const DEFAULT_PATH = process.env.DEEPSEEK_PATH || DEFAULT_CHAT_PATH
 const DEFAULT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.AI_TIMEOUT_MS || process.env.DEEPSEEK_TIMEOUT_MS)
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 25000
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 30000
 })()
 const DEFAULT_RECENT_COUNT = (() => {
   const raw = Number(process.env.AI_RECENT_COUNT)
