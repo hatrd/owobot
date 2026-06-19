@@ -127,6 +127,8 @@ test('selectContextProfile maps structured intent to explicit context budgets', 
   const action = selectContextProfile({ topic: 'observe', kind: 'action' }, {})
   assert.equal(action.name, 'task_context')
   assert.equal(action.includeGame, true)
+  assert.equal(action.includePeople, false)
+  assert.equal(action.includeCommitments, true)
   assert.equal(action.withTools, true)
   assert.ok(action.maxInputTokens <= 5000)
 

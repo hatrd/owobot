@@ -583,6 +583,37 @@ test('generic action uses a narrow default tool schema without unrelated resourc
   }
 })
 
+test('generic action does not spend prompt tokens on people profile context', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 40, chars: 180 })
+  const hugeProfile = repeatedText('动作请求不需要的人物画像', 6000)
+  const harness = makeExecutor({
+    recent,
+    people: {
+      buildAllProfilesContext: ({ player } = {}) => {
+        assert.equal(player, 'kuleizi')
+        return `<people>\n<profile n="kuleizi">${hugeProfile}</profile>\n</people>`
+      },
+      buildAllCommitmentsContext: ({ player } = {}) => {
+        assert.equal(player, 'kuleizi')
+        return ''
+      }
+    }
+  })
+  try {
+    await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 去基地帮我整理箱子并拿些木头',
+      { topic: 'generic', kind: 'action', nearby: true },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.doesNotMatch(text, /人物画像/)
+    assert.doesNotMatch(text, /<people>/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('plan context keeps broader context but caps log-shaped prompt below plan budget', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 120, chars: 260 })
   const harness = makeExecutor({ recent })

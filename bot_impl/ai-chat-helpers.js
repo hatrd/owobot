@@ -96,7 +96,7 @@ function selectContextProfile (intent = {}, options = {}) {
       includeMeta: true,
       includeGame: true,
       includeMemory: true,
-      includePeople: true,
+      includePeople: false,
       includeCommitments: true,
       includeDialogue: false,
       includeRecent: true,
