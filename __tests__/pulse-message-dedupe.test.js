@@ -43,6 +43,60 @@ function makePulse (overrides = {}) {
   return { state, contextBus, pulse }
 }
 
+function makePulseWithOverflowFetch () {
+  const now = makeNow()
+  const calls = []
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      context: { recentStoreMax: 20 },
+      externalCalls: { allowBackground: true, allowSources: ['main_chat'] }
+    },
+    aiPulse: {},
+    aiRecent: [],
+    aiRecentSeq: 0,
+    aiCallMonitor: {}
+  }
+  const bot = { username: 'bot', chat: () => {} }
+  const contextBus = createContextBus({ state, now })
+  const oldFetch = global.fetch
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    calls.push(body)
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '玩家们讨论了挖矿和补给。' } }]
+      })
+    }
+  }
+  const H = {
+    buildAiUrl: ({ baseUrl, path }) => `${baseUrl}${path}`,
+    isResponsesApiPath: () => false,
+    extractAssistantTextFromApiResponse: (data) => String(data?.choices?.[0]?.message?.content || ''),
+    extractAssistantText: (msg) => String(msg?.content || '')
+  }
+  const pulse = createPulseService({
+    state,
+    bot,
+    log: null,
+    now,
+    H,
+    defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+    canAfford: () => ({ ok: true }),
+    applyUsage: () => {},
+    traceChat: () => {},
+    memory: { dialogue: { maybeRunAggregation: () => {}, queueSummary: () => {} }, longTerm: { persistState: () => {} } },
+    feedbackCollector: null,
+    contextBus
+  })
+  return { state, contextBus, pulse, calls, now, restore: () => { global.fetch = oldFetch } }
+}
+
 test('dedupe: <player> msg from system message does not duplicate chat capture', () => {
   const { contextBus, pulse } = makePulse()
   pulse.captureChat('kuleizi', '不是我干的')
@@ -128,4 +182,29 @@ test('say: pure pauseMs step delays the next message without requiring kind', as
   assert.equal(sent[0].text, '第一句')
   assert.equal(sent[1].text, '第二句')
   assert.ok(sent[1].t - sent[0].t >= 25, `expected pause before second message, got ${sent[1].t - sent[0].t}ms`)
+})
+
+test('overflow summary sends compact input and small output budget', async () => {
+  const { state, pulse, calls, restore } = makePulseWithOverflowFetch()
+  try {
+    const long = '很长的聊天内容'.repeat(80)
+    state.aiRecent = Array.from({ length: 70 }, (_, i) => ({
+      t: Date.now() - (70 - i) * 1000,
+      user: `old${i % 4}`,
+      text: `${i} ${long}`,
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 70
+    pulse.captureChat('player0', `new ${long}`)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.ok(calls.length >= 1)
+    const body = calls[0]
+    assert.ok(Number(body.max_tokens) <= 96, `expected overflow max_tokens <= 96, got ${body.max_tokens}`)
+    const userPrompt = String(body.messages?.find(m => m.role === 'user')?.content || '')
+    assert.ok(userPrompt.length <= 2400, `expected compact overflow prompt <= 2400 chars, got ${userPrompt.length}`)
+    assert.ok(state.aiRecent.length <= 20)
+  } finally {
+    restore()
+  }
 })

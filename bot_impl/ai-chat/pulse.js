@@ -5,6 +5,10 @@ const ACTIVE_CHAT_CLEANUP_MS = 5000
 const PLAYER_CHAT_DEDUPE_MS = 1200
 const CHAT_EVENT_DEDUPE_MS = 250
 const DEATHCHEST_DEDUPE_MS = 8000
+const OVERFLOW_SUMMARY_MAX_LINES = 40
+const OVERFLOW_SUMMARY_MAX_LINE_CHARS = 80
+const OVERFLOW_SUMMARY_MAX_PROMPT_CHARS = 2200
+const OVERFLOW_SUMMARY_MAX_TOKENS = 96
 
 function createPulseService ({
   state,
@@ -380,14 +384,15 @@ function createPulseService ({
         if (!state.ai?.key) return
         if (typeof H?.buildAiUrl !== 'function' || typeof H?.extractAssistantText !== 'function') return
         const sys = '你是对Minecraft服务器聊天内容做摘要的助手。请用中文，20-40字，概括下面聊天要点，保留人名与关键物品/地点。不要换行。'
-        const prompt = overflow.map(r => `${r.user}: ${r.text}`).join(' | ')
+        const prompt = buildOverflowSummaryPrompt(overflow)
+        if (!prompt) return
         const messages = [ { role: 'system', content: sys }, { role: 'user', content: prompt } ]
         const apiPath = state.ai.pathOverride || state.ai.path || defaults.DEFAULT_PATH
         const url = H.buildAiUrl({ baseUrl: state.ai.baseUrl, path: apiPath, defaultBase: defaults.DEFAULT_BASE, defaultPath: defaults.DEFAULT_PATH })
         const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
         const body = useResponses
-          ? { model: state.ai.model || defaults.DEFAULT_MODEL, input: messages, max_output_tokens: 1024 }
-          : { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: 1024, stream: false }
+          ? { model: state.ai.model || defaults.DEFAULT_MODEL, input: messages, max_output_tokens: OVERFLOW_SUMMARY_MAX_TOKENS }
+          : { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: OVERFLOW_SUMMARY_MAX_TOKENS, stream: false }
         try {
           const res = await callMonitor.request({
             source: 'overflow_summary',
@@ -423,6 +428,28 @@ function createPulseService ({
         } catch {}
       } catch {}
     })()
+  }
+
+  function compactOverflowLine (row) {
+    const user = String(row?.user || '??').trim().slice(0, 32) || '??'
+    const text = String(row?.text || '').replace(/\s+/g, ' ').trim()
+    if (!text) return ''
+    const clipped = text.length > OVERFLOW_SUMMARY_MAX_LINE_CHARS
+      ? `${text.slice(0, OVERFLOW_SUMMARY_MAX_LINE_CHARS - 1)}…`
+      : text
+    return `${user}: ${clipped}`
+  }
+
+  function buildOverflowSummaryPrompt (overflow) {
+    const rows = Array.isArray(overflow) ? overflow : []
+    if (!rows.length) return ''
+    const selected = rows.slice(-OVERFLOW_SUMMARY_MAX_LINES)
+    const lines = selected.map(compactOverflowLine).filter(Boolean)
+    if (!lines.length) return ''
+    const omitted = Math.max(0, rows.length - selected.length)
+    const head = omitted ? `省略更早聊天 ${omitted} 条。\n` : ''
+    const body = lines.join(' | ')
+    return `${head}${body}`.slice(0, OVERFLOW_SUMMARY_MAX_PROMPT_CHARS)
   }
 
   function recordBotChat (text, meta = {}) {
