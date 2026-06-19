@@ -554,6 +554,35 @@ test('task profile accounts for tool schema inside the provider input budget', a
   }
 })
 
+test('generic action uses a narrow default tool schema without unrelated resource tools', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 40, chars: 180 })
+  const harness = makeExecutor({ recent })
+  try {
+    await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 去基地帮我整理箱子并拿些木头',
+      { topic: 'generic', kind: 'action', nearby: true },
+      { inlineUserContent: true }
+    )
+    const call = harness.calls[0]
+    assert.equal(Array.isArray(call.body.tools), true)
+    const toolNames = call.body.tools.map(tool => tool?.function?.name).filter(Boolean)
+    assert.ok(toolNames.includes('observe_detail'))
+    assert.ok(toolNames.includes('goto'))
+    assert.ok(toolNames.includes('collect'))
+    assert.ok(toolNames.includes('deposit'))
+    assert.ok(toolNames.includes('withdraw'))
+    assert.equal(toolNames.includes('autofish'), false)
+    assert.equal(toolNames.includes('feed_animals'), false)
+    assert.equal(toolNames.includes('mine_ore'), false)
+    assert.equal(toolNames.includes('harvest'), false)
+    const toolTokens = H.estTokensFromText(JSON.stringify(call.body.tools))
+    assert.ok(toolTokens < 2100, `expected generic action tool schema < 2100 tokens, got ${toolTokens}`)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('plan context keeps broader context but caps log-shaped prompt below plan budget', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 120, chars: 260 })
   const harness = makeExecutor({ recent })

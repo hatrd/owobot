@@ -30,6 +30,13 @@ const RESOURCE_TOOL_NAMES = [
   'break_blocks', 'place_blocks', 'light_area', 'deposit', 'deposit_all',
   'withdraw', 'withdraw_all', 'sort_chests', 'autofish'
 ]
+const DEFAULT_ACTION_TOOL_NAMES = [
+  'observe_detail', 'observe_players',
+  'goto', 'goto_block', 'follow_player',
+  'use_item', 'equip', 'toss',
+  'pickup', 'collect', 'gather',
+  'deposit', 'deposit_all', 'withdraw', 'withdraw_all', 'sort_chests'
+]
 const COMBAT_TOOL_NAMES = ['hunt_player', 'defend_area', 'defend_player', 'cull_hostiles', 'range_attack', 'attack_armor_stand']
 const STATS_TOOL_NAMES = ['query_player_stats', 'query_leaderboard', 'announce_daily_star']
 const PEOPLE_TOOL_NAMES = ['people_commitments_list', 'people_commitments_dedupe', 'people_commitments_clear']
@@ -337,7 +344,7 @@ function createChatExecutor ({
       return toolListFromNames(names)
     }
     if (kind === 'action') {
-      names.push(...OBSERVE_TOOL_NAMES, ...MOVEMENT_TOOL_NAMES, ...RESOURCE_TOOL_NAMES)
+      names.push(...DEFAULT_ACTION_TOOL_NAMES)
       if (['attack', 'combat', 'defend'].includes(topic)) names.push(...COMBAT_TOOL_NAMES)
     }
     if (['stats', 'leaderboard'].includes(topic)) names.push(...STATS_TOOL_NAMES)
