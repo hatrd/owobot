@@ -82,20 +82,26 @@ function makeExecutor ({
   peopleText = repeatedText('玩家画像', 1200),
   people = null,
   assistantContent = '收到',
+  assistantMessages = null,
   contextBus = null
 }) {
   const calls = []
+  const sent = []
+  const queuedMessages = Array.isArray(assistantMessages) ? assistantMessages.slice() : null
   const oldFetch = global.fetch
   global.fetch = async (url, init) => {
     const body = JSON.parse(String(init?.body || '{}'))
     calls.push({ url, body })
+    const message = queuedMessages
+      ? (queuedMessages.shift() || { role: 'assistant', content: assistantContent })
+      : { role: 'assistant', content: assistantContent }
     return {
       ok: true,
       json: async () => ({
-        choices: [{ message: { role: 'assistant', content: assistantContent } }],
+        choices: [{ message }],
         usage: {
           prompt_tokens: H.estTokensFromText((body.messages || body.input || []).map(m => m.content || '').join(' ')),
-          completion_tokens: 2
+          completion_tokens: H.estTokensFromText(String(message.content || ''))
         }
       })
     }
@@ -137,7 +143,7 @@ function makeExecutor ({
     now: () => Date.now(),
     traceChat: () => {},
     pulse: {
-      sendChatReply: () => {},
+      sendChatReply: (username, text, meta = {}) => { sent.push({ username, text, meta }) },
       isUserActive: () => true,
       activateSession: () => {},
       captureAiReply: () => {}
@@ -156,6 +162,7 @@ function makeExecutor ({
   return {
     executor,
     calls,
+    sent,
     restore: () => { global.fetch = oldFetch }
   }
 }
@@ -403,6 +410,49 @@ test('tool loop does not repeat identical tool calls from a stuck model', async 
     const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
     assert.deepEqual(calledTools, ['observe_detail'])
     assert.ok(harness.calls.length <= 2, `expected at most one follow-up model call after observe, got ${harness.calls.length}`)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('deterministic commitment tool halts without a second model call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    assistantMessages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_commitment_1',
+            type: 'function',
+            function: {
+              name: 'add_commitment',
+              arguments: JSON.stringify({ player: 'Alice', action: '帮 Alice 找回家路线' })
+            }
+          }
+        ]
+      },
+      { role: 'assistant', content: '二次总结不应该发生' }
+    ],
+    people: {
+      upsertCommitment: () => ({ ok: true }),
+      buildAllProfilesContext: () => '<people><profile n="Alice">测试玩家</profile></people>',
+      buildAllCommitmentsContext: () => ''
+    }
+  })
+  try {
+    const res = await harness.executor.callAI(
+      'Alice',
+      'owkowk 记得帮我找回家路线',
+      { topic: 'plan', kind: 'chat' },
+      { inlineUserContent: true, contextProfile: 'plan' }
+    )
+    assert.equal(harness.calls.length, 1, `expected commitment tool to avoid follow-up LLM call, got ${harness.calls.length}`)
+    assert.equal(res.reply, '')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /帮 Alice 找回家路线/)
   } finally {
     harness.restore()
   }

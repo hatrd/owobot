@@ -1218,7 +1218,7 @@ function createChatExecutor ({
         contextBus,
         state
       })
-      if (!saved.ok) return result('feedback_save_failed', '我刚才没把这句话记住…你再说一遍？')
+      if (!saved.ok) return halt('feedback_save_failed', '我刚才没把这句话记住…你再说一遍？')
       try { contextBus?.pushEvent('feedback.saved', String(saved.capturedAt || '')) } catch {}
       const inPlanContext = Boolean(ctrl.plan && ctrl.plan.owner === username && (intent?.topic === 'plan' || ctrl.planDriving))
       const terminatePlan = terminatePlanRaw === true ? true : (terminatePlanRaw === false ? false : inPlanContext)
@@ -1230,30 +1230,30 @@ function createChatExecutor ({
       if (terminatePlan) clearPlan('feedback')
 
       const fallbackReply = (speech || outward) ? '' : '我记下来了，回头我研究研究。'
-      return result('feedback_saved', fallbackReply)
+      return halt('feedback_saved', fallbackReply)
     }
     if (toolLower === 'plan_mode') {
       const ok = startPlanMode({ username, goal: payload.args?.goal || content, steps: payload.args?.steps || [] })
-      if (!ok) return result('plan_mode_invalid', '需要提供可执行的计划步骤哦~')
-      return result('plan_mode_started')
+      if (!ok) return halt('plan_mode_invalid', '需要提供可执行的计划步骤哦~')
+      return halt('plan_mode_started')
     }
     if (toolName === 'write_memory') {
       if (speech) pulse.sendChatReply(username, speech, { memoryRefs })
       const normalized = memory.longTerm.normalizeText(payload.args?.text || '')
-      if (!normalized) return result('write_memory_invalid', '没听懂要记什么呢~')
+      if (!normalized) return halt('write_memory_invalid', '没听懂要记什么呢~')
       const importanceRaw = Number(payload.args?.importance)
       const importance = Number.isFinite(importanceRaw) ? importanceRaw : 1
       const author = payload.args?.author ? String(payload.args.author) : username
       const source = payload.args?.source ? String(payload.args.source) : 'ai'
       const added = memory.longTerm.addEntry({ text: normalized, author, source, importance })
       if (state.ai.trace && log?.info) log.info('tool write_memory ->', { text: normalized, author, source, importance, ok: added.ok })
-      if (!added.ok) return result('write_memory_failed', '记忆没有保存下来~')
-      return result('write_memory_saved', speech ? '' : '记住啦~')
+      if (!added.ok) return halt('write_memory_failed', '记忆没有保存下来~')
+      return halt('write_memory_saved', speech ? '' : '记住啦~')
     }
     if (toolName === 'add_commitment') {
       const actionRaw = payload.args?.action
       const action = typeof actionRaw === 'string' ? actionRaw.trim() : ''
-      if (!action) return result('add_commitment_invalid', '没听懂要承诺什么呢~')
+      if (!action) return halt('add_commitment_invalid', '没听懂要承诺什么呢~')
       const player = payload.args?.player ? String(payload.args.player) : username
       const deadlineRaw = payload.args?.deadlineMs
       const deadlineMs = Number.isFinite(deadlineRaw) ? deadlineRaw : null
@@ -1263,14 +1263,14 @@ function createChatExecutor ({
         } catch { return false }
       })()
       if (!storedInPeople) {
-        return result('add_commitment_failed', '现在记不住承诺呢~')
+        return halt('add_commitment_failed', '现在记不住承诺呢~')
       }
       if (contextBus) {
         try { contextBus.pushEvent('commitment.add', `${player}:${action}`) } catch {}
       }
       const reply = speech || H.trimReply(`好，我记下了承诺: ${action}`, replyLimit)
       if (reply) pulse.sendChatReply(username, reply, { reason: 'commitment', toolUsed: 'commitment:add', memoryRefs })
-      return result('add_commitment_saved')
+      return halt('add_commitment_saved')
     }
     if (toolLower === 'say') {
       const ok = pulse.say(username, payload.args || {}, {
