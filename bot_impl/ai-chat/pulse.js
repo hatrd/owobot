@@ -665,14 +665,17 @@ function createPulseService ({
 
   function captureChat (username, message) {
     try {
-      if (!username || username === bot.username) return
+      if (!username || username === bot.username) return false
       const text = String(message || '').trim()
-      if (!text) return
-      if (handleDeathChestNotice(text, username)) return
-      if (seenPlayerChatRecently(username, text, CHAT_EVENT_DEDUPE_MS)) return
+      if (!text) return false
+      if (handleDeathChestNotice(text, username)) return false
+      if (seenPlayerChatRecently(username, text, CHAT_EVENT_DEDUPE_MS)) return false
       markPlayerChatSeen(username, text)
       pushRecentChatEntry(username, text, 'player')
-    } catch {}
+      return true
+    } catch {
+      return false
+    }
   }
 
   function captureSystemMessage (message) {
@@ -685,16 +688,14 @@ function createPulseService ({
         const selfName = String(bot.username || '').trim()
         if (selfName && selfName.toLowerCase() === String(whisperChat.name).toLowerCase()) return
         if (seenPlayerChatRecently(whisperChat.name, whisperChat.content, PLAYER_CHAT_DEDUPE_MS)) return
-        captureChat(whisperChat.name, whisperChat.content)
-        return whisperChat
+        return captureChat(whisperChat.name, whisperChat.content) ? whisperChat : null
       }
       const maybePlayer = parseAngleBracketPlayerChat(plain)
       if (maybePlayer) {
         const selfName = String(bot.username || '').trim()
         if (selfName && selfName.toLowerCase() === String(maybePlayer.name).toLowerCase()) return
         if (seenPlayerChatRecently(maybePlayer.name, maybePlayer.content, PLAYER_CHAT_DEDUPE_MS)) return
-        captureChat(maybePlayer.name, maybePlayer.content)
-        return
+        return captureChat(maybePlayer.name, maybePlayer.content) ? maybePlayer : null
       }
       const lower = plain.toLowerCase()
       const selfName = String(bot.username || '')

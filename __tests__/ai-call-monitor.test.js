@@ -1,13 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { createAiCallMonitor, buildDefaultExternalCallPolicy } from '../bot_impl/ai-chat/call-monitor.js'
 import { prepareAiState } from '../bot_impl/ai-chat/state-init.js'
 import { prepareSharedState } from '../bot_impl/state.js'
 import { createChatExecutor } from '../bot_impl/ai-chat/executor.js'
 import memoryMod from '../bot_impl/ai-chat/memory.js'
+import aiChatMod from '../bot_impl/ai-chat.js'
 import H from '../bot_impl/ai-chat-helpers.js'
 
 const { createMemoryService } = memoryMod
+const { install: installAiChat } = aiChatMod
 
 const defaults = {
   DEFAULT_MODEL: 'deepseek-chat',
@@ -455,6 +458,80 @@ test('executor main chat still runs when background AI calls are disabled', asyn
     assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
     assert.equal(state.aiCallMonitor.counts.blocked, 0)
   } finally {
+    global.fetch = oldFetch
+  }
+})
+
+test('AI chat install processes duplicate player chat events as one billable main chat call', async () => {
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      refsEnabled: false,
+      context: {
+        include: true,
+        recentCount: 4,
+        recentWindowSec: 300,
+        game: { include: false },
+        memory: { include: false }
+      },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      externalCalls: buildDefaultExternalCallPolicy()
+    },
+    aiRecent: [],
+    aiRecentSeq: 0,
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const bot = new EventEmitter()
+  bot.username = 'owkowk'
+  bot.chat = () => {}
+  bot.entity = { position: { x: 0, y: 64, z: 0 } }
+  bot.health = 20
+  bot.food = 20
+  const cleanups = []
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async (_url, init) => {
+    fetchCalls += 1
+    const body = JSON.parse(String(init?.body || '{}'))
+    assert.equal(body.model, 'deepseek-chat')
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '收到' } }],
+        usage: { prompt_tokens: 12, completion_tokens: 2 }
+      })
+    }
+  }
+  try {
+    installAiChat(bot, {
+      on: (event, handler) => bot.on(event, handler),
+      dlog: () => {},
+      state,
+      registerCleanup: fn => cleanups.push(fn),
+      log: null
+    })
+
+    bot.emit('chat', 'kuleizi', 'owk 你好')
+    bot.emit('chat', 'kuleizi', 'owk 你好')
+    await new Promise(resolve => setTimeout(resolve, 80))
+
+    assert.equal(fetchCalls, 1)
+    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
+    assert.equal(state.aiRecent.filter(row => row.kind === 'player').length, 1)
+  } finally {
+    for (const fn of cleanups.reverse()) {
+      try { fn() } catch {}
+    }
     global.fetch = oldFetch
   }
 })

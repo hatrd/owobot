@@ -374,15 +374,17 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   bot.on('auto-look:greet', onAutoLookGreet)
   registerCleanup && registerCleanup(() => { try { bot.off('auto-look:greet', onAutoLookGreet) } catch {} })
 
-  const onChat = (username, message) => { executor.handleChat(username, message).catch(() => {}) }
-  const onChatCapture = (username, message) => pulse.captureChat(username, message)
+  const onChat = (username, message) => {
+    const isNew = pulse.captureChat(username, message)
+    if (!isNew) return
+    executor.handleChat(username, message).catch(() => {})
+  }
   const onMessage = (message) => {
     const parsed = pulse.captureSystemMessage(message)
     if (parsed && parsed.name && parsed.content) {
       executor.handleChat(parsed.name, parsed.content).catch(() => {})
     }
   }
-  on('chat', onChatCapture)
   on('chat', onChat)
   on('message', onMessage)
 
@@ -715,7 +717,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   registerCleanup && registerCleanup(() => {
     try { bot.off('chat', onChat) } catch {}
-    try { bot.off('chat', onChatCapture) } catch {}
     try { bot.off('chat', onFeedbackCapture) } catch {}
     try { bot.off('message', onMessage) } catch {}
     try { bot.off('cli', aiCliHandler) } catch {}
