@@ -134,6 +134,7 @@ test('selectContextProfile maps structured intent to explicit context budgets', 
   assert.equal(chat.includePeople, true)
   assert.equal(chat.withTools, false)
   assert.ok(chat.recentCount <= 12)
+  assert.equal(chat.memoryQueryRecentCount, 0)
   assert.ok(chat.maxInputTokens <= 3000)
 
   const action = selectContextProfile({ topic: 'observe', kind: 'action' }, {})
@@ -142,12 +143,14 @@ test('selectContextProfile maps structured intent to explicit context budgets', 
   assert.equal(action.includePeople, false)
   assert.equal(action.includeCommitments, true)
   assert.equal(action.withTools, true)
+  assert.ok(action.memoryQueryRecentCount > 0)
   assert.ok(action.maxInputTokens <= 5000)
 
   const plan = selectContextProfile({ topic: 'plan', kind: 'chat' }, { contextProfile: 'plan' })
   assert.equal(plan.name, 'plan_context')
   assert.equal(plan.includeGame, true)
   assert.equal(plan.withTools, true)
+  assert.ok(plan.memoryQueryRecentCount >= action.memoryQueryRecentCount)
   assert.ok(plan.maxInputTokens > action.maxInputTokens)
 })
 

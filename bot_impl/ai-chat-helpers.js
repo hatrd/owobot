@@ -83,7 +83,7 @@ function selectContextProfile (intent = {}, options = {}) {
       name: 'chat_light',
       recentCount: 10,
       recentWindowSec: 30 * 60,
-      memoryQueryRecentCount: 4,
+      memoryQueryRecentCount: 0,
       includeSystem: true,
       includeMeta: true,
       includeGame: false,

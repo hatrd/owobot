@@ -378,6 +378,47 @@ test('chat profile scopes people context to the active player', async () => {
   }
 })
 
+test('chat memory query does not let previous topic inject unrelated memory into casual replies', async () => {
+  const now = Date.now()
+  const recent = [
+    { t: now - 20_000, user: 'Alice', text: '之前那个基地坐标我先记一下', kind: 'player' },
+    { t: now - 10_000, user: 'owkowk', text: '好的，坐标已经记下了', kind: 'bot' }
+  ]
+  let memoryQuery = ''
+  const harness = makeExecutor({
+    recent,
+    contextBus: makeRealContextBusFromRecent(recent),
+    memory: {
+      longTerm: {
+        buildContext: async ({ query } = {}) => {
+          memoryQuery = String(query || '')
+          if (/坐标|基地/.test(memoryQuery)) {
+            return { text: '长期记忆:\n1. 基地坐标在 100,64,200', refs: ['base'] }
+          }
+          return { text: '', refs: [] }
+        },
+        extractCommand: () => null,
+        extractForgetCommand: () => null
+      },
+      dialogue: { buildPrompt: () => '' }
+    }
+  })
+  try {
+    await harness.executor.callAI(
+      'Alice',
+      '哈哈',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.doesNotMatch(memoryQuery, /坐标|基地/)
+    assert.doesNotMatch(text, /长期记忆/)
+    assert.doesNotMatch(text, /基地坐标在 100,64,200/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('chat prompt caps repeated bot/tool context bus echoes without dropping player turns', async () => {
   const now = Date.now()
   const recent = []
