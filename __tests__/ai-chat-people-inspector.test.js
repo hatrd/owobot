@@ -255,3 +255,95 @@ test('conversation summary permission does not also allow dialogue aggregation L
     global.fetch = oldFetch
   }
 })
+
+test('explicit people inspector uses compact chat excerpt and small output budget', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'conversation_summary', 'people_inspector'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const peopleStore = { load: () => ({ profiles: {}, commitments: [] }), save: () => {} }
+  const now = () => 3000
+  const people = createPeopleService({ state, peopleStore, now })
+  const bodies = []
+  const oldFetch = global.fetch
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    bodies.push(body)
+    const messages = Array.isArray(body.messages) ? body.messages : body.input
+    const system = String(messages?.[0]?.content || '')
+    const content = system.includes('人物画像/承诺')
+      ? '{"profiles":[],"commitments":[]}'
+      : '{"summary":"Alice和Bob长时间讨论矿洞与补给"}'
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    const long = '这是一段很长的普通聊天内容，用来模拟服务器玩家连续闲聊和讨论补给路线。'.repeat(30)
+    state.aiRecent = Array.from({ length: 100 }, (_, i) => ({
+      t: now() + i,
+      user: i % 2 === 0 ? 'Alice' : 'Bob',
+      text: `${i}: ${long}`,
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 100
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 100,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }, 'test')
+
+    const inspectorBody = bodies.find(body => {
+      const messages = Array.isArray(body.messages) ? body.messages : body.input
+      return String(messages?.[0]?.content || '').includes('人物画像/承诺')
+    })
+    const summaryBody = bodies.find(body => {
+      const messages = Array.isArray(body.messages) ? body.messages : body.input
+      return String(messages?.[0]?.content || '').includes('聊天总结助手')
+    })
+    assert.ok(summaryBody, 'expected conversation_summary request')
+    {
+      const messages = Array.isArray(summaryBody.messages) ? summaryBody.messages : summaryBody.input
+      const userPrompt = String(messages?.find(m => m.role === 'user')?.content || '')
+      assert.ok(userPrompt.length <= 3800, `expected compact conversation_summary prompt <= 3800 chars, got ${userPrompt.length}`)
+    }
+    assert.ok(inspectorBody, 'expected people_inspector request')
+    assert.ok(Number(inspectorBody.max_tokens) <= 256, `expected people_inspector max_tokens <= 256, got ${inspectorBody.max_tokens}`)
+    const messages = Array.isArray(inspectorBody.messages) ? inspectorBody.messages : inspectorBody.input
+    const userPrompt = String(messages?.find(m => m.role === 'user')?.content || '')
+    assert.ok(userPrompt.length <= 4200, `expected compact people_inspector prompt <= 4200 chars, got ${userPrompt.length}`)
+    assert.equal(state.aiCallMonitor.bySource.people_inspector.ok, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})

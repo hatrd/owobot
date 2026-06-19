@@ -28,6 +28,14 @@ const PEOPLE_INSPECTOR_SYSTEM_PROMPT = [
   '- 只输出 JSON，不要输出 Markdown，不要输出解释。'
 ].join('\n')
 
+const SUMMARY_CHAT_MAX_LINES = 48
+const SUMMARY_CHAT_MAX_LINE_CHARS = 100
+const SUMMARY_CHAT_MAX_EXCERPT_CHARS = 3200
+const PEOPLE_INSPECTOR_MAX_TOKENS = 256
+const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
+const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
+const PEOPLE_INSPECTOR_CHAT_MAX_EXCERPT_CHARS = 3000
+
 function createMemoryService ({
   state,
   log,
@@ -1817,6 +1825,66 @@ function createMemoryService ({
     return out
   }
 
+  function clipModelText (raw, maxChars) {
+    const text = normalizeMemoryText(raw || '')
+    if (!text) return ''
+    const limit = Math.floor(Number(maxChars) || 0)
+    if (!Number.isFinite(limit) || limit <= 0 || text.length <= limit) return text
+    return `${text.slice(0, Math.max(0, limit - 1))}…`
+  }
+
+  function compactChatExcerptForModel (lines, {
+    maxLines = SUMMARY_CHAT_MAX_LINES,
+    maxLineChars = SUMMARY_CHAT_MAX_LINE_CHARS,
+    maxExcerptChars = SUMMARY_CHAT_MAX_EXCERPT_CHARS,
+    separator = '\n'
+  } = {}) {
+    const rows = Array.isArray(lines) ? lines.filter(Boolean) : []
+    if (!rows.length) return ''
+    const lineLimit = Math.max(1, Math.floor(Number(maxLines) || SUMMARY_CHAT_MAX_LINES))
+    let selected = rows
+    let omitted = 0
+    if (rows.length > lineLimit) {
+      const headCount = Math.min(8, Math.max(1, Math.floor(lineLimit / 4)))
+      const tailCount = Math.max(1, lineLimit - headCount)
+      omitted = Math.max(0, rows.length - headCount - tailCount)
+      selected = rows.slice(0, headCount)
+        .concat([{ __omitted: true, count: omitted }])
+        .concat(rows.slice(-tailCount))
+    }
+
+    const parts = []
+    for (const row of selected) {
+      if (row?.__omitted) {
+        if (row.count > 0) parts.push(`省略中间聊天 ${row.count} 条`)
+        continue
+      }
+      const user = normalizeActorName(row?.user || '??') || '??'
+      const text = clipModelText(row?.text || '', maxLineChars)
+      if (!text) continue
+      parts.push(`${user}: ${text}`)
+    }
+    if (!parts.length) return ''
+
+    const cap = Math.max(1, Math.floor(Number(maxExcerptChars) || SUMMARY_CHAT_MAX_EXCERPT_CHARS))
+    const out = []
+    let used = 0
+    const sep = String(separator || '\n')
+    for (const part of parts) {
+      const prefix = out.length ? sep : ''
+      const nextLen = prefix.length + part.length
+      if (used + nextLen <= cap) {
+        out.push(part)
+        used += nextLen
+        continue
+      }
+      const remaining = cap - used - prefix.length
+      if (remaining > 8) out.push(clipModelText(part, remaining))
+      break
+    }
+    return out.join(sep)
+  }
+
   function summarizationFallback (entries) {
     const texts = entries
       .map(e => sanitizeSummaryText(e?.summary, { maxLen: 220 }))
@@ -2127,7 +2195,13 @@ function createMemoryService ({
   async function summarizeConversationLines (lines, participants) {
     if (!lines.length) return ''
     const fallback = fallbackConversationSummary(lines, participants)
-    const joined = lines.map(l => `${l.user}: ${l.text}`).join(' | ')
+    const joined = compactChatExcerptForModel(lines, {
+      maxLines: SUMMARY_CHAT_MAX_LINES,
+      maxLineChars: SUMMARY_CHAT_MAX_LINE_CHARS,
+      maxExcerptChars: SUMMARY_CHAT_MAX_EXCERPT_CHARS,
+      separator: ' | '
+    })
+    if (!joined) return fallback
     const sys = '你是Minecraft服务器里的聊天总结助手。请用中文≤40字，概括玩家互动主题，提到参与者名字和关键行动/地点，不要编造。仅输出JSON对象。'
     const messages = [
       { role: 'system', content: sys },
@@ -2306,7 +2380,13 @@ function createMemoryService ({
       }
       return out.length ? out.join('\n') : '(empty)'
     })()
-    const joined = lines.map(l => `${l.user}: ${l.text}`).join('\n')
+    const joined = compactChatExcerptForModel(lines, {
+      maxLines: PEOPLE_INSPECTOR_CHAT_MAX_LINES,
+      maxLineChars: PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS,
+      maxExcerptChars: PEOPLE_INSPECTOR_CHAT_MAX_EXCERPT_CHARS,
+      separator: '\n'
+    })
+    if (!joined) return null
     const user = [
       `玩家：${(participants && participants.length) ? participants.join('、') : (owner || '未知')}`,
       `当前已知人物画像（覆盖写入前的内容；如需更新请保留旧要点）：\n${knownProfiles}`,
@@ -2320,7 +2400,7 @@ function createMemoryService ({
       { role: 'system', content: PEOPLE_INSPECTOR_SYSTEM_PROMPT },
       { role: 'user', content: user }
     ]
-    const raw = await runSummaryModel(messages, 1024, 0.1, 'people_inspector')
+    const raw = await runSummaryModel(messages, PEOPLE_INSPECTOR_MAX_TOKENS, 0.1, 'people_inspector')
     if (!raw) return null
     const jsonText = extractJsonLoose(raw) || raw
     try {
