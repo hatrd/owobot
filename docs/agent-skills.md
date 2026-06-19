@@ -24,7 +24,7 @@
 - 测试输入使用生产 LLM 原始返回，不要改写成理想化 JSON。
 - 断言边界是 bot 实际出站行为，例如 `bot.chat()` 收到的每一条文本。
 - parser 单测只能作为补充；必须有 executor/pulse 级回放。
-- `chatdry` 是真实模型路径验证，不是稳定的解析回归测试。它 timeout 时应单独记录为外部调用问题。
+- `chatdry` 是离线路由/工具边界预览，不调用真实模型；解析回归仍用 fixture，真实模型连通性用独立受控连通性测试。
 
 ## prompt-contract-audit
 

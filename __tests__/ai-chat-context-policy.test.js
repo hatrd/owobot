@@ -418,10 +418,11 @@ test('intent-scoped tool turns do not execute inline text tools outside the sele
     assistantContent: 'skill_start{"name":"mine"}'
   })
   try {
-    const res = await harness.executor.dryDialogue(
+    const res = await harness.executor.callAI(
       'kuleizi',
       'owkowk 看看附近有什么掉落然后捡起来',
-      { withTools: true, maxToolCalls: 2, intent: { topic: 'observe', kind: 'action', nearby: true } }
+      { topic: 'observe', kind: 'action', nearby: true },
+      { withTools: true, maxToolCalls: 2, dryRun: true, dryEvents: [], inlineUserContent: true }
     )
     const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
     assert.equal(calledTools.includes('skill_start'), false, 'skill_start must not bypass intent-scoped tools via inline text')
@@ -437,14 +438,45 @@ test('tool loop does not repeat identical tool calls from a stuck model', async 
     assistantContent: 'observe_detail{"what":"entities","radius":32,"max":20}'
   })
   try {
+    const res = await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 看看附近有什么实体',
+      { topic: 'observe', kind: 'action', nearby: true },
+      { withTools: true, maxToolCalls: 3, dryRun: true, dryEvents: [], inlineUserContent: true }
+    )
+    const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
+    assert.deepEqual(calledTools, ['observe_detail'])
+    assert.ok(harness.calls.length <= 2, `expected at most one follow-up model call after observe, got ${harness.calls.length}`)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('control-plane chat dry does not call the external LLM provider', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    assistantContent: '这不应该被 dryDialogue 请求到'
+  })
+  try {
     const res = await harness.executor.dryDialogue(
       'kuleizi',
       'owkowk 看看附近有什么实体',
       { withTools: true, maxToolCalls: 3, intent: { topic: 'observe', kind: 'action', nearby: true } }
     )
-    const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
-    assert.deepEqual(calledTools, ['observe_detail'])
-    assert.ok(harness.calls.length <= 2, `expected at most one follow-up model call after observe, got ${harness.calls.length}`)
+    assert.equal(harness.calls.length, 0, `expected chat dry to avoid provider fetch, got ${harness.calls.length}`)
+    assert.equal(res.ok, true)
+    assert.equal(res.reply, '')
+    assert.equal(res.intent.topic, 'observe')
+    assert.equal(res.intent.kind, 'action')
+    assert.equal(res.withTools, true)
+    assert.equal(res.maxToolCalls, 3)
+    assert.ok(Array.isArray(res.availableTools))
+    assert.ok(res.availableTools.includes('observe_detail'))
+    assert.ok(res.availableTools.includes('pickup'))
+    assert.equal(res.availableTools.includes('skill_start'), false)
+    assert.ok(Array.isArray(res.dryEvents))
+    assert.equal(res.dryEvents.some(e => e.type === 'provider.call'), false)
   } finally {
     harness.restore()
   }

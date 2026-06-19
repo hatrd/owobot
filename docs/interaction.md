@@ -102,7 +102,7 @@ node scripts/botctl.js schema observe
 node scripts/botctl.js schema tool
 ```
 
-`chatdry` 会走当前运行态配置的真实 LLM 调用，只执行 dry 工具分支、不做真实服内操作；如果线上模型超时，它会返回 `timeout`。排查解析/出站文本类问题时，应优先用测试 fixture 回放生产 LLM 原始返回，再用 `chatdry` 验证真实模型路径是否可用。
+`chatdry` 是完全离线的控制面预览，不会调用真实 LLM，也不会执行服内工具；它返回 intent、context profile、可用工具名、tool schema token 估算和输出预算，用来确认路由/工具边界。排查解析/出站文本类问题时，应优先用测试 fixture 回放生产 LLM 原始返回；真实模型连通性请用独立的受控连通性测试，不要把 `chatdry` 当计费路径验证。
 
 Options:
 

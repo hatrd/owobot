@@ -1418,23 +1418,49 @@ function createChatExecutor ({
     const actor = String(username || 'dry_user').trim() || 'dry_user'
     const text = String(content || '').trim()
     if (!text) return { ok: false, error: 'missing content' }
-    const dryEvents = []
     const intent = (options && typeof options.intent === 'object' && options.intent)
       ? options.intent
       : classifyIntent(text)
     const withTools = options?.withTools !== false
     const maxToolCalls = Number(options?.maxToolCalls)
-    const callOptions = { withTools, dryRun: true, dryEvents, inlineUserContent: true }
-    if (Number.isFinite(maxToolCalls)) callOptions.maxToolCalls = maxToolCalls
-    const res = await callAI(actor, text, intent, callOptions)
+    const profile = typeof H.selectContextProfile === 'function'
+      ? H.selectContextProfile(intent, options)
+      : { name: 'default', withTools: true }
+    const toolsAllowed = withTools && profile.withTools !== false
+    const selectedTools = toolsAllowed ? selectToolFunctionsForIntent(intent, options) : []
+    const availableTools = selectedTools
+      .map(def => String(def?.function?.name || '').trim())
+      .filter(Boolean)
+    const toolSchemaTokens = selectedTools.length ? estTokensFromText(JSON.stringify(selectedTools)) : 0
+    const resolvedMaxToolCalls = Number.isFinite(maxToolCalls)
+      ? Math.max(1, Math.min(16, Math.floor(maxToolCalls)))
+      : (() => {
+          const raw = Number(state.ai?.maxToolCallsPerTurn ?? state.ai?.maxToolCalls ?? 6)
+          return Number.isFinite(raw) ? Math.max(1, Math.min(16, Math.floor(raw))) : 6
+        })()
     return {
       ok: true,
       username: actor,
       content: text,
       intent,
-      reply: String(res?.reply || ''),
-      memoryRefs: Array.isArray(res?.memoryRefs) ? res.memoryRefs : [],
-      dryEvents: Array.isArray(res?.dryEvents) ? res.dryEvents : dryEvents
+      contextProfile: profile.name || 'default',
+      withTools: toolsAllowed,
+      maxToolCalls: resolvedMaxToolCalls,
+      maxOutputTokens: resolveMaxOutputTokens(profile, options),
+      availableTools,
+      estimates: {
+        toolSchemaTokens,
+        maxInputTokens: Number.isFinite(profile.maxInputTokens) ? Math.floor(profile.maxInputTokens) : null
+      },
+      provider: { wouldCall: false },
+      reply: '',
+      memoryRefs: [],
+      dryEvents: [
+        {
+          type: 'provider.skip',
+          reason: 'chat_dry_never_calls_external_llm'
+        }
+      ]
     }
   }
 
