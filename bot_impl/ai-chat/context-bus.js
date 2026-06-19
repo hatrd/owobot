@@ -5,6 +5,7 @@ const STACK_WINDOW_MS = 5000
 const EVENT_DATA_MAX = 100
 const DEFAULT_BOT_XML_MAX_ENTRIES = 3
 const DEFAULT_TOOL_XML_MAX_ENTRIES = 3
+const DEFAULT_PLAYER_XML_MAX_CHARS = 120
 const DEFAULT_BOT_XML_MAX_CHARS = 80
 const DEFAULT_TOOL_XML_MAX_CHARS = 120
 const NUMERIC_STACK_EVENTS = ['heal']
@@ -223,7 +224,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
     const payload = entry?.payload || {}
     switch (type) {
       case 'player':
-        return `<p n="${escapeXml(payload.name)}">${escapeXml(payload.content)}</p>`
+        return `<p n="${escapeXml(payload.name)}">${escapeXml(truncateText(payload.content, view?.playerMaxChars))}</p>`
       case 'server':
         return `<s>${escapeXml(payload.content)}</s>`
       case 'bot': {
@@ -271,6 +272,9 @@ function createContextBus ({ state, now = () => Date.now() }) {
     const botMaxChars = Number.isFinite(Number(options.botMaxChars))
       ? Math.max(0, Math.floor(Number(options.botMaxChars)))
       : DEFAULT_BOT_XML_MAX_CHARS
+    const playerMaxChars = Number.isFinite(Number(options.playerMaxChars))
+      ? Math.max(0, Math.floor(Number(options.playerMaxChars)))
+      : DEFAULT_PLAYER_XML_MAX_CHARS
     const toolMaxChars = Number.isFinite(Number(options.toolMaxChars))
       ? Math.max(0, Math.floor(Number(options.toolMaxChars)))
       : DEFAULT_TOOL_XML_MAX_CHARS
@@ -330,7 +334,7 @@ function createContextBus ({ state, now = () => Date.now() }) {
         prevTs = entry.t
         continue
       }
-      const xml = serializeEntry(entry, { botMaxChars, toolMaxChars })
+      const xml = serializeEntry(entry, { playerMaxChars, botMaxChars, toolMaxChars })
       if (xml) lines.push(xml)
       prevTs = entry.t
     }

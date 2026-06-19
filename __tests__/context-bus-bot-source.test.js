@@ -130,3 +130,17 @@ test('context bus default XML view caps repeated bot/tool echoes while keeping p
   assert.ok(toolLines.length <= 3, `expected at most 3 tool echoes, got ${toolLines.length}`)
   assert.ok(xml.length < 1800, `expected compact context XML, got ${xml.length} chars`)
 })
+
+test('context bus XML view truncates long player turns without mutating raw store', () => {
+  const state = { ai: { context: {} } }
+  const bus = createContextBus({ state, now: () => 1 })
+  const longText = `请帮我看一下 ${'非常长的上下文 '.repeat(40)}最后一句要保留在原始记录里`
+
+  bus.pushPlayer('Alice', longText)
+  const raw = bus.getStore()[0]?.payload?.content
+  const xml = bus.buildXml({ maxEntries: 10, windowSec: 999, includeGaps: false })
+
+  assert.equal(raw, longText.slice(0, 200))
+  assert.match(xml, /…/)
+  assert.ok(xml.length < raw.length + 120, `expected XML view to be compact, got ${xml.length} chars`)
+})

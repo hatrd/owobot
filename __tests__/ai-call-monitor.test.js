@@ -504,7 +504,11 @@ test('executor main chat still runs when background AI calls are disabled', asyn
         touchConversationSession: () => {}
       },
       memory: {
-        longTerm: { buildContext: async () => ({ text: '', refs: [] }) },
+        longTerm: {
+          buildContext: async () => ({ text: '', refs: [] }),
+          extractCommand: () => null,
+          extractForgetCommand: () => null
+        },
         dialogue: { buildPrompt: () => '' }
       },
       people: {
@@ -521,6 +525,111 @@ test('executor main chat still runs when background AI calls are disabled', asyn
     assert.equal(res.reply, '主线正常')
     assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
     assert.equal(state.aiCallMonitor.counts.blocked, 0)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
+test('executor coalesces rapid pending followups into one request interrupt', async () => {
+  let t = 1000
+  const now = () => t
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      context: { include: true, recentCount: 12, recentWindowSec: 300 },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      externalCalls: buildDefaultExternalCallPolicy()
+    },
+    aiPulse: {},
+    aiStats: { perUser: new Map() },
+    aiRecent: [],
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now })
+  const oldFetch = global.fetch
+  let abortCount = 0
+  let releaseFirst = null
+  let calls = 0
+  global.fetch = async (_url, init) => {
+    calls += 1
+    const signal = init?.signal
+    if (calls === 1) {
+      signal?.addEventListener?.('abort', () => { abortCount += 1 })
+      await new Promise(resolve => { releaseFirst = resolve })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: '第一轮' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 2 }
+        })
+      }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '合并回复' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2 }
+      })
+    }
+  }
+  try {
+    const executor = createChatExecutor({
+      state,
+      bot: { username: 'bot', entity: { position: { x: 0, y: 64, z: 0 } } },
+      log: null,
+      actionsMod: { install: () => ({ run: async () => ({ ok: true }), dry: async () => ({ ok: true }) }) },
+      H,
+      defaults,
+      now,
+      traceChat: () => {},
+      pulse: {
+        sendChatReply: () => {},
+        isUserActive: () => true,
+        activateSession: () => {},
+        touchConversationSession: () => {}
+      },
+      memory: {
+        longTerm: {
+          buildContext: async () => ({ text: '', refs: [] }),
+          extractCommand: () => null,
+          extractForgetCommand: () => null
+        },
+        dialogue: { buildPrompt: () => '' }
+      },
+      people: {
+        buildAllProfilesContext: () => '',
+        buildAllCommitmentsContext: () => ''
+      },
+      canAfford: () => ({ ok: true, proj: 0, rem: { day: Infinity, month: Infinity, total: Infinity } }),
+      applyUsage: () => {},
+      buildGameContext: () => '',
+      contextBus: { buildXml: () => '', getStore: () => [] },
+      aiCallMonitor: monitor
+    })
+
+    const first = executor.handleChat('Alice', 'owk 你好')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    t += 100
+    await executor.handleChat('Alice', '还有一句')
+    t += 100
+    await executor.handleChat('Alice', '再补一句')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(abortCount, 1)
+    releaseFirst()
+    await first
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(calls, 2)
   } finally {
     global.fetch = oldFetch
   }

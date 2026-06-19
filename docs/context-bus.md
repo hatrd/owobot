@@ -125,12 +125,13 @@ ContextBus 职责边界：
 **输入端宽容：**
 - 接受任意类型，内部 `String(value ?? '')` 兜底
 - 自动过滤 XML 无效控制字符
-- 截断过长内容（200 chars）
+- 原始事件内容最多保留 200 chars，作为运行时状态真相
 
 **输出端严格：**
 - 始终生成合法 XML
 - 始终保持时序正确
 - 始终包含图例注释
+- 默认 XML 视图会进一步截短过长玩家行、bot/tool echo，只压缩发给 LLM 的 prompt，不改写总线原始记录
 
 ### 4. 渐进增强
 
@@ -204,7 +205,7 @@ bus.pushTool(content)
 bus.pushEvent(type, data)
 
 // 读取
-bus.buildXml({ maxEntries, windowSec, includeGaps })
+bus.buildXml({ maxEntries, windowSec, includeGaps, playerMaxChars, botMaxChars, toolMaxChars })
 bus.getStore()
 bus.clear()
 ```
