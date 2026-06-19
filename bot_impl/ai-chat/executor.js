@@ -1029,8 +1029,7 @@ function createChatExecutor ({
     return false
   }
 
-  function shouldAutoAckTool (toolName, hadSpeech) {
-    if (hadSpeech) return false
+  function shouldHaltAfterActionTool (toolName) {
     return LONG_TASK_TOOLS.has(String(toolName || '').toLowerCase())
   }
 
@@ -1384,8 +1383,6 @@ function createChatExecutor ({
     const hadSpeech = Boolean(speech)
     if (hadSpeech) {
       pulse.sendChatReply(username, speech, { memoryRefs })
-    } else if (shouldAutoAckTool(toolName, hadSpeech)) {
-      pulse.sendChatReply(username, '收到，开始执行~', { reason: 'tool_ack', memoryRefs })
     }
     try { bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
     let res
@@ -1412,7 +1409,9 @@ function createChatExecutor ({
     const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
     const finalText = H.trimReply(baseMsg || fallback, replyLimit)
     if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
-    return result(buildActionResultSummary({ toolName, res }))
+    const summary = buildActionResultSummary({ toolName, res })
+    if (shouldHaltAfterActionTool(toolName)) return halt(summary)
+    return result(summary)
   }
 
   async function dryDialogue (username, content, options = {}) {

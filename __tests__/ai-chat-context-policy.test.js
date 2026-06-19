@@ -493,6 +493,44 @@ test('deterministic commitment tool halts without a second model call', async ()
   }
 })
 
+test('long action tool result halts without a second model call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    assistantMessages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_goto_1',
+            type: 'function',
+            function: {
+              name: 'goto',
+              arguments: JSON.stringify({ x: 1, y: 64, z: 1 })
+            }
+          }
+        ]
+      },
+      { role: 'assistant', content: '二次总结不应该发生' }
+    ]
+  })
+  try {
+    const res = await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 去 1 64 1',
+      { topic: 'generic', kind: 'action', nearby: true },
+      { inlineUserContent: true }
+    )
+    assert.equal(harness.calls.length, 1, `expected long action tool to avoid follow-up LLM call, got ${harness.calls.length}`)
+    assert.equal(res.reply, '')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /ok|完成/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('2026-01-31 action/query shape keeps world tools but stays below 5000 tokens', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 80, chars: 240 })
   const harness = makeExecutor({ recent })
