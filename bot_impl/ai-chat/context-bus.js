@@ -257,8 +257,9 @@ function createContextBus ({ state, now = () => Date.now() }) {
     if (!store.length) return ''
 
     const maxEntries = Number.isFinite(Number(options.maxEntries))
-      ? Math.max(1, Math.floor(Number(options.maxEntries)))
+      ? Math.max(0, Math.floor(Number(options.maxEntries)))
       : 50
+    if (maxEntries <= 0) return ''
     const gapThreshold = Number.isFinite(Number(options.gapThresholdMs))
       ? Math.max(0, Math.floor(Number(options.gapThresholdMs)))
       : GAP_THRESHOLD_MS

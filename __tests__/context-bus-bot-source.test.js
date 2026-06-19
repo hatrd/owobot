@@ -21,6 +21,15 @@ test('context bus serializes LLM bot chat with f="LLM"', () => {
   assert.match(xml, /<b f="LLM">好呀<\/b>/)
 })
 
+test('context bus honors explicit zero maxEntries', () => {
+  const state = { ai: { context: {} } }
+  const bus = createContextBus({ state, now: () => 1 })
+  bus.pushPlayer('Alice', '这条不应注入')
+  bus.pushBotFrom('这条也不应注入', 'LLM')
+  const xml = bus.buildXml({ maxEntries: 0, windowSec: 999, includeGaps: false })
+  assert.equal(xml, '')
+})
+
 test('context bus injects a single gap marker for inactivity >= threshold', () => {
   const state = { ai: { context: {} } }
   let now = 0
