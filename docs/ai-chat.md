@@ -120,6 +120,7 @@
 | `.ai env reload [~/.bashrc]` | source 指定 rc（默认 `~/.bashrc`）后，重载 `DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / AI_MODEL(或 DEEPSEEK_MODEL)` 到运行态（别名：`.ai reloadenv`） |
 | `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`metaCtx/gameCtx/chatCtx`；若可用还会打印 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
 | `.ai context show` | 打印 `state.ai.context` |
+| `.ai context off` | 关闭 `contextPrompt` 的历史聊天注入；只保留当前玩家锚点，profile 不会重新打开它 |
 | `.ai context recent N` | 设置注入 `xmlCtx` 的最大条数；`0` 表示不注入历史聊天，只保留当前玩家锚点 |
 | `.ai context window SEC` | 设置 `xmlCtx` 的窗口秒数（CLI 下限 10s） |
 | `.ai context recentmax N` | 设置 `state.aiRecent` 存储上限（用于会话摘要/部分逻辑） |

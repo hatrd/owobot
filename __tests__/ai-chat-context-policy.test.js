@@ -321,6 +321,33 @@ test('explicit context recent zero disables online context bus history', async (
   }
 })
 
+test('explicit context off disables online context bus history despite profile defaults', async () => {
+  const now = Date.now()
+  const recent = [
+    { t: now, user: 'Alice', text: 'context off 不应注入这条玩家历史', kind: 'player' },
+    { t: now + 1000, user: 'owkowk', text: 'context off 不应注入这条 bot 历史', kind: 'bot' }
+  ]
+  const harness = makeExecutor({
+    recent,
+    contextBus: makeRealContextBusFromRecent(recent),
+    aiContext: { include: false, recentCount: 50, recentWindowSec: 24 * 60 * 60 }
+  })
+  try {
+    await harness.executor.callAI(
+      'Alice',
+      'owkowk 你好',
+      { topic: 'generic', kind: 'chat' },
+      { inlineUserContent: true }
+    )
+    const text = promptTextFromCall(harness.calls[0])
+    assert.match(text, /当前对话玩家: Alice/)
+    assert.doesNotMatch(text, /context off 不应注入/)
+    assert.equal((text.match(/<p |<b /g) || []).length, 0)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('chat profile scopes people context to the active player', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 20, chars: 120 })
   const harness = makeExecutor({

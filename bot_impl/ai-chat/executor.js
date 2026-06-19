@@ -536,7 +536,8 @@ function createChatExecutor ({
       recentCount: defaults.DEFAULT_RECENT_COUNT,
       recentWindowSec: defaults.DEFAULT_RECENT_WINDOW_SEC
     }
-    const includeRecent = profile ? profile.includeRecent !== false : ctx.include !== false
+    if (ctx.include === false) return `当前对话玩家: ${username}`
+    const includeRecent = profile ? profile.includeRecent !== false : true
     if (!includeRecent) return `当前对话玩家: ${username}`
     const profileRecentCount = profile && Number.isFinite(profile.recentCount)
       ? Math.max(0, Math.floor(profile.recentCount))
