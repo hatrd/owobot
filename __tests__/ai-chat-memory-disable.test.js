@@ -8,7 +8,7 @@ test('disableMemories hides matching entries from injected memory context', asyn
   let t = 1000
   const now = () => t
   const state = {
-    ai: { context: { memory: { include: true, max: 6 } } },
+    ai: { context: { memory: { include: true, max: 6, mode: 'keyword' } } },
     aiMemory: { entries: [] }
   }
   const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
@@ -60,4 +60,3 @@ test('extractForgetCommand detects revoke nickname intent', async () => {
   const cmd = memory.longTerm.extractForgetCommand('别叫我变态了')
   assert.deepEqual(cmd, { query: '变态', kind: 'revoke' })
 })
-

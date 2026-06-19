@@ -5,9 +5,9 @@ import H from '../bot_impl/ai-chat-helpers.js'
 
 const { createMemoryService } = memoryMod
 
-test('buildMemoryContext(debug) returns scored memory debug info', async () => {
+test('buildMemoryContext(debug) returns keyword scored memory debug info when legacy mode is explicit', async () => {
   const state = {
-    ai: { context: { memory: { include: true, max: 2 } } },
+    ai: { context: { memory: { include: true, max: 2, mode: 'keyword' } } },
     aiMemory: { entries: [] }
   }
   const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
@@ -33,4 +33,26 @@ test('buildMemoryContext(debug) returns scored memory debug info', async () => {
   assert.equal(res.trace?.mode, 'keyword')
   assert.equal(res.trace?.tokenEstimate, H.estTokensFromText(res.text))
   assert.deepEqual(res.trace?.refs?.slice(0, 2), ['m1', 'm2'])
+})
+
+test('buildMemoryContext(debug) defaults to v2 and keeps unrelated memory out of prompt', async () => {
+  const state = {
+    ai: { context: { memory: { include: true, max: 2 } } },
+    aiMemory: { entries: [] }
+  }
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const defaults = { DEFAULT_BASE: '', DEFAULT_PATH: '', DEFAULT_MODEL: '' }
+  const memory = createMemoryService({ state, memoryStore, defaults, bot: { username: 'bot' } })
+
+  state.aiMemory.entries = [
+    { id: 'm1', text: '基地坐标是 100,64,200', instruction: '基地坐标是 100,64,200', summary: '基地坐标', triggers: ['坐标'], tags: [], count: 2, createdAt: 10, updatedAt: 10, lastAuthor: 'A' }
+  ]
+
+  const res = await memory.longTerm.buildContext({ query: '你好', withRefs: true, debug: true, debugLimit: 5, limit: 2 })
+  assert.equal(typeof res, 'object')
+  assert.equal(res.text, '')
+  assert.deepEqual(res.refs, [])
+  assert.equal(res.debug?.mode, 'v2')
+  assert.equal(res.trace?.mode, 'v2')
+  assert.equal(res.trace?.tokenEstimate, 0)
 })

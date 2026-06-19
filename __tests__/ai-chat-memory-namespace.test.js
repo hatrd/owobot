@@ -24,9 +24,9 @@ test('buildMemoryContext filters player-scoped memories by actor (prevents cross
   assert.doesNotMatch(ctx, /Bob/)
 })
 
-test('buildMemoryContext recent fallback also respects actor-scoped namespaces', async () => {
+test('buildMemoryContext legacy recent fallback also respects actor-scoped namespaces', async () => {
   const state = {
-    ai: { context: { memory: { include: true, max: 2 } } },
+    ai: { context: { memory: { include: true, max: 2, mode: 'keyword' } } },
     aiMemory: { entries: [] }
   }
   const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
@@ -43,4 +43,3 @@ test('buildMemoryContext recent fallback also respects actor-scoped namespaces',
   assert.match(ctx, /Alice/)
   assert.doesNotMatch(ctx, /Bob/)
 })
-

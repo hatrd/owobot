@@ -921,7 +921,7 @@ function createMemoryService ({
 
   function resolveMemoryMode (cfg) {
     const raw = normalizeMemoryText(cfg?.mode).toLowerCase()
-    if (!raw) return 'keyword'
+    if (!raw) return 'v2'
     if (['keyword', 'legacy'].includes(raw)) return 'keyword'
     if (['v2', 'multi', 'multisignal', 'multi-signal'].includes(raw)) return 'v2'
     return 'keyword'
@@ -1300,8 +1300,8 @@ function createMemoryService ({
       }
 
       scored.sort((a, b) => b.score - a.score)
-      const minScore = clamp01(cfg?.minScore ?? 0.3)
-      const minRelevance = clamp01(cfg?.minRelevance ?? 0.06)
+      const minScore = clamp01(cfg?.minScore ?? 0.05)
+      const minRelevance = clamp01(cfg?.minRelevance ?? 0.05)
       const kept = scored.filter(r => r.score >= minScore && r.relevance >= minRelevance)
       selected = dedupeMemoryEntries(kept.map(r => r.entry), limit)
 

@@ -38,7 +38,7 @@ function buildDefaultContext () {
       include: true,
       max: 6,
       storeMax: DEFAULT_MEMORY_STORE_MAX,
-      mode: 'keyword',
+      mode: 'v2',
       // Location context injection (long-term memory is primarily places now)
       location: {
         include: true,
@@ -51,8 +51,8 @@ function buildDefaultContext () {
         preferInsideZone: true
       },
       // v2 thresholds: prefer empty over noisy fallback
-      minScore: 0.3,
-      minRelevance: 0.06,
+      minScore: 0.05,
+      minRelevance: 0.05,
       // v2 scoring weights
       wRelevance: 0.6,
       wRecency: 0.2,

@@ -70,9 +70,9 @@
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
    - Query：`executor.callAI()` 先用 `buildMemoryQuery({ username, message, recentChat, worldHint })` 构造会话语境查询，再传给 `buildContext({ query: memoryQuery, actor: username })`
-   - Mode：`state.ai.context.memory.mode=keyword|v2`
-     - `keyword`：关键词/触发词命中；**无命中时会 recent fallback**（补最近记忆）
+   - Mode：`state.ai.context.memory.mode=v2|keyword`，默认 `v2`
      - `v2`：多信号打分（relevance/recency/importance）+ `minScore/minRelevance` 阈值裁剪 + 去重；**宁缺毋滥，无 recent fallback**
+     - `keyword`：显式 legacy 模式，关键词/触发词命中；**无命中时会 recent fallback**（补最近记忆）
    - 关键可调参（v2）：`minScore/minRelevance`、`wRelevance/wRecency/wImportance`、`recencyHalfLifeDays`、`importanceCountSaturation`
    - Backfill：
      - 命名空间：`node scripts/memory-backfill-v2.js --dry-run` / `--apply`（写入前会生成 `.bak.*`）
