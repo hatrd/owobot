@@ -1077,11 +1077,37 @@ function createChatExecutor ({
       CONTROL_STATE_TOOL_NAMES.includes(low)
   }
 
+  function shouldFinishAfterReadOnlyObservation (toolName, intent = {}) {
+    const low = String(toolName || '').toLowerCase()
+    if (!READ_ONLY_QUERY_TOOL_NAMES.includes(low)) return false
+    const kind = String(intent?.kind || '').toLowerCase()
+    if (kind !== 'action') return true
+    const topic = String(intent?.topic || '').toLowerCase()
+    return ['drops', 'observe', 'players'].includes(topic)
+  }
+
+  function shouldAutoPickupAfterDropObservation (toolName, intent = {}) {
+    const low = String(toolName || '').toLowerCase()
+    if (low !== 'observe_detail') return false
+    const topic = String(intent?.topic || '').toLowerCase()
+    const kind = String(intent?.kind || '').toLowerCase()
+    return topic === 'drops' && kind === 'action'
+  }
+
+  function buildPickupArgsFromObserveArgs (args = {}) {
+    const out = { what: 'drops' }
+    const radius = Number(args?.radius)
+    if (Number.isFinite(radius) && radius > 0) out.radius = radius
+    const max = Number(args?.max)
+    if (Number.isFinite(max) && max > 0) out.max = max
+    const timeoutMs = Number(args?.timeoutMs)
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) out.timeoutMs = timeoutMs
+    return out
+  }
+
   function shouldHaltAfterToolResult (toolName, intent = {}) {
     if (shouldHaltAfterActionTool(toolName)) return true
-    const low = String(toolName || '').toLowerCase()
-    const kind = String(intent?.kind || '').toLowerCase()
-    return READ_ONLY_QUERY_TOOL_NAMES.includes(low) && kind !== 'action'
+    return shouldFinishAfterReadOnlyObservation(toolName, intent)
   }
 
   function shortText (value, limit = 64) {
@@ -1259,6 +1285,17 @@ function createChatExecutor ({
       if (!dryRun || !Array.isArray(dryEvents)) return
       dryEvents.push({ t: now(), type: String(type || ''), ...data })
     }
+    const runActionTool = async (tool, args = {}) => {
+      try { bot.emit('external:begin', { source: 'chat', tool }) } catch {}
+      try {
+        return await actions.run(tool, args || {})
+      } catch (err) {
+        log?.warn && log.warn('tool error', err?.message || err)
+        return { ok: false, msg: '执行失败，请稍后再试~', error: String(err?.message || err) }
+      } finally {
+        try { bot.emit('external:end', { source: 'chat', tool }) } catch {}
+      }
+    }
 
     let toolName = String(payload.tool)
     let toolLower = toolName.toLowerCase()
@@ -1290,6 +1327,20 @@ function createChatExecutor ({
       }
       const summary = buildActionResultSummary({ toolName, res: dryRes })
       appendDry('tool.result', { tool: toolName, result: compactJsonValue(dryRes, 0), summary })
+      if (shouldAutoPickupAfterDropObservation(toolName, intent) && dryRes?.ok !== false && isActionToolAllowed('pickup')) {
+        const pickupArgs = buildPickupArgsFromObserveArgs(payload.args || {})
+        appendDry('tool.call', { tool: 'pickup', args: pickupArgs })
+        let pickupDryRes
+        try {
+          pickupDryRes = actions.dry ? await actions.dry('pickup', pickupArgs) : { ok: false, msg: 'dry-run unsupported' }
+        } catch (err) {
+          pickupDryRes = { ok: false, msg: 'dry-run failed', error: String(err?.message || err) }
+        }
+        const pickupSummary = buildActionResultSummary({ toolName: 'pickup', res: pickupDryRes })
+        appendDry('tool.result', { tool: 'pickup', result: compactJsonValue(pickupDryRes, 0), summary: pickupSummary })
+        return halt([summary, pickupSummary].filter(Boolean).join(' ; '))
+      }
+      if (shouldHaltAfterToolResult(toolName, intent)) return halt(summary)
       return result(summary)
     }
     if (toolLower === 'stop_listen') {
@@ -1435,16 +1486,7 @@ function createChatExecutor ({
     if (hadSpeech) {
       pulse.sendChatReply(username, speech, { memoryRefs })
     }
-    try { bot.emit('external:begin', { source: 'chat', tool: payload.tool }) } catch {}
-    let res
-    try {
-      res = await actions.run(payload.tool, payload.args || {})
-    } catch (err) {
-      log?.warn && log.warn('tool error', err?.message || err)
-      res = { ok: false, msg: '执行失败，请稍后再试~', error: String(err?.message || err) }
-    } finally {
-      try { bot.emit('external:end', { source: 'chat', tool: payload.tool }) } catch {}
-    }
+    let res = await runActionTool(payload.tool, payload.args || {})
     if (state.ai.trace && log?.info) log.info('tool ->', payload.tool, payload.args, res)
     const isObserveTool = toolLower === 'observe_detail' || toolLower === 'observe_players'
     const isVoiceSpeakTool = toolLower === 'voice_speak'
@@ -1461,6 +1503,18 @@ function createChatExecutor ({
     const finalText = H.trimReply(baseMsg || fallback, replyLimit)
     if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     const summary = buildActionResultSummary({ toolName, res })
+    if (shouldAutoPickupAfterDropObservation(toolName, intent) && res?.ok !== false && isActionToolAllowed('pickup')) {
+      const pickupArgs = buildPickupArgsFromObserveArgs(payload.args || {})
+      try { contextBus?.pushEvent('tool.intent', 'pickup') } catch {}
+      const pickupRes = await runActionTool('pickup', pickupArgs)
+      if (state.ai.trace && log?.info) log.info('tool ->', 'pickup', pickupArgs, pickupRes)
+      const pickupBaseMsg = pickupRes && typeof pickupRes === 'object' ? (pickupRes.msg || '') : ''
+      const pickupFallback = pickupRes && pickupRes.ok ? '完成啦~' : '这次没成功！'
+      const pickupText = H.trimReply(pickupBaseMsg || pickupFallback, replyLimit)
+      if (pickupText) pulse.sendChatReply(username, pickupText, { reason: 'tool_pickup', memoryRefs })
+      const pickupSummary = buildActionResultSummary({ toolName: 'pickup', res: pickupRes })
+      return halt([summary, pickupSummary].filter(Boolean).join(' ; '))
+    }
     if (shouldHaltAfterToolResult(toolName, intent)) return halt(summary)
     return result(summary)
   }

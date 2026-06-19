@@ -86,10 +86,12 @@ function makeExecutor ({
   assistantContent = '收到',
   assistantMessages = null,
   contextBus = null,
-  aiContext = null
+  aiContext = null,
+  actionResults = null
 }) {
   const calls = []
   const sent = []
+  const toolRuns = []
   const queuedMessages = Array.isArray(assistantMessages) ? assistantMessages.slice() : null
   const oldFetch = global.fetch
   global.fetch = async (url, init) => {
@@ -133,7 +135,17 @@ function makeExecutor ({
     state,
     bot,
     log: null,
-    actionsMod: { install: () => ({ run: async () => ({ ok: true, msg: 'ok' }), dry: async () => ({ ok: true, msg: 'dry' }), list: () => [] }) },
+    actionsMod: {
+      install: () => ({
+        run: async (tool, args = {}) => {
+          toolRuns.push({ tool, args })
+          if (actionResults && Object.prototype.hasOwnProperty.call(actionResults, tool)) return actionResults[tool]
+          return { ok: true, msg: 'ok' }
+        },
+        dry: async () => ({ ok: true, msg: 'dry' }),
+        list: () => []
+      })
+    },
     H,
     defaults: {
       DEFAULT_MODEL: 'deepseek-chat',
@@ -167,6 +179,7 @@ function makeExecutor ({
     executor,
     calls,
     sent,
+    toolRuns,
     restore: () => { global.fetch = oldFetch }
   }
 }
@@ -595,7 +608,7 @@ test('tool loop does not repeat identical tool calls from a stuck model', async 
     )
     const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
     assert.deepEqual(calledTools, ['observe_detail'])
-    assert.ok(harness.calls.length <= 2, `expected at most one follow-up model call after observe, got ${harness.calls.length}`)
+    assert.equal(harness.calls.length, 1, `expected no follow-up model call after observe, got ${harness.calls.length}`)
   } finally {
     harness.restore()
   }
@@ -821,6 +834,50 @@ test('read-only observe query halts without a second model call', async () => {
     assert.equal(res.reply, '')
     assert.equal(harness.sent.length, 1)
     assert.match(harness.sent[0].text, /ok|完成/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('read-only observe action halts without a second model call before pickup', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      observe_detail: { ok: true, msg: '附近掉落2个: dirt 2.0m, cobblestone 4.5m' },
+      pickup: { ok: true, msg: '拾取2个目标，已完成初始掉落' }
+    },
+    assistantMessages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_observe_action_1',
+            type: 'function',
+            function: {
+              name: 'observe_detail',
+              arguments: JSON.stringify({ what: 'entities', radius: 32, max: 20 })
+            }
+          }
+        ]
+      },
+      { role: 'assistant', content: '二次总结不应该发生' }
+    ]
+  })
+  try {
+    const res = await harness.executor.callAI(
+      'kuleizi',
+      'owkowk 看看附近有什么掉落然后捡起来',
+      { topic: 'drops', kind: 'action', nearby: true },
+      { inlineUserContent: true }
+    )
+    assert.equal(harness.calls.length, 1, `expected observe action to avoid follow-up LLM call, got ${harness.calls.length}`)
+    assert.equal(res.reply, '')
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['observe_detail', 'pickup'])
+    assert.equal(harness.sent.length, 2)
+    assert.match(harness.sent[0].text, /附近掉落/)
+    assert.match(harness.sent[1].text, /拾取2个目标/)
   } finally {
     harness.restore()
   }
