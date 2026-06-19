@@ -33,6 +33,10 @@ const SUMMARY_CHAT_MAX_LINE_CHARS = 100
 const SUMMARY_CHAT_MAX_EXCERPT_CHARS = 3200
 const LOCAL_SUMMARY_MAX_LINES = 4
 const LOCAL_SUMMARY_MAX_CHARS = 240
+const DIALOGUE_AGGREGATION_MAX_TOKENS = 96
+const DIALOGUE_AGGREGATION_MAX_ENTRIES = 24
+const DIALOGUE_AGGREGATION_MAX_SUMMARY_CHARS = 80
+const DIALOGUE_AGGREGATION_MAX_PROMPT_CHARS = 2200
 const PEOPLE_INSPECTOR_MAX_TOKENS = 256
 const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
 const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
@@ -1975,21 +1979,29 @@ function createMemoryService ({
   async function summarizeDialogueWindow (entries, label, tierName) {
     const fallback = summarizationFallback(entries)
     const names = aggregateParticipants(entries)
-    const combined = entries
+    const rows = Array.isArray(entries) ? entries.filter(Boolean) : []
+    const maxEntries = Math.max(1, DIALOGUE_AGGREGATION_MAX_ENTRIES)
+    const selected = rows.length > maxEntries
+      ? rows.slice(0, Math.floor(maxEntries / 3)).concat(rows.slice(-(maxEntries - Math.floor(maxEntries / 3))))
+      : rows
+    const omitted = Math.max(0, rows.length - selected.length)
+    let combined = selected
       .map(e => {
         const who = formatPeopleLabel(e?.participants || [])
-        const text = typeof e?.summary === 'string' ? e.summary.trim() : ''
+        const text = clipModelText(e?.summary || '', DIALOGUE_AGGREGATION_MAX_SUMMARY_CHARS)
         return `${who}: ${text}`.trim()
       })
       .filter(Boolean)
       .join(' | ')
+    if (omitted > 0) combined = `省略中间摘要 ${omitted} 条 | ${combined}`
+    combined = clipModelText(combined, DIALOGUE_AGGREGATION_MAX_PROMPT_CHARS)
     if (!combined) return fallback
     const sys = '你是Minecraft服务器里的记忆整理助手。请压缩给定时间段内的对话摘要，50字以内，强调主要事件、地点和相关玩家。禁止编造。仅输出JSON对象。'
     const messages = [
       { role: 'system', content: sys },
       { role: 'user', content: `时间段：${label}\n层级：${tierName}\n参与者：${names.join('、') || '玩家们'}\n摘要列表：${combined}\n请输出严格JSON：{"summary":"..."}` }
     ]
-    const raw = await runSummaryModel(messages, 120, 0.2, 'dialogue_aggregation')
+    const raw = await runSummaryModel(messages, DIALOGUE_AGGREGATION_MAX_TOKENS, 0.2, 'dialogue_aggregation')
     const summary = parseStructuredSummary(raw, { maxLen: 80 })
     if (!summary) return fallback
     return summary

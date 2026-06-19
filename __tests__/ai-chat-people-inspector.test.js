@@ -328,6 +328,76 @@ test('conversation summary permission does not also allow dialogue aggregation L
   }
 })
 
+test('explicit dialogue aggregation uses compact summary payload and small output budget', async () => {
+  const nowTs = Date.UTC(2026, 0, 1, 2, 30, 0)
+  const hourStart = (() => {
+    const d = new Date(nowTs)
+    d.setMinutes(0, 0, 0)
+    return d.getTime()
+  })()
+  const sourceStart = hourStart - 60 * 60 * 1000
+  const longSummary = '矿洞路线、补给箱、火把标记、怪物处理和回程坐标讨论。'.repeat(6)
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'dialogue_aggregation'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: Array.from({ length: 36 }, (_, i) => ({
+      id: `raw_${i}`,
+      tier: 'raw',
+      participants: [i % 2 === 0 ? 'Alice' : 'Bob'],
+      summary: `${i}: ${longSummary}`,
+      startedAt: sourceStart + i * 60 * 1000,
+      endedAt: sourceStart + i * 60 * 1000 + 30 * 1000
+    })),
+    aiDialogueBuckets: { hourlyEnd: sourceStart },
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const bodies = []
+  const oldFetch = global.fetch
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    bodies.push(body)
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"Alice和Bob整理矿洞路线与补给"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now: () => nowTs })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      now: () => nowTs,
+      aiCallMonitor
+    })
+
+    await memory.dialogue.maybeRunAggregation()
+
+    assert.equal(state.aiCallMonitor.bySource.dialogue_aggregation.ok, 1)
+    assert.equal(bodies.length, 1)
+    const body = bodies[0]
+    assert.ok(Number(body.max_tokens) <= 96, `expected dialogue_aggregation max_tokens <= 96, got ${body.max_tokens}`)
+    const messages = Array.isArray(body.messages) ? body.messages : body.input
+    const userPrompt = String(messages?.find(m => m.role === 'user')?.content || '')
+    assert.ok(userPrompt.length <= 2600, `expected compact dialogue_aggregation prompt <= 2600 chars, got ${userPrompt.length}`)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('explicit people inspector uses compact chat excerpt and small output budget', async () => {
   const state = {
     ai: {
