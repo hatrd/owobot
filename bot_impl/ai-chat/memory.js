@@ -2599,8 +2599,15 @@ function createMemoryService ({
     ))
   }
 
+  function hasRuleResolvedProfileOnlyPatch (patch) {
+    return !!(patch &&
+      Array.isArray(patch.profiles) && patch.profiles.length &&
+      (!Array.isArray(patch.commitments) || !patch.commitments.length))
+  }
+
   function shouldSkipPeopleInspectorLLM (lines, rules) {
-    return shouldUseLocalConversationSummary(lines)
+    if (shouldUseLocalConversationSummary(lines)) return true
+    return hasRuleResolvedProfileOnlyPatch(rules)
   }
 
   async function extractPeoplePatchByLLM (lines, participants, owner, budget = null) {

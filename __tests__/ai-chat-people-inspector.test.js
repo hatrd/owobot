@@ -122,6 +122,87 @@ test('conversation summary permission does not also allow people inspector LLM c
   }
 })
 
+test('rule-based people profile updates skip redundant people inspector LLM call', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'conversation_summary', 'people_inspector'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  let savedPeople = null
+  const peopleStore = {
+    load: () => ({ profiles: {}, commitments: [] }),
+    save: (data) => { savedPeople = JSON.parse(JSON.stringify(data)) }
+  }
+  const now = () => 2250
+  const people = createPeopleService({ state, peopleStore, now })
+  const bodies = []
+  const oldFetch = global.fetch
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    bodies.push(body)
+    const messages = Array.isArray(body.messages) ? body.messages : body.input
+    const system = String(messages?.[0]?.content || '')
+    const content = system.includes('人物画像/承诺')
+      ? '{"profiles":[],"commitments":[]}'
+      : '{"summary":"Alice说明称呼偏好，其他人继续闲聊矿洞路线"}'
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    state.aiRecent = [
+      { t: now(), user: 'Alice', text: '以后叫我 阿猫，今天我们还是先把矿洞入口附近的火把补齐，路牌也重新摆一下。', kind: 'player', seq: 1 },
+      { t: now(), user: 'Bob', text: '我带箱子和木头过去，先把入口旁边的补给点整理出来，别一路丢散物资。', kind: 'player', seq: 2 },
+      { t: now(), user: 'bot', text: '好的，称呼我记住了；矿洞路线和入口补给可以等你们确认后再继续处理。', kind: 'bot', seq: 3 },
+      { t: now(), user: 'Alice', text: '路线先不用复杂规划，今天只是把入口到第一个岔路的标记补齐，其他以后再说。', kind: 'player', seq: 4 },
+      { t: now(), user: 'Bob', text: '那我负责补木牌和箱子，Alice 负责看火把，回程的时候按原路返回就行。', kind: 'player', seq: 5 }
+    ]
+    state.aiRecentSeq = 5
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 5,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice', 'Bob'])
+    }, 'test')
+
+    assert.equal(bodies.length, 1)
+    assert.equal(state.aiCallMonitor.bySource.conversation_summary.ok, 1)
+    assert.equal(state.aiCallMonitor.bySource.people_inspector?.ok || 0, 0)
+    assert.ok(state.aiPeople?.profiles?.Alice?.profile)
+    assert.match(state.aiPeople.profiles.Alice.profile, /阿猫/)
+    assert.match(savedPeople?.profiles?.Alice?.profile || '', /阿猫/)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('conversation summary records provider usage in AI spend accounting', async () => {
   const state = {
     ai: {
