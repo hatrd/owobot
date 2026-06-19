@@ -460,6 +460,74 @@ test('explicit people inspector skips short low-signal dialogue after local summ
   }
 })
 
+test('explicit people inspector skips short rule-resolved dialogue after local patch', async () => {
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'people_inspector'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: [],
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  let savedPeople = null
+  const peopleStore = {
+    load: () => ({ profiles: {}, commitments: [] }),
+    save: (data) => { savedPeople = JSON.parse(JSON.stringify(data)) }
+  }
+  const now = () => 2770
+  const people = createPeopleService({ state, peopleStore, now })
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"profiles":[{"player":"Alice","profile":"重复画像"}],"commitments":[]}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      people,
+      now,
+      aiCallMonitor
+    })
+
+    state.aiRecentSeq = 2
+    state.aiRecent.push({ t: now(), user: 'Alice', text: '以后叫我 阿猫', kind: 'player', seq: 1 })
+    state.aiRecent.push({ t: now(), user: 'bot', text: '好，我记住啦', kind: 'bot', seq: 2 })
+
+    await memory.dialogue.queueSummary('Alice', {
+      startSeq: 1,
+      lastSeq: 2,
+      startedAt: now() - 100,
+      lastAt: now(),
+      participants: new Set(['Alice'])
+    }, 'test')
+
+    assert.equal(fetchCalls, 0)
+    assert.equal(state.aiCallMonitor.bySource.people_inspector?.ok || 0, 0)
+    assert.match(state.aiPeople?.profiles?.Alice?.profile || '', /阿猫/)
+    assert.match(savedPeople?.profiles?.Alice?.profile || '', /阿猫/)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('conversation summary permission does not also allow dialogue aggregation LLM calls', async () => {
   const nowTs = Date.UTC(2026, 0, 1, 2, 30, 0)
   const hourStart = (() => {

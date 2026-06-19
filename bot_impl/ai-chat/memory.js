@@ -2502,7 +2502,6 @@ function createMemoryService ({
   }
 
   function shouldSkipPeopleInspectorLLM (lines, rules) {
-    if (hasPeoplePatchEntries(rules)) return false
     return shouldUseLocalConversationSummary(lines)
   }
 
