@@ -601,6 +601,44 @@ test('local stats tool result halts without a second model call', async () => {
   }
 })
 
+test('local people commitment tool result halts without a second model call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    assistantMessages: [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_people_1',
+            type: 'function',
+            function: {
+              name: 'people_commitments_list',
+              arguments: JSON.stringify({ mode: 'pending', player: 'Alice' })
+            }
+          }
+        ]
+      },
+      { role: 'assistant', content: '二次总结不应该发生' }
+    ]
+  })
+  try {
+    const res = await harness.executor.callAI(
+      'Alice',
+      'owkowk 看一下我还有哪些承诺',
+      { topic: 'commitment', kind: 'chat' },
+      { inlineUserContent: true, contextProfile: 'task' }
+    )
+    assert.equal(harness.calls.length, 1, `expected local people commitment tool to avoid follow-up LLM call, got ${harness.calls.length}`)
+    assert.equal(res.reply, '')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /ok|完成/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('2026-01-31 action/query shape keeps world tools but stays below 5000 tokens', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 80, chars: 240 })
   const harness = makeExecutor({ recent })
