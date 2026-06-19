@@ -535,6 +535,70 @@ test('explicit dialogue aggregation uses compact summary payload and small outpu
   }
 })
 
+test('explicit dialogue aggregation caps external calls per aggregation run', async () => {
+  const nowTs = Date.UTC(2026, 0, 1, 12, 30, 0)
+  const hourStart = (() => {
+    const d = new Date(nowTs)
+    d.setMinutes(0, 0, 0)
+    return d.getTime()
+  })()
+  const firstSourceStart = hourStart - 8 * 60 * 60 * 1000
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'dialogue_aggregation'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: Array.from({ length: 8 }, (_, i) => ({
+      id: `raw_${i}`,
+      tier: 'raw',
+      participants: [i % 2 === 0 ? 'Alice' : 'Bob'],
+      summary: `${i}: 分散在不同小时的矿洞讨论`,
+      startedAt: firstSourceStart + i * 60 * 60 * 1000 + 5 * 60 * 1000,
+      endedAt: firstSourceStart + i * 60 * 60 * 1000 + 10 * 60 * 1000
+    })),
+    aiDialogueBuckets: { hourlyEnd: firstSourceStart },
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"玩家们分时段讨论矿洞安排"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now: () => nowTs })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      now: () => nowTs,
+      aiCallMonitor
+    })
+
+    await memory.dialogue.maybeRunAggregation()
+
+    assert.equal(fetchCalls, 2)
+    assert.equal(state.aiCallMonitor.bySource.dialogue_aggregation.ok, 2)
+    assert.equal(state.aiDialogues.filter(entry => entry.tier === 'raw').length, 6)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('explicit people inspector uses compact chat excerpt and small output budget', async () => {
   const state = {
     ai: {

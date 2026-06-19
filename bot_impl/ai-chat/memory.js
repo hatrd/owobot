@@ -37,6 +37,7 @@ const DIALOGUE_AGGREGATION_MAX_TOKENS = 96
 const DIALOGUE_AGGREGATION_MAX_ENTRIES = 24
 const DIALOGUE_AGGREGATION_MAX_SUMMARY_CHARS = 80
 const DIALOGUE_AGGREGATION_MAX_PROMPT_CHARS = 2200
+const DIALOGUE_AGGREGATION_MAX_MODEL_CALLS_PER_RUN = 2
 const PEOPLE_INSPECTOR_MAX_TOKENS = 256
 const PEOPLE_INSPECTOR_CHAT_MAX_LINES = 48
 const PEOPLE_INSPECTOR_CHAT_MAX_LINE_CHARS = 120
@@ -2025,9 +2026,11 @@ function createMemoryService ({
     return summary
   }
 
-  async function aggregateDialogueWindow ({ sourceTier, targetTier, kind, start, end }) {
+  async function aggregateDialogueWindow ({ sourceTier, targetTier, kind, start, end, budget = null }) {
     const list = entriesInWindow(sourceTier, start, end)
     if (!list.length) return false
+    if (budget && budget.remaining <= 0) return null
+    if (budget) budget.remaining -= 1
     const label = formatBucketLabel(kind, start, end)
     const summary = await summarizeDialogueWindow(list, label, targetTier)
     const participants = aggregateParticipants(list)
@@ -2054,7 +2057,7 @@ function createMemoryService ({
     return true
   }
 
-  async function aggregateHourlyBuckets (nowTs) {
+  async function aggregateHourlyBuckets (nowTs, budget) {
     const buckets = ensureDialogueBucketsState()
     let cursor = Number.isFinite(buckets.hourlyEnd) ? buckets.hourlyEnd : startOfHour(nowTs)
     const target = startOfHour(nowTs)
@@ -2063,7 +2066,8 @@ function createMemoryService ({
       const start = cursor
       const end = cursor + ONE_HOUR_MS
       if (!existingAggregate('hour', start, end)) {
-        const ok = await aggregateDialogueWindow({ sourceTier: 'raw', targetTier: 'hour', kind: 'hour', start, end })
+        const ok = await aggregateDialogueWindow({ sourceTier: 'raw', targetTier: 'hour', kind: 'hour', start, end, budget })
+        if (ok === null) break
         if (ok) changed = true
       }
       cursor = end
@@ -2072,7 +2076,7 @@ function createMemoryService ({
     return changed
   }
 
-  async function aggregateDailyBuckets (nowTs) {
+  async function aggregateDailyBuckets (nowTs, budget) {
     const buckets = ensureDialogueBucketsState()
     let cursor = Number.isFinite(buckets.dailyEnd) ? buckets.dailyEnd : startOfDailyWindow(nowTs)
     const target = startOfDailyWindow(nowTs)
@@ -2081,7 +2085,8 @@ function createMemoryService ({
       const start = cursor
       const end = cursor + ONE_DAY_MS
       if (!existingAggregate('day', start, end)) {
-        const ok = await aggregateDialogueWindow({ sourceTier: 'hour', targetTier: 'day', kind: 'day', start, end })
+        const ok = await aggregateDialogueWindow({ sourceTier: 'hour', targetTier: 'day', kind: 'day', start, end, budget })
+        if (ok === null) break
         if (ok) changed = true
       }
       cursor = end
@@ -2090,7 +2095,7 @@ function createMemoryService ({
     return changed
   }
 
-  async function aggregateWeeklyBuckets (nowTs) {
+  async function aggregateWeeklyBuckets (nowTs, budget) {
     const buckets = ensureDialogueBucketsState()
     let cursor = Number.isFinite(buckets.weeklyEnd) ? buckets.weeklyEnd : startOfWeeklyWindow(nowTs)
     const target = startOfWeeklyWindow(nowTs)
@@ -2099,7 +2104,8 @@ function createMemoryService ({
       const start = cursor
       const end = cursor + ONE_WEEK_MS
       if (!existingAggregate('week', start, end)) {
-        const ok = await aggregateDialogueWindow({ sourceTier: 'day', targetTier: 'week', kind: 'week', start, end })
+        const ok = await aggregateDialogueWindow({ sourceTier: 'day', targetTier: 'week', kind: 'week', start, end, budget })
+        if (ok === null) break
         if (ok) changed = true
       }
       cursor = end
@@ -2129,11 +2135,12 @@ function createMemoryService ({
     if (nowTs - aggregationCtrl.lastCheck < 60 * 1000) return
     aggregationCtrl.running = true
     aggregationCtrl.lastCheck = nowTs
+    const aggregationBudget = { remaining: DIALOGUE_AGGREGATION_MAX_MODEL_CALLS_PER_RUN }
     try {
       let changed = false
-      changed = await aggregateHourlyBuckets(nowTs) || changed
-      changed = await aggregateDailyBuckets(nowTs) || changed
-      changed = await aggregateWeeklyBuckets(nowTs) || changed
+      changed = await aggregateHourlyBuckets(nowTs, aggregationBudget) || changed
+      changed = await aggregateDailyBuckets(nowTs, aggregationBudget) || changed
+      changed = await aggregateWeeklyBuckets(nowTs, aggregationBudget) || changed
       changed = pruneExpiredDialogues(nowTs) || changed
       if (changed) {
         trimConversationStore()
