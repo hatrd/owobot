@@ -40,7 +40,7 @@
 
 外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。所有未显式传入 `AbortSignal` 的 monitor 调用都会继承 `state.ai.timeoutMs`（默认 30000ms），后台请求不会无限挂起；记忆改写遇到调用门控或永久 HTTP 错误时不会重试。后台记忆/摘要类请求在显式放开后也会先走 `.ai budget` 预检，并把 provider usage 写入 `state.aiSpend`，避免预算只统计主线聊天。需要临时放开时用 `.ai calls background on`，它只放开默认后台源（`conversation_summary`、`memory_rewrite`、`overflow_summary`）；`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等二级/主动 LLM 源必须显式加入 `allowSources`，防止一次开关触发连锁调用。用 `.ai calls` / `.ai calls recent` 观察实际调用。
 `auto_look_greet` 即使被显式放开，单个玩家的成功、空回复或 provider 错误都会进入 10 分钟 cooldown，避免附近视线事件在上游异常时每隔几秒重复触发外部请求。
-定时 `introspection` 即使被显式放开，也只有在近期存在反馈信号、正负反馈计数或动作结果样本时才调用模型；无证据样本时直接走本地 fallback，避免空数据定时自省消耗外部调用。手动/紧急自省仍可使用模型。
+`introspection` 即使被显式放开，也只有在近期存在模型级反馈信号（非 `ENGAGEMENT/IGNORE`）或动作结果样本时才调用模型；无证据或仅有冷场/参与度信号时直接走本地 fallback，避免空数据、手动触发或紧急冷场自省消耗外部调用。手动/紧急自省在有显式反馈证据时仍可使用模型。
 
 ## 2.1 LLM 输出回放
 

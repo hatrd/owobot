@@ -125,7 +125,7 @@ ${data.currentEmotion}
 请分析以上数据，给出调整建议。`
   }
 
-  function hasIntrospectionEvidence () {
+  function hasIntrospectionEvidence (reason = 'scheduled') {
     try {
       const fbStats = feedbackCollector?.getStats?.() || {}
       const recentSignals = feedbackCollector?.getRecentSignals?.(INTROSPECTION_INTERVAL_MS) || []
@@ -138,6 +138,7 @@ ${data.currentEmotion}
       if (hasModelWorthySignal) return true
       if (totalActions > 0) return true
       if (signals.length > 0) return false
+      if (reason === 'manual' || reason === 'emergency') return false
       if (Number(fbStats.positive || 0) > 0) return true
       if (Number(fbStats.negative || 0) > 0) return true
       if (Number(fbStats.totalFeedback || 0) > 0) return true
@@ -159,7 +160,7 @@ ${data.currentEmotion}
       const prompt = buildIntrospectionPrompt()
       let result = null
 
-      const shouldUseLLM = reason !== 'scheduled' || hasIntrospectionEvidence()
+      const shouldUseLLM = hasIntrospectionEvidence(reason)
       if (shouldUseLLM && aiCall && typeof aiCall === 'function') {
         try {
           const response = await aiCall({

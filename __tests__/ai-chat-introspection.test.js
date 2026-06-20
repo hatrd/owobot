@@ -99,3 +99,82 @@ test('scheduled introspection still uses LLM when feedback evidence exists', asy
   assert.equal(aiCalls, 1)
   assert.deepEqual(result.insights, ['反馈不错'])
 })
+
+test('manual introspection skips LLM for local-only feedback evidence', async () => {
+  let aiCalls = 0
+  const state = {}
+  const engine = createIntrospectionEngine({
+    state,
+    bot: { username: 'bot' },
+    log: { info: () => {}, debug: () => {}, warn: () => {} },
+    now: () => 2500,
+    feedbackCollector: {
+      getStats: () => ({ totalFeedback: 3, positive: 1, negative: 2, totalActions: 0, feedbackRatio: 0.33 }),
+      getRecentSignals: () => [
+        {
+          isPositive: true,
+          isNegative: false,
+          botMessage: '继续聊天',
+          signals: [{ type: 'ENGAGEMENT', weight: 0.6 }]
+        },
+        {
+          isPositive: false,
+          isNegative: true,
+          botMessage: '有人没回应',
+          signals: [{ type: 'IGNORE', weight: -0.3 }]
+        },
+        {
+          isPositive: false,
+          isNegative: true,
+          botMessage: '又没人回应',
+          signals: [{ type: 'IGNORE', weight: -0.3 }]
+        }
+      ]
+    },
+    memory: { longTerm: { getStats: () => ({ totalEntries: 0, effectivenessRate: 0 }) } },
+    memoryStore: { saveEvolution: () => {} },
+    aiCall: async () => {
+      aiCalls += 1
+      return '{"insights":["不应调用外部模型"],"behavior_adjustments":[],"memory_reinforcements":[],"memory_decays":[],"emotional_state":"content","self_narrative":"x"}'
+    }
+  })
+
+  const result = await engine.runIntrospection('manual')
+
+  assert.equal(aiCalls, 0)
+  assert.ok(result)
+  assert.match(result.insights.join('\n'), /忽视|中性|负面/)
+})
+
+test('manual introspection still uses LLM for explicit feedback evidence', async () => {
+  let aiCalls = 0
+  const state = {}
+  const engine = createIntrospectionEngine({
+    state,
+    bot: { username: 'bot' },
+    log: { info: () => {}, debug: () => {}, warn: () => {} },
+    now: () => 3000,
+    feedbackCollector: {
+      getStats: () => ({ totalFeedback: 1, positive: 1, negative: 0, totalActions: 0, feedbackRatio: 1 }),
+      getRecentSignals: () => [
+        {
+          isPositive: true,
+          isNegative: false,
+          botMessage: '谢谢你',
+          signals: [{ type: 'THANKS', weight: 1 }]
+        }
+      ]
+    },
+    memory: { longTerm: { getStats: () => ({ totalEntries: 0, effectivenessRate: 0 }) } },
+    memoryStore: { saveEvolution: () => {} },
+    aiCall: async () => {
+      aiCalls += 1
+      return '{"insights":["感谢反馈"],"behavior_adjustments":[],"memory_reinforcements":[],"memory_decays":[],"emotional_state":"content","self_narrative":"继续保持"}'
+    }
+  })
+
+  const result = await engine.runIntrospection('manual')
+
+  assert.equal(aiCalls, 1)
+  assert.deepEqual(result.insights, ['感谢反馈'])
+})
