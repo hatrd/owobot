@@ -869,6 +869,27 @@ test('local people commitment tool result halts without a second model call', as
   }
 })
 
+test('obvious people commitment list chat is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      people_commitments_list: { ok: true, msg: 'Alice 待办承诺: 1. 帮 Alice 找回家路线' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('Alice', 'owkowk 看一下我还有哪些承诺')
+    assert.equal(harness.calls.length, 0, `expected commitment list query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['people_commitments_list'])
+    assert.equal(harness.toolRuns[0].args.mode, 'pending')
+    assert.equal(harness.toolRuns[0].args.player, 'Alice')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /待办承诺/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('read-only observe query halts without a second model call', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({

@@ -648,6 +648,7 @@ function createChatExecutor ({
     if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
     if (/排行榜|排行|榜单|leaderboard|rank(ing)?/.test(lower)) intent.topic = 'leaderboard'
     if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
+    if (/承诺|待办|todo|promise|commitment/.test(lower)) intent.topic = 'commitment'
     if (/附近|near|around|周围/.test(lower)) intent.nearby = true
     if (/攻击|追击|清怪|清理|守护|防守|击杀|打怪|打架|kill|defend|hunt/.test(lower)) intent.kind = 'action'
     if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
@@ -758,14 +759,14 @@ function createChatExecutor ({
     return null
   }
 
-  function inferLocalReadOnlyQuery (text, intent = {}) {
+  function inferLocalReadOnlyQuery (text, intent = {}, username = '') {
     const raw = String(text || '')
     const lower = raw.toLowerCase()
     const kind = String(intent?.kind || '').toLowerCase()
     if (kind === 'action') return null
     const topic = String(intent?.topic || '').toLowerCase()
     const asksInfo = /看看|看下|查(看|一下)?|检查|读(一下)?|列(一下|出)?|状态|status|read|list|show|check/.test(lower)
-    if (!asksInfo && topic !== 'voice') return null
+    if (!asksInfo && topic !== 'voice' && topic !== 'commitment') return null
 
     if (/语音|voice/.test(lower) && /状态|status|连接|connected|enabled|可用|开着|打开/.test(lower)) {
       return { tool: 'voice_status', args: {}, topic: 'voice' }
@@ -773,6 +774,17 @@ function createChatExecutor ({
     if (/书|书本|book|written_book|writable_book/.test(lower)) {
       const list = /列(一下|出)?|有哪些|有什么|列表|list|show/.test(lower)
       return { tool: 'read_book', args: { list }, topic: 'book' }
+    }
+    if (topic === 'commitment' || /承诺|待办|todo|promise|commitment/.test(lower)) {
+      const mode = /全部|所有|all/.test(lower)
+        ? 'all'
+        : (/完成|已做|关闭|closed|done|failed/.test(lower) ? 'closed' : 'pending')
+      const player = extractPlayerNameForStats(text, username)
+      return {
+        tool: 'people_commitments_list',
+        args: { mode, player },
+        topic: 'commitment'
+      }
     }
     return null
   }
@@ -1884,7 +1896,7 @@ function createChatExecutor ({
             topic
           }
     } else {
-      const readOnly = inferLocalReadOnlyQuery(text, intent)
+      const readOnly = inferLocalReadOnlyQuery(text, intent, username)
       if (readOnly) local = readOnly
       else {
         const observe = inferLocalObserveQuery(text, intent)
