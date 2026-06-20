@@ -13,6 +13,7 @@ const OVERFLOW_LOW_SIGNAL_MAX_LINES = 80
 const OVERFLOW_LOW_SIGNAL_MAX_CHARS = 960
 const OVERFLOW_LOW_SIGNAL_MAX_UNIQUE_TEXTS = 8
 const OVERFLOW_LOW_SIGNAL_SHORT_TEXT_CHARS = 8
+const OVERFLOW_SUMMARY_STALE_GRACE_MS = 1000
 
 function createPulseService ({
   state,
@@ -406,6 +407,31 @@ function createPulseService ({
     scheduleOverflowSummary(overflow)
   }
 
+  function ensureOverflowSummaryState () {
+    if (!state.aiPulse || typeof state.aiPulse !== 'object') state.aiPulse = {}
+    if (!state.aiPulse.overflowSummary || typeof state.aiPulse.overflowSummary !== 'object') {
+      state.aiPulse.overflowSummary = {}
+    }
+    return state.aiPulse.overflowSummary
+  }
+
+  function overflowSummaryIsActive () {
+    const ctrl = ensureOverflowSummaryState()
+    if (ctrl.active !== true) return false
+    const startedAt = Number(ctrl.startedAt)
+    const configuredTimeout = Number(state.ai?.timeoutMs)
+    const defaultTimeout = Number(defaults?.DEFAULT_TIMEOUT_MS)
+    const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : (Number.isFinite(defaultTimeout) && defaultTimeout > 0 ? defaultTimeout : 30000)
+    const staleMs = Math.max(5000, Math.floor(timeoutMs + OVERFLOW_SUMMARY_STALE_GRACE_MS))
+    if (Number.isFinite(startedAt) && (now() - startedAt) <= staleMs) return true
+    ctrl.active = false
+    ctrl.startedAt = 0
+    ctrl.staleClearedAt = now()
+    return false
+  }
+
   function scheduleOverflowSummary (overflow) {
     if (!overflow || overflow.length < 20) return
     const localSummary = buildLocalLowSignalOverflowSummary(overflow)
@@ -413,6 +439,14 @@ function createPulseService ({
       saveOverflowSummary(localSummary)
       return
     }
+    if (overflowSummaryIsActive()) {
+      const fallback = buildLocalOverflowSummary(overflow)
+      if (fallback) saveOverflowSummary(fallback)
+      return
+    }
+    const overflowCtrl = ensureOverflowSummaryState()
+    overflowCtrl.active = true
+    overflowCtrl.startedAt = now()
     ;(async () => {
       try {
         if (!state.ai?.key) return
@@ -461,6 +495,10 @@ function createPulseService ({
           if (state.ai.trace && log?.info) log.info('long summary ->', sum)
         } catch {}
       } catch {}
+      finally {
+        overflowCtrl.active = false
+        overflowCtrl.finishedAt = now()
+      }
     })()
   }
 
@@ -503,6 +541,31 @@ function createPulseService ({
     const who = participants.length ? participants.join('、') : '玩家们'
     const sample = Array.from(unique).slice(0, 4).join(' / ')
     return `${who} 闲聊：${sample}`.slice(0, 80)
+  }
+
+  function buildLocalOverflowSummary (overflow) {
+    const rows = Array.isArray(overflow) ? overflow.filter(Boolean) : []
+    if (!rows.length) return ''
+    const participants = []
+    const seen = new Set()
+    for (const row of rows) {
+      const name = String(row?.user || '').trim().slice(0, 32)
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      participants.push(name)
+      if (participants.length >= 4) break
+    }
+    const samples = rows
+      .slice(-4)
+      .map(row => String(row?.text || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .map(text => text.length > 18 ? `${text.slice(0, 17)}…` : text)
+      .filter(Boolean)
+    if (!samples.length) return ''
+    const who = participants.length ? participants.join('、') : '玩家们'
+    return `${who} 聊天溢出：${samples.join(' / ')}`.slice(0, 80)
   }
 
   function compactOverflowLine (row) {

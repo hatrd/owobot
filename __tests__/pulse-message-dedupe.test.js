@@ -64,17 +64,19 @@ function makePulseWithOverflowFetch (overrides = {}) {
   const bot = { username: 'bot', chat: () => {} }
   const contextBus = createContextBus({ state, now })
   const oldFetch = global.fetch
-  global.fetch = async (_url, init) => {
-    const body = JSON.parse(String(init?.body || '{}'))
-    calls.push(body)
-    return {
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { role: 'assistant', content: '玩家们讨论了挖矿和补给。' } }],
-        usage: { prompt_tokens: 77, completion_tokens: 12 }
-      })
-    }
-  }
+  global.fetch = typeof overrides.fetch === 'function'
+    ? (url, init) => overrides.fetch(url, init, calls)
+    : async (_url, init) => {
+        const body = JSON.parse(String(init?.body || '{}'))
+        calls.push(body)
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { role: 'assistant', content: '玩家们讨论了挖矿和补给。' } }],
+            usage: { prompt_tokens: 77, completion_tokens: 12 }
+          })
+        }
+      }
   const H = {
     buildAiUrl: ({ baseUrl, path }) => `${baseUrl}${path}`,
     isResponsesApiPath: () => false,
@@ -257,6 +259,68 @@ test('overflow summary records provider usage in AI spend accounting', async () 
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.deepEqual(usage, { inTok: 77, outTok: 12 })
   } finally {
+    restore()
+  }
+})
+
+test('overflow summary avoids a second provider call while one summary is active', async () => {
+  let markFetchStarted = null
+  let releaseFetch = null
+  const fetchStarted = new Promise(resolve => {
+    markFetchStarted = resolve
+    releaseFetch = () => {}
+  })
+  const { state, pulse, calls, restore } = makePulseWithOverflowFetch({
+    fetch: async (_url, init, calls) => {
+      const body = JSON.parse(String(init?.body || '{}'))
+      calls.push(body)
+      if (calls.length === 1) {
+        markFetchStarted()
+        await new Promise(resolve => { releaseFetch = resolve })
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: '玩家们讨论了挖矿和补给。' } }],
+          usage: { prompt_tokens: 77, completion_tokens: 12 }
+        })
+      }
+    }
+  })
+  try {
+    const long = '高信号聊天内容，包含矿洞路线、补给、坐标和分工。'.repeat(20)
+    state.aiRecent = Array.from({ length: 70 }, (_, i) => ({
+      t: Date.now() - (70 - i) * 1000,
+      user: `old${i % 4}`,
+      text: `${i} ${long}`,
+      kind: 'player',
+      seq: i + 1
+    }))
+    state.aiRecentSeq = 70
+    pulse.captureChat('player0', `new ${long}`)
+    await fetchStarted
+
+    state.aiRecent = Array.from({ length: 70 }, (_, i) => ({
+      t: Date.now() + i * 1000,
+      user: `later${i % 4}`,
+      text: `${i} 第二批${long}`,
+      kind: 'player',
+      seq: 100 + i
+    }))
+    state.aiRecentSeq = 170
+    pulse.captureChat('player1', `later ${long}`)
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    assert.equal(calls.length, 1, 'active overflow summary should suppress another provider request')
+    assert.equal(state.aiCallMonitor.bySource.overflow_summary.started, 1)
+    assert.ok(state.aiLong.length >= 1, 'second overflow should still be compacted locally')
+
+    releaseFetch()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(calls.length, 1)
+    assert.equal(state.aiCallMonitor.bySource.overflow_summary.ok, 1)
+  } finally {
+    if (releaseFetch) releaseFetch()
     restore()
   }
 })
