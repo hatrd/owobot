@@ -758,6 +758,25 @@ function createChatExecutor ({
     return null
   }
 
+  function inferLocalReadOnlyQuery (text, intent = {}) {
+    const raw = String(text || '')
+    const lower = raw.toLowerCase()
+    const kind = String(intent?.kind || '').toLowerCase()
+    if (kind === 'action') return null
+    const topic = String(intent?.topic || '').toLowerCase()
+    const asksInfo = /看看|看下|查(看|一下)?|检查|读(一下)?|列(一下|出)?|状态|status|read|list|show|check/.test(lower)
+    if (!asksInfo && topic !== 'voice') return null
+
+    if (/语音|voice/.test(lower) && /状态|status|连接|connected|enabled|可用|开着|打开/.test(lower)) {
+      return { tool: 'voice_status', args: {}, topic: 'voice' }
+    }
+    if (/书|书本|book|written_book|writable_book/.test(lower)) {
+      const list = /列(一下|出)?|有哪些|有什么|列表|list|show/.test(lower)
+      return { tool: 'read_book', args: { list }, topic: 'book' }
+    }
+    return null
+  }
+
   async function runLocalActionTool (tool, args = {}) {
     try {
       return await actions.run(tool, args || {})
@@ -1865,8 +1884,12 @@ function createChatExecutor ({
             topic
           }
     } else {
-      const observe = inferLocalObserveQuery(text, intent)
-      if (observe) local = { ...observe, topic: 'observe' }
+      const readOnly = inferLocalReadOnlyQuery(text, intent)
+      if (readOnly) local = readOnly
+      else {
+        const observe = inferLocalObserveQuery(text, intent)
+        if (observe) local = { ...observe, topic: 'observe' }
+      }
     }
     if (!local) return false
     const { tool, args } = local

@@ -928,6 +928,46 @@ test('obvious nearby entity query is answered locally without a provider call', 
   }
 })
 
+test('obvious book read query is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      read_book: { ok: true, msg: '书本[1] OwO Diary: 第一页内容' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 读一下背包里的书')
+    assert.equal(harness.calls.length, 0, `expected book query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['read_book'])
+    assert.equal(harness.toolRuns[0].args.list, false)
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /OwO Diary/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('obvious voice status query is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      voice_status: { ok: true, msg: '语音状态: connected' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 检查语音状态')
+    assert.equal(harness.calls.length, 0, `expected voice status query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['voice_status'])
+    assert.deepEqual(harness.toolRuns[0].args, {})
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /connected/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('read-only observe action halts without a second model call before pickup', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({
