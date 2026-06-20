@@ -699,6 +699,59 @@ function createChatExecutor ({
     return 'score'
   }
 
+  function inferLocalObserveQuery (text, intent = {}) {
+    const raw = String(text || '')
+    const lower = raw.toLowerCase()
+    const kind = String(intent?.kind || '').toLowerCase()
+    if (kind === 'action') return null
+    const topic = String(intent?.topic || '').toLowerCase()
+    const asksInfo = /有(什么|啥|哪些)|看看|看下|查(看|一下)?|列(一下|出)?|多少|谁|what|list|show|observe|look/.test(lower)
+    if (!asksInfo && topic !== 'players' && topic !== 'drops' && topic !== 'observe') return null
+
+    const radius = /容器|箱子|chest|barrel|container|熔炉|炉子|furnace/.test(lower) ? 20 : 32
+    const max = 20
+    if (topic === 'players' || /玩家|谁在线|谁.*附近|附近.*谁|online|player/.test(lower)) {
+      return { tool: 'observe_players', args: { radius, max: 20 } }
+    }
+    if (topic === 'drops' || /掉落|战利|loot|drop/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'entities', radius, max } }
+    }
+    if (/背包|物品栏|inventory/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'inventory', max: 30 } }
+    }
+    if (/容器|箱子|盒子|潜影盒|shulker|chest|barrel|container|熔炉|炉子|furnace|hopper/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'containers', radius, max: 8 } }
+    }
+    if (/牌子|告示牌|sign/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'signs', radius, max: 8 } }
+    }
+    if (/猫|cat/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'cats', radius, max: 10 } }
+    }
+    if (/牛|cow/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'cows', radius, max: 10 } }
+    }
+    if (/动物|animal/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'animals', radius, max } }
+    }
+    if (/怪物|敌对|hostile|mob/.test(lower)) {
+      return { tool: 'observe_detail', args: { what: 'hostiles', radius, max } }
+    }
+    if (/实体|生物|附近|周围|near|around|entity|entities/.test(lower) || topic === 'observe') {
+      return { tool: 'observe_detail', args: { what: 'entities', radius, max } }
+    }
+    return null
+  }
+
+  async function runLocalActionTool (tool, args = {}) {
+    try {
+      return await actions.run(tool, args || {})
+    } catch (err) {
+      log?.warn && log.warn('local query tool error', err?.message || err)
+      return { ok: false, msg: '查询失败，请稍后再试~', error: String(err?.message || err) }
+    }
+  }
+
   function clearPlan (reason = 'unknown') {
     if (ctrl.planTimer) {
       try { clearTimeout(ctrl.planTimer) } catch {}
@@ -1775,32 +1828,46 @@ function createChatExecutor ({
 
   async function maybeHandleLocalQuery ({ username, text, raw, source, intent, reasonTag }) {
     const topic = String(intent?.topic || '').toLowerCase()
-    if (topic !== 'stats' && topic !== 'leaderboard') return false
-    const tool = topic === 'leaderboard' ? 'query_leaderboard' : 'query_player_stats'
-    const args = topic === 'leaderboard'
-      ? {
-          type: inferLeaderboardType(text),
-          period: inferStatsPeriod(text),
-          limit: 5
-        }
-      : {
-          name: extractPlayerNameForStats(text, username),
-          period: inferPlayerStatsPeriod(text),
-          type: inferStatsType(text)
-        }
+    let local = null
+    if (topic === 'stats' || topic === 'leaderboard') {
+      local = topic === 'leaderboard'
+        ? {
+            tool: 'query_leaderboard',
+            args: {
+              type: inferLeaderboardType(text),
+              period: inferStatsPeriod(text),
+              limit: 5
+            },
+            topic
+          }
+        : {
+            tool: 'query_player_stats',
+            args: {
+              name: extractPlayerNameForStats(text, username),
+              period: inferPlayerStatsPeriod(text),
+              type: inferStatsType(text)
+            },
+            topic
+          }
+    } else {
+      const observe = inferLocalObserveQuery(text, intent)
+      if (observe) local = { ...observe, topic: 'observe' }
+    }
+    if (!local) return false
+    const { tool, args } = local
     try { contextBus?.pushEvent('tool.intent', tool) } catch {}
-    let res
-    try {
-      res = await actions.run(tool, args)
-    } catch (err) {
-      log?.warn && log.warn('local query tool error', err?.message || err)
-      res = { ok: false, msg: '查询失败，请稍后再试~', error: String(err?.message || err) }
+    const res = await runLocalActionTool(tool, args)
+    if (tool === 'observe_detail' || tool === 'observe_players') {
+      try {
+        const line = buildObserveContextLine({ toolName: tool, args, res })
+        if (line) contextBus?.pushTool?.(line)
+      } catch {}
     }
     const msg = res && typeof res === 'object' ? (res.msg || res.error || '') : ''
     const textOut = H.trimReply(msg || (res?.ok === false ? '查询失败' : '查到了'), state.ai?.maxReplyLen)
     if (textOut) {
       pulse.sendChatReply(username, textOut, {
-        reason: `${reasonTag || source || 'chat'}_local_${topic}`,
+        reason: `${reasonTag || source || 'chat'}_local_${local.topic || topic || 'query'}`,
         toolUsed: tool
       })
     }

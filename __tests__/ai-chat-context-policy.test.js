@@ -907,6 +907,27 @@ test('read-only observe query halts without a second model call', async () => {
   }
 })
 
+test('obvious nearby entity query is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({
+    recent,
+    actionResults: {
+      observe_detail: { ok: true, msg: '附近实体1个(半径32): cat「方头耄耋」 12.9m' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 附近有什么实体')
+    assert.equal(harness.calls.length, 0, `expected obvious nearby entity query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['observe_detail'])
+    assert.equal(harness.toolRuns[0].args.what, 'entities')
+    assert.equal(harness.toolRuns[0].args.radius, 32)
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /附近实体1个/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('read-only observe action halts without a second model call before pickup', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({
