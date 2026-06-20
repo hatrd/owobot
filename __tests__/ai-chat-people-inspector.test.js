@@ -1023,6 +1023,79 @@ test('explicit dialogue aggregation caps external calls per aggregation run', as
   }
 })
 
+test('local dialogue aggregation does not consume external model-call budget', async () => {
+  const nowTs = Date.UTC(2026, 0, 1, 8, 30, 0)
+  const hourStart = (() => {
+    const d = new Date(nowTs)
+    d.setMinutes(0, 0, 0)
+    return d.getTime()
+  })()
+  const firstSourceStart = hourStart - 4 * 60 * 60 * 1000
+  const lowSummaries = ['Alice 聊天：嗯嗯 / 好', 'Bob 聊天：哈哈 / 在的', 'Alice 聊天：好 / 嗯嗯']
+  const richSummary = '矿洞路线、补给箱、火把标记、怪物处理和回程坐标讨论。'.repeat(3)
+  const rows = []
+  for (let hour = 0; hour < 4; hour++) {
+    for (let i = 0; i < 4; i++) {
+      const ts = firstSourceStart + hour * 60 * 60 * 1000 + i * 10 * 60 * 1000
+      rows.push({
+        id: `raw_budget_${hour}_${i}`,
+        tier: 'raw',
+        participants: [i % 2 === 0 ? 'Alice' : 'Bob'],
+        summary: hour < 2 ? lowSummaries[i % lowSummaries.length] : `${hour}-${i}: ${richSummary}`,
+        startedAt: ts,
+        endedAt: ts + 30 * 1000
+      })
+    }
+  }
+  const state = {
+    ai: {
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      externalCalls: { allowBackground: false, allowSources: ['main_chat', 'dialogue_aggregation'] }
+    },
+    aiLong: [],
+    aiMemory: { entries: [] },
+    aiDialogues: rows,
+    aiDialogueBuckets: { hourlyEnd: firstSourceStart },
+    aiRecent: [],
+    aiRecentSeq: 0
+  }
+
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  let fetchCalls = 0
+  const oldFetch = global.fetch
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '{"summary":"玩家们整理矿洞路线和补给"}' } }]
+      })
+    }
+  }
+  const aiCallMonitor = createAiCallMonitor({ state, now: () => nowTs })
+  try {
+    const memory = createMemoryService({
+      state,
+      memoryStore,
+      defaults: { DEFAULT_BASE: 'https://example.invalid', DEFAULT_PATH: '/v1/chat/completions', DEFAULT_MODEL: 'deepseek-chat' },
+      bot: { username: 'bot' },
+      now: () => nowTs,
+      aiCallMonitor
+    })
+
+    await memory.dialogue.maybeRunAggregation()
+
+    assert.equal(fetchCalls, 2, 'local low-signal windows should not spend the two-call model budget')
+    assert.equal(state.aiCallMonitor.bySource.dialogue_aggregation.ok, 2)
+    assert.equal(state.aiDialogues.filter(entry => entry.tier === 'hour').length, 4)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('explicit people inspector uses compact chat excerpt and small output budget', async () => {
   const state = {
     ai: {

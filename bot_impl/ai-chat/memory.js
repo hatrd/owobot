@@ -2085,7 +2085,7 @@ function createMemoryService ({
     }
   }
 
-  async function summarizeDialogueWindow (entries, label, tierName) {
+  async function summarizeDialogueWindow (entries, label, tierName, budget = null) {
     const fallback = summarizationFallback(entries)
     const localLowSignal = localLowSignalDialogueAggregation(entries)
     if (localLowSignal) return localLowSignal
@@ -2107,6 +2107,7 @@ function createMemoryService ({
     if (omitted > 0) combined = `省略中间摘要 ${omitted} 条 | ${combined}`
     combined = clipModelText(combined, DIALOGUE_AGGREGATION_MAX_PROMPT_CHARS)
     if (!combined) return fallback
+    if (!consumeModelBudget(budget)) return null
     const sys = '你是Minecraft服务器里的记忆整理助手。请压缩给定时间段内的对话摘要，50字以内，强调主要事件、地点和相关玩家。禁止编造。仅输出JSON对象。'
     const messages = [
       { role: 'system', content: sys },
@@ -2121,10 +2122,9 @@ function createMemoryService ({
   async function aggregateDialogueWindow ({ sourceTier, targetTier, kind, start, end, budget = null }) {
     const list = entriesInWindow(sourceTier, start, end)
     if (!list.length) return false
-    if (budget && budget.remaining <= 0) return null
-    if (budget) budget.remaining -= 1
     const label = formatBucketLabel(kind, start, end)
-    const summary = await summarizeDialogueWindow(list, label, targetTier)
+    const summary = await summarizeDialogueWindow(list, label, targetTier, budget)
+    if (summary == null) return null
     const participants = aggregateParticipants(list)
     const entry = {
       id: `agg_${targetTier}_${start}`,
