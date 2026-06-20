@@ -87,7 +87,9 @@ function makeExecutor ({
   assistantMessages = null,
   contextBus = null,
   aiContext = null,
-  actionResults = null
+  actionResults = null,
+  aiOverrides = null,
+  aiStats = null
 }) {
   const calls = []
   const sent = []
@@ -121,8 +123,10 @@ function makeExecutor ({
       model: 'deepseek-chat',
       context: aiContext || { include: true, recentCount: 50, recentWindowSec: 24 * 60 * 60 },
       maxTokensPerCall: 1024,
-      maxToolCalls: 6
+      maxToolCalls: 6,
+      ...(aiOverrides || {})
     },
+    aiStats: aiStats || { global: [], perUser: new Map() },
     aiRecent: recent,
     aiSpend: {
       day: { start: Date.now(), inTok: 0, outTok: 0, cost: 0 },
@@ -778,6 +782,30 @@ test('obvious player stats chat is answered locally without a provider call', as
     assert.equal(harness.toolRuns[0].args.name, 'Alice')
     assert.equal(harness.sent.length, 1)
     assert.match(harness.sent[0].text, /Alice 总计/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('local player stats query bypasses main chat rate limit without provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const nowTs = Date.now()
+  const harness = makeExecutor({
+    recent,
+    aiOverrides: { limits: { userPerMin: 1, notify: true } },
+    aiStats: { global: [nowTs], perUser: new Map([['kuleizi', [nowTs]]]) },
+    actionResults: {
+      query_player_stats: { ok: true, msg: 'Alice 总计: 在线1h20m, 发言12条, 死亡0次' }
+    }
+  })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 查一下 Alice 的统计')
+    assert.equal(harness.calls.length, 0, `expected local stats query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['query_player_stats'])
+    assert.equal(harness.toolRuns[0].args.name, 'Alice')
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /Alice 总计/)
+    assert.doesNotMatch(harness.sent[0].text, /太快/)
   } finally {
     harness.restore()
   }

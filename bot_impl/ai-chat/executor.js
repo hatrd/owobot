@@ -1737,6 +1737,10 @@ function createChatExecutor ({
       scheduleFollowupFlush()
       return
     }
+    const intent = classifyIntent(text)
+    if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
+    const acted = await maybeHandleLocalQuery({ username, text, raw, source, intent, reasonTag })
+    if (acted) return
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
@@ -1745,10 +1749,6 @@ function createChatExecutor ({
       return
     }
     try { state.aiPulse.lastFlushAt = now() } catch {}
-    const intent = classifyIntent(text)
-    if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
-    const acted = await maybeHandleLocalQuery({ username, text, raw, source, intent, reasonTag })
-    if (acted) return
     ctrl.busy = true
     ctrl.lastUser = username
     try {
