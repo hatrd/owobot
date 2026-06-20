@@ -5,7 +5,7 @@
 ## 安装
 - 安装依赖：`npm install`
 - 服务器环境变量（可选）：`MC_HOST`、`MC_PORT`、`MC_USERNAME`、`MC_AUTH`、`MC_PASSWORD`、`MC_DEBUG(默认1)`、`MC_GREET(默认1)`、`MC_LOG_DIR`(默认 `./logs`)、`MC_LOG_FILE`（自定义路径或 `off`）
-- AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`、`DEEPSEEK_MODEL`（或 `AI_MODEL`）
+- AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`（或 `AI_CHAT_PATH`/`DEEPSEEK_CHAT_PATH`）、`DEEPSEEK_MODEL`（或 `AI_MODEL`）
 
 ## 运行
 - `npm start`（默认 watcher 模式，启动 `scripts/bot-watch.js --takeover=true`）
@@ -105,7 +105,7 @@
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.voice status|play <path>|play path=<path>` — 查看语音插件状态或通过 Simple Voice Chat 发送音频文件
 - `.ai ...`（配置 AI key/model/base/path，查看工具）
-  - 快速从 shell 配置重载 AI：`.ai env reload [~/.bashrc]`（别名：`.ai reloadenv [~/.bashrc]`）
+  - 快速从 shell 配置重载 AI key/base/path/model：`.ai env reload [~/.bashrc]`（别名：`.ai reloadenv [~/.bashrc]`）
 
 ### 语音功能说明
 - 依赖 `mineflayer-simplevoice`，并要求服务端/客户端已安装 Simple Voice Chat 模组。

@@ -81,6 +81,33 @@ test('AI call monitor allows and records main chat calls', async () => {
   assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
 })
 
+test('AI call monitor records request path and schema without prompt body', async () => {
+  const state = { ai: { externalCalls: buildDefaultExternalCallPolicy() } }
+  const monitor = createAiCallMonitor({ state, now: () => 1000 })
+  await monitor.request({
+    source: 'main_chat',
+    kind: 'chat',
+    model: 'gpt-test',
+    url: 'https://example.invalid/v1/responses?debug=1',
+    body: {
+      model: 'gpt-test',
+      input: [{ role: 'user', content: 'secret prompt text' }],
+      max_output_tokens: 8
+    },
+    fetchImpl: async () => ({ ok: false, status: 400 })
+  })
+
+  const recent = state.aiCallMonitor.recent
+  assert.equal(recent.at(-2).status, 'start')
+  assert.equal(recent.at(-2).path, '/v1/responses')
+  assert.equal(recent.at(-2).schema, 'responses')
+  assert.deepEqual(recent.at(-2).bodyKeys, ['input', 'max_output_tokens', 'model'])
+  assert.equal(recent.at(-1).status, 'http_error')
+  assert.equal(recent.at(-1).httpStatus, 400)
+  assert.equal(recent.at(-1).schema, 'responses')
+  assert.equal(JSON.stringify(recent).includes('secret prompt text'), false)
+})
+
 test('AI call monitor applies state timeout when callers omit an explicit signal', async () => {
   const state = {
     ai: {

@@ -19,7 +19,7 @@ This project keeps long-lived state in `bot_impl/index.js` so that hot reloads c
 | `loginPassword` | `string?` | Optional cached server password used by `auto-login`. |
 | `voiceChat` | `object` | Simple Voice Chat runtime state (`enabled/available/pluginLoaded/connected`) with last error, last speaker, and last played audio path/time. |
 | `aiRecentReplies` | `Map<string, number>` | Tracks recent AI replies to avoid greeting someone immediately after chatting with them. |
-| `aiCallMonitor` | `object` | Records every external AI request attempt by source/status/duration. Non-mainline sources are blocked by default through `state.ai.externalCalls`. |
+| `aiCallMonitor` | `object` | Records every external AI request attempt by source/status/path/schema/bodyKeys/duration. Non-mainline sources are blocked by default through `state.ai.externalCalls`. |
 
 All collections are normalised (`Map`/`Set`/`Array`) each time `activate()` runs so modules can depend on consistent shapes.
 

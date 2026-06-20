@@ -48,6 +48,7 @@ function prepareAiState (state, opts = {}) {
   const {
     DEFAULT_MODEL,
     DEFAULT_BASE,
+    DEFAULT_CHAT_PATH,
     DEFAULT_PATH,
     DEFAULT_TIMEOUT_MS,
     DEFAULT_RECENT_COUNT,
@@ -66,12 +67,16 @@ function prepareAiState (state, opts = {}) {
       memory: { include: true, max: 6, storeMax: DEFAULT_MEMORY_STORE_MAX || 200 }
       })
   const DEF_CTX = resolveContext()
+  const nextDefaultPath = String(DEFAULT_PATH || '').trim()
+  const nextDefaultChatPath = String(DEFAULT_CHAT_PATH || '/v1/chat/completions').trim()
+  const legacyDefaultChatPath = '/v1/chat/completions'
   state.ai = state.ai || {
     enabled: true,
     key: process.env.DEEPSEEK_API_KEY || null,
     baseUrl: DEFAULT_BASE,
     path: DEFAULT_PATH,
     pathOverride: null,
+    _defaultPath: DEFAULT_PATH,
     model: DEFAULT_MODEL,
     reasoningEffort: process.env.AI_REASONING_EFFORT || null,
     maxReplyLen: null,
@@ -89,6 +94,30 @@ function prepareAiState (state, opts = {}) {
     refsEnabled: false,
     externalCalls: buildDefaultExternalCallPolicy()
   }
+  const previousDefaultPath = String(state.ai._defaultPath || '').trim()
+  const currentPath = String(state.ai.path || '').trim()
+  const pathLooksDefault = !currentPath ||
+    (previousDefaultPath && currentPath === previousDefaultPath) ||
+    (!previousDefaultPath && currentPath === legacyDefaultChatPath)
+  if (nextDefaultPath && pathLooksDefault && currentPath !== nextDefaultPath) {
+    state.ai.path = nextDefaultPath
+    state.ai.pathOverride = null
+    state.ai._probedResponses = false
+  } else if (!currentPath && nextDefaultPath) {
+    state.ai.path = nextDefaultPath
+  }
+  if (state.ai.pathOverride != null) {
+    const override = String(state.ai.pathOverride || '').trim()
+    const overrideIsStaleDefault = !override ||
+      (previousDefaultPath && override === previousDefaultPath) ||
+      override === nextDefaultChatPath ||
+      override === legacyDefaultChatPath
+    if (overrideIsStaleDefault && String(state.ai.path || '').trim() !== override) {
+      state.ai.pathOverride = null
+      state.ai._probedResponses = false
+    }
+  }
+  state.ai._defaultPath = nextDefaultPath || state.ai.path || null
   state.ai.externalCalls = {
     ...buildDefaultExternalCallPolicy(),
     ...(state.ai.externalCalls && typeof state.ai.externalCalls === 'object' ? state.ai.externalCalls : {})

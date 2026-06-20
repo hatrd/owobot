@@ -97,12 +97,15 @@ node scripts/botctl.js observe detail what=inventory radius=12
 node scripts/botctl.js run voice_status
 node scripts/botctl.js run voice_speak preset=ciallo
 node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" withTools=true maxToolCalls=6
+node scripts/botctl.js ai-connectivity timeoutMs=12000
 node scripts/botctl.js schema ctl
 node scripts/botctl.js schema observe
 node scripts/botctl.js schema tool
 ```
 
 `chatdry` 是完全离线的控制面预览，不会调用真实 LLM，也不会执行服内工具；它返回 intent、context profile、可用工具名、tool schema token 估算和输出预算，用来确认路由/工具边界。排查解析/出站文本类问题时，应优先用测试 fixture 回放生产 LLM 原始返回；真实模型连通性请用独立的受控连通性测试，不要把 `chatdry` 当计费路径验证。
+
+`ai-connectivity` 使用正在运行的 bot 的 `state.ai` 配置（包括热重载后保留/更新的 base/path/model/key/pathOverride）发起一次极小的真实 provider 请求，只返回脱敏的 path/schema/bodyKeys/status/duration/reply/usage。它不会执行服内工具，也不会发送聊天。
 
 Options:
 

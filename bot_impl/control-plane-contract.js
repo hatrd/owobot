@@ -2,6 +2,7 @@ const CTL_OPS = Object.freeze({
   HELLO: 'hello',
   PROC_RESTART: 'proc.restart',
   AI_CHAT_DRY: 'ai.chat.dry',
+  AI_CONNECTIVITY: 'ai.connectivity',
   OBSERVE_SNAPSHOT: 'observe.snapshot',
   OBSERVE_PROMPT: 'observe.prompt',
   OBSERVE_DETAIL: 'observe.detail',
@@ -47,6 +48,17 @@ const CTL_OPERATION_SPECS = Object.freeze([
       content: { type: 'string' },
       withTools: { type: 'boolean', default: true },
       maxToolCalls: { type: 'number' }
+    }
+  },
+  {
+    op: CTL_OPS.AI_CONNECTIVITY,
+    aliases: ['ai.ping', 'llm.ping'],
+    requiresBot: true,
+    description: 'Make one tiny provider call using the running bot AI config and return sanitized connectivity metadata.',
+    args: {
+      prompt: { type: 'string', default: 'ping? reply OK only.' },
+      timeoutMs: { type: 'number', default: 12000 },
+      maxOutputTokens: { type: 'number', default: 64 }
     }
   },
   {

@@ -18,6 +18,27 @@ function parseBoolEnv (name, fallback = false) {
   return fallback
 }
 
+function bodySchema (body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'unknown'
+  if (Object.prototype.hasOwnProperty.call(body, 'input')) return 'responses'
+  if (Object.prototype.hasOwnProperty.call(body, 'messages')) return 'chat'
+  return 'unknown'
+}
+
+function bodyKeys (body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return []
+  return Object.keys(body).sort()
+}
+
+function urlPath (url) {
+  try {
+    const u = new URL(String(url || ''))
+    return u.pathname || ''
+  } catch {
+    return String(url || '').replace(/[?#].*$/, '').slice(0, 160)
+  }
+}
+
 function ensureAiCallMonitorState (state, now = () => Date.now()) {
   if (!state || typeof state !== 'object') return null
   if (!state.aiCallMonitor || typeof state.aiCallMonitor !== 'object') {
@@ -108,10 +129,15 @@ function createAiCallMonitor ({ state, log = null, now = () => Date.now() } = {}
 
     const id = mon ? (mon.seq += 1) : 0
     const startedAt = now()
+    const requestMeta = {
+      path: urlPath(url),
+      schema: bodySchema(body),
+      bodyKeys: bodyKeys(body)
+    }
     if (mon) {
       mon.counts.started += 1
       bumpSource(normalizedSource, 'started')
-      pushRecent({ id, t: startedAt, source: normalizedSource, kind: normalizedKind, model: normalizedModel, status: 'start' })
+      pushRecent({ id, t: startedAt, source: normalizedSource, kind: normalizedKind, model: normalizedModel, status: 'start', ...requestMeta })
     }
 
     const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
@@ -137,6 +163,7 @@ function createAiCallMonitor ({ state, log = null, now = () => Date.now() } = {}
           model: normalizedModel,
           status: res?.ok ? 'ok' : 'http_error',
           httpStatus: res?.status || null,
+          ...requestMeta,
           durationMs: endedAt - startedAt
         })
       }
@@ -154,6 +181,7 @@ function createAiCallMonitor ({ state, log = null, now = () => Date.now() } = {}
           model: normalizedModel,
           status: 'error',
           error: normalizeText(err?.message || err).slice(0, 160),
+          ...requestMeta,
           durationMs: endedAt - startedAt
         })
       }

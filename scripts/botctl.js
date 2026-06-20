@@ -10,6 +10,7 @@
 //   node scripts/botctl.js observe prompt [key=value ...]
 //   node scripts/botctl.js observe detail [key=value ...]
 //   node scripts/botctl.js chatdry username=kuleizi content="附近小狗小猫有什么" [withTools=true] [maxToolCalls=6]
+//   node scripts/botctl.js ai-connectivity [timeoutMs=12000] [prompt="ping? reply OK only."]
 //   node scripts/botctl.js schema ctl|observe|tool
 //   node scripts/botctl.js restart [mode=detached|inherit] [delayMs=200ms]
 // Options:
@@ -99,11 +100,19 @@ async function main () {
   const [cmd, ...rest] = argv.rest
 
   if (!cmd) {
-    process.stderr.write('usage: botctl.js hello|list|dry|run|observe|chatdry|restart|schema ...\n')
+    process.stderr.write('usage: botctl.js hello|list|dry|run|observe|chatdry|ai-connectivity|restart|schema ...\n')
     process.exit(2)
   }
 
   const id = makeId()
+  const payload = buildPayload({ id, cmd, rest, token })
+  const res = await request(sockPath, payload)
+  process.stdout.write(JSON.stringify(res, null, 2) + '\n')
+  if (!res || res.ok !== true) process.exit(1)
+  if (payload.op === controlPlaneContract.CTL_OPS.AI_CONNECTIVITY && res.result?.ok !== true) process.exit(1)
+}
+
+function buildPayload ({ id, cmd, rest = [], token = '' }) {
   let payload
 
   if (cmd === 'hello') payload = { id, op: controlPlaneContract.CTL_OPS.HELLO }
@@ -112,8 +121,7 @@ async function main () {
     const target = String(rest[0] || 'ctl')
     const schemaOp = controlPlaneContract.resolveCtlSchemaOp(target)
     if (!schemaOp) {
-      process.stderr.write(`usage: botctl.js schema ${schemaTargetsUsage()}\n`)
-      process.exit(2)
+      throw new Error(`usage: botctl.js schema ${schemaTargetsUsage()}`)
     }
     payload = { id, op: schemaOp }
   }
@@ -124,8 +132,7 @@ async function main () {
   else if (cmd === 'dry' || cmd === 'run') {
     const tool = rest[0]
     if (!tool) {
-      process.stderr.write(`usage: botctl.js ${cmd} <tool> [key=value ...]\n`)
-      process.exit(2)
+      throw new Error(`usage: botctl.js ${cmd} <tool> [key=value ...]`)
     }
     const args = parseKeyValueArgs(rest.slice(1))
     payload = {
@@ -137,31 +144,38 @@ async function main () {
   } else if (cmd === 'chatdry' || cmd === 'ai-dry') {
     const args = parseKeyValueArgs(rest)
     if (!args.content && !args.message && !args.text) {
-      process.stderr.write('usage: botctl.js chatdry username=<name> content=<text> [withTools=true] [maxToolCalls=6]\n')
-      process.exit(2)
+      throw new Error('usage: botctl.js chatdry username=<name> content=<text> [withTools=true] [maxToolCalls=6]')
     }
     payload = { id, op: controlPlaneContract.CTL_OPS.AI_CHAT_DRY, args }
+  } else if (cmd === 'ai-connectivity' || cmd === 'ai-ping' || cmd === 'llm-ping') {
+    const args = parseKeyValueArgs(rest)
+    payload = { id, op: controlPlaneContract.CTL_OPS.AI_CONNECTIVITY, args }
   } else if (cmd === 'observe') {
     const mode = String(rest[0] || 'snapshot')
     const args = parseKeyValueArgs(rest.slice(1))
     const observeOp = controlPlaneContract.resolveObserveOp(mode)
     if (!observeOp) {
-      process.stderr.write(`usage: botctl.js observe ${observeModesUsage()} [key=value ...]\n`)
-      process.exit(2)
+      throw new Error(`usage: botctl.js observe ${observeModesUsage()} [key=value ...]`)
     }
     payload = { id, op: observeOp, args }
   } else {
-    process.stderr.write(`unknown cmd: ${cmd}\n`)
-    process.exit(2)
+    throw new Error(`unknown cmd: ${cmd}`)
   }
 
   if (token && payload) payload.token = token
-  const res = await request(sockPath, payload)
-  process.stdout.write(JSON.stringify(res, null, 2) + '\n')
-  if (!res || res.ok !== true) process.exit(1)
+  return payload
 }
 
-main().catch((err) => {
-  process.stderr.write(String(err?.message || err) + '\n')
-  process.exit(1)
-})
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(String(err?.message || err) + '\n')
+    process.exit(1)
+  })
+}
+
+module.exports = {
+  _internal: {
+    parseKeyValueArgs,
+    buildPayload
+  }
+}

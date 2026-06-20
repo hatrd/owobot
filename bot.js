@@ -483,6 +483,25 @@ async function handleCtlRequest (req) {
     return { id, ok: true, result }
   }
 
+  if (op === controlPlaneContract.CTL_OPS.AI_CONNECTIVITY) {
+    const args = (req && req.args && typeof req.args === 'object') ? req.args : {}
+    const ai = sharedState && sharedState.ai ? sharedState.ai : null
+    if (!ai) return { id, ok: false, error: 'AI state not ready' }
+    // Require inside handler so hot reload cache clears stay consistent after process restart.
+    // eslint-disable-next-line import/no-dynamic-require
+    const defaults = require(path.join(pluginRoot, 'ai-chat', 'config'))
+    // eslint-disable-next-line import/no-dynamic-require
+    const connectivity = require(path.join(pluginRoot, 'ai-chat', 'connectivity'))
+    const result = await connectivity.checkAiConnectivity({
+      ai,
+      defaults,
+      prompt: args.prompt || args.content || args.message,
+      timeoutMs: args.timeoutMs,
+      maxOutputTokens: args.maxOutputTokens
+    })
+    return { id, ok: true, result }
+  }
+
   if (op === controlPlaneContract.CTL_OPS.OBSERVE_SNAPSHOT || op === controlPlaneContract.CTL_OPS.OBSERVE_PROMPT || op === controlPlaneContract.CTL_OPS.OBSERVE_DETAIL) {
     // Require inside handler so hot reload cache clears stay consistent.
     // eslint-disable-next-line import/no-dynamic-require

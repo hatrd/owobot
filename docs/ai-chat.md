@@ -12,7 +12,7 @@
 
 | 字段 | 说明 |
 |------|------|
-| `state.ai` | API 配置 (model, baseUrl, budgets, limits) |
+| `state.ai` | API 配置 (model, baseUrl, path, budgets, limits)；`path` 决定请求体契约：`/responses` 使用 `input/max_output_tokens`，其它路径使用 chat-completions 的 `messages/max_tokens` |
 | `state.aiContextBus` | **统一上下文总线**（运行时内存，重启不保留；见 `docs/context-bus.md`） |
 | `state.aiRecent` | 最近聊天行（legacy store；用于会话摘要与部分逻辑） |
 | `state.aiDialogues` | 对话摘要（max 60；注入到 prompt 的“对话记忆”） |
@@ -20,7 +20,7 @@
 | `state.aiPulse` | 会话激活追踪（60s 窗口 + 5s 延迟跟进） |
 | `state.aiStats/aiSpend` | 用量与预算 |
 | `state.ai.externalCalls` | 外部 AI 调用门控；默认仅允许 `main_chat`，后台摘要/记忆/自省/auto-look greet 会被阻断，除非显式开启 background 或 allowSources |
-| `state.aiCallMonitor` | 外部 AI 调用监控；记录 source/status/model/duration，并累计 started/ok/error/blocked |
+| `state.aiCallMonitor` | 外部 AI 调用监控；记录 source/status/model/path/schema/bodyKeys/duration，并累计 started/ok/error/blocked |
 
 ## 2. 触发流程 (`handleChat`)
 
@@ -38,7 +38,7 @@
 意图分类里的动作判定只接受明确动作词（如攻击/追击/清怪/击杀/打怪/防守等），避免“打扰一下/打算/打字”这类普通聊天因为单字“打”误进 task profile，额外携带游戏上下文和工具 schema。
 行动/task profile 默认不注入玩家画像，只保留当前玩家 pending 承诺；画像上下文留给普通聊天和计划模式，避免整理箱子、移动、观察等动作请求为人物偏好消耗 prompt token。
 
-外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。所有未显式传入 `AbortSignal` 的 monitor 调用都会继承 `state.ai.timeoutMs`（默认 30000ms），后台请求不会无限挂起；记忆改写遇到调用门控或永久 HTTP 错误时不会重试。后台记忆/摘要类请求在显式放开后也会先走 `.ai budget` 预检，并把 provider usage 写入 `state.aiSpend`，避免预算只统计主线聊天。需要临时放开时用 `.ai calls background on`，它只放开默认后台源（`conversation_summary`、`memory_rewrite`、`overflow_summary`）；`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等二级/主动 LLM 源必须显式加入 `allowSources`，防止一次开关触发连锁调用。用 `.ai calls` / `.ai calls recent` 观察实际调用。
+外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。所有未显式传入 `AbortSignal` 的 monitor 调用都会继承 `state.ai.timeoutMs`（默认 30000ms），后台请求不会无限挂起；记忆改写遇到调用门控或永久 HTTP 错误时不会重试。后台记忆/摘要类请求在显式放开后也会先走 `.ai budget` 预检，并把 provider usage 写入 `state.aiSpend`，避免预算只统计主线聊天。需要临时放开时用 `.ai calls background on`，它只放开默认后台源（`conversation_summary`、`memory_rewrite`、`overflow_summary`）；`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等二级/主动 LLM 源必须显式加入 `allowSources`，防止一次开关触发连锁调用。用 `.ai calls` / `.ai calls recent` 观察实际调用；recent 行会显示 `path` 与 `schema`，用于定位 provider 契约错误（例如 `/v1/responses` 必须是 `schema=responses`，不能继续发送 `messages`）。
 `auto_look_greet` 即使被显式放开，单个玩家的成功、空回复或 provider 错误都会进入 10 分钟 cooldown，避免附近视线事件在上游异常时每隔几秒重复触发外部请求。
 `introspection` 即使被显式放开，也只有在近期存在模型级反馈信号（非 `ENGAGEMENT/IGNORE`）或动作结果样本时才调用模型；无证据或仅有冷场/参与度信号时直接走本地 fallback，避免空数据、手动触发或紧急冷场自省消耗外部调用。手动/紧急自省在有显式反馈证据时仍可使用模型。
 
@@ -117,7 +117,7 @@
 | 命令 | 说明 |
 |------|------|
 | `.ai on/off` | 启用/禁用 AI |
-| `.ai env reload [~/.bashrc]` | source 指定 rc（默认 `~/.bashrc`）后，重载 `DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / AI_MODEL(或 DEEPSEEK_MODEL)` 到运行态（别名：`.ai reloadenv`） |
+| `.ai env reload [~/.bashrc]` | source 指定 rc（默认 `~/.bashrc`）后，重载 `DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_PATH(或 AI_CHAT_PATH/DEEPSEEK_CHAT_PATH) / AI_MODEL(或 DEEPSEEK_MODEL)` 到运行态，并清除旧的 path fallback/probe 状态（别名：`.ai reloadenv`） |
 | `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`metaCtx/gameCtx/chatCtx`；若可用还会打印 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
 | `.ai context show` | 打印 `state.ai.context` |
 | `.ai context off` | 关闭 `contextPrompt` 的历史聊天注入；只保留当前玩家锚点，profile 不会重新打开它 |
@@ -134,6 +134,7 @@
 
 - `registerCleanup` 清理所有监听器和定时器
 - `state.aiContextBus/state.aiRecent/...` 都在 shared state 内，跨热重载保持；进程重启会丢失 `state.aiContextBus/state.aiRecent`
+- `state.ai.path` 也在 shared state 内；热重载时若它仍是旧默认路径，会自动跟随当前 `DEFAULT_PATH`（例如从 chat-completions 切到 `/v1/responses`）。手动设置的自定义 path 会保留；`.ai path ...` 与 `.ai env reload` 会清除旧 `pathOverride`。
 - AbortController 防止异步泄漏
 
 ## 8. 进程守护（推荐）

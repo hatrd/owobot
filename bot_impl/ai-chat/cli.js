@@ -6,6 +6,9 @@ const { spawnSync } = require('child_process')
 const AI_ENV_KEYS = Object.freeze([
   'DEEPSEEK_API_KEY',
   'DEEPSEEK_BASE_URL',
+  'DEEPSEEK_PATH',
+  'AI_CHAT_PATH',
+  'DEEPSEEK_CHAT_PATH',
   'AI_MODEL',
   'DEEPSEEK_MODEL'
 ])
@@ -107,6 +110,7 @@ function loadEnvFromRc (rcPath) {
 function applyAiEnvToState (state, envMap) {
   const nextKey = normalizeText(envMap.DEEPSEEK_API_KEY)
   const nextBase = normalizeText(envMap.DEEPSEEK_BASE_URL)
+  const nextPath = normalizeText(envMap.DEEPSEEK_PATH || envMap.AI_CHAT_PATH || envMap.DEEPSEEK_CHAT_PATH)
   const nextModel = normalizeText(envMap.AI_MODEL || envMap.DEEPSEEK_MODEL)
   const updated = []
   const missing = []
@@ -120,6 +124,14 @@ function applyAiEnvToState (state, envMap) {
     state.ai.baseUrl = nextBase
     updated.push('baseUrl')
   } else missing.push('DEEPSEEK_BASE_URL')
+
+  if (nextPath) {
+    const oldPath = normalizeText(state.ai.path)
+    state.ai.path = nextPath
+    state.ai.pathOverride = null
+    if (oldPath !== nextPath) state.ai._probedResponses = false
+    updated.push('path')
+  } else missing.push('DEEPSEEK_PATH/AI_CHAT_PATH/DEEPSEEK_CHAT_PATH')
 
   if (nextModel) {
     state.ai.model = nextModel
@@ -183,7 +195,15 @@ function createAiCliHandler (options = {}) {
         case 'key': state.ai.key = rest.join(' ').trim() || null; print('key set'); break
         case 'model': state.ai.model = rest[0] || state.ai.model; print('model =', state.ai.model); break
         case 'base': state.ai.baseUrl = rest[0] || state.ai.baseUrl; print('base =', state.ai.baseUrl); break
-        case 'path': state.ai.path = rest[0] || state.ai.path; print('path =', state.ai.path); break
+        case 'path': {
+          const nextPath = rest[0] || state.ai.path
+          const oldPath = state.ai.path
+          state.ai.path = nextPath
+          state.ai.pathOverride = null
+          if (oldPath !== nextPath) state.ai._probedResponses = false
+          print('path =', state.ai.path)
+          break
+        }
         case 'reloadenv':
         case 'env': {
           const mode = (rest[0] || '').toLowerCase()
@@ -319,7 +339,7 @@ function createAiCliHandler (options = {}) {
               break
             }
             for (const r of recent.slice(-10)) {
-              print(`${r.id || '-'} ${r.source || '?'} ${r.status || '?'} model=${r.model || '-'} ms=${r.durationMs ?? '-'}`)
+              print(`${r.id || '-'} ${r.source || '?'} ${r.status || '?'} model=${r.model || '-'} path=${r.path || '-'} schema=${r.schema || '-'} ms=${r.durationMs ?? '-'}`)
             }
             break
           }

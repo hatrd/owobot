@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-05-19T12:47:16.980Z`
+- GeneratedAt: `2026-06-20T09:41:32.637Z`
 - Source: `offline-module`
 
 ## Control Ops
@@ -10,6 +10,7 @@
 | hello |  | no | Control-plane heartbeat and process status. |
 | proc.restart | process.restart | no | Restart current bot process. |
 | ai.chat.dry | chat.dry | yes | Dry-run one AI chat turn without real world side effects. |
+| ai.connectivity | ai.ping, llm.ping | yes | Make one tiny provider call using the running bot AI config and return sanitized connectivity metadata. |
 | observe.snapshot |  | yes | Structured runtime snapshot for AI/game context. |
 | observe.prompt |  | yes | Prompt text plus snapshot, as used by AI context assembly. |
 | observe.detail |  | yes | Focused read-only observation details. |
