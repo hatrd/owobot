@@ -387,6 +387,27 @@ function createChatExecutor ({
       return joined ? `${e.username}: ${joined}` : ''
     }).filter(Boolean).join('\n')
     const source = batch.some(e => e && e.source === 'trigger') ? 'trigger' : 'followup'
+    const lastText = (() => {
+      const lastEntry = batch[batch.length - 1]
+      const parts = Array.isArray(lastEntry?.parts) ? lastEntry.parts : []
+      return parts.length ? String(parts[parts.length - 1] || '') : ''
+    })()
+    const intent = classifyIntent(lastText || content)
+    if (source === 'followup' && batch.length === 1) {
+      const only = batch[0]
+      const parts = Array.isArray(only?.parts) ? only.parts.filter(part => String(part || '').trim()) : []
+      if (parts.length === 1) {
+        const handled = await maybeHandleLocalQuery({
+          username: owner,
+          text: parts[0],
+          raw: Array.isArray(only.rawParts) ? (only.rawParts[0] || parts[0]) : parts[0],
+          source,
+          intent,
+          reasonTag: 'followup'
+        })
+        if (handled) return
+      }
+    }
     if (source === 'followup') {
       const allowed = canProceed(owner)
       if (!allowed.ok) {
@@ -396,12 +417,6 @@ function createChatExecutor ({
         return
       }
     }
-    const lastText = (() => {
-      const lastEntry = batch[batch.length - 1]
-      const parts = Array.isArray(lastEntry?.parts) ? lastEntry.parts : []
-      return parts.length ? String(parts[parts.length - 1] || '') : ''
-    })()
-    const intent = classifyIntent(lastText || content)
     ctrl.busy = true
     ctrl.lastUser = owner
     try {
