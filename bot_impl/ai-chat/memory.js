@@ -1638,6 +1638,60 @@ function createMemoryService ({
     return { reject: false }
   }
 
+  function extractLocalCoordinateMemory (content) {
+    const text = normalizeMemoryText(content)
+    if (!text) return null
+    const coordMatch = text.match(/(-?\d{1,7})(?:\s*[,，]\s*|\s+)(-?\d{1,5})(?:\s*[,，]\s*|\s+)(-?\d{1,7})/)
+    if (!coordMatch) return null
+    const x = Number(coordMatch[1])
+    const y = Number(coordMatch[2])
+    const z = Number(coordMatch[3])
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
+    if (y < -256 || y > 512) return null
+
+    const before = text.slice(0, coordMatch.index).replace(/[在是为:：,，\s]+$/g, '').trim()
+    const after = text.slice((coordMatch.index || 0) + coordMatch[0].length).replace(/^[的\s,，。.!！?？]+/g, '').trim()
+    const subjectMatch = before.match(/(.{1,40}?)(?:坐标|座标|坐標|位置|地点|在)$/) || before.match(/(.{1,40})$/)
+    const subjectRaw = subjectMatch && subjectMatch[1] ? subjectMatch[1] : ''
+    const subject = normalizeMemoryText(subjectRaw)
+      .replace(/^(这里|这边|此处|当前位置|当前|坐标|座标|坐標|位置|地点)\s*/g, '')
+      .replace(/[是为在的\s:：,，]+$/g, '')
+      .trim()
+    if (!subject || subject.length > 40) return null
+    if (after && !/^(附近|旁边|周围|左右|那边|那里|这边|这里)$/.test(after)) return null
+
+    const dim = normalizeDimensionName(bot?.game?.dimension || bot?.dimension || '')
+    const location = { x, y, z, radius: 30, ...(dim ? { dim } : null) }
+    const instruction = `${subject}坐标是 ${x},${y},${z}`
+    const summary = `${subject}坐标`
+    const triggerTokens = subject.split(/[\s/|,，。:：]+/).filter(Boolean)
+    const triggers = uniqueStrings([subject, `${subject}坐标`, '坐标', ...triggerTokens]).slice(0, 8)
+    return { instruction, summary, triggers, tags: ['位置'], location, feature: subject, kind: 'location' }
+  }
+
+  function trySaveStructuredMemoryCommandLocally (content, author) {
+    const parsed = extractLocalCoordinateMemory(content)
+    if (!parsed) return { ok: false, reason: 'unsupported' }
+    const saved = addMemoryEntry({
+      text: parsed.instruction,
+      author,
+      source: 'player:local_coordinate',
+      importance: 1,
+      extra: {
+        instruction: parsed.instruction,
+        triggers: parsed.triggers,
+        tags: parsed.tags,
+        summary: parsed.summary,
+        location: parsed.location,
+        feature: parsed.feature,
+        kind: parsed.kind,
+        fromAI: false
+      }
+    })
+    if (!saved?.ok) return saved || { ok: false, reason: 'save_failed' }
+    return { ok: true, entry: saved.entry, msg: `${parsed.summary}：${locationLabel(parsed.location)}` }
+  }
+
   function extractForgetCommand (content) {
     if (!content) return null
     const text = String(content).trim()
@@ -3017,6 +3071,7 @@ function createMemoryService ({
     findLocationAnswer: findLocationMemoryAnswer,
     extractCommand: extractMemoryCommand,
     shouldRejectCommandLocally: shouldRejectMemoryCommandLocally,
+    trySaveStructuredCommandLocally: trySaveStructuredMemoryCommandLocally,
     extractForgetCommand,
     normalizeText: normalizeMemoryText,
     disableMemories,

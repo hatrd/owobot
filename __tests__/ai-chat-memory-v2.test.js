@@ -4,6 +4,55 @@ import memoryMod from '../bot_impl/ai-chat/memory.js'
 
 const { createMemoryService } = memoryMod
 
+test('structured coordinate memory command saves locally and remains queryable', async () => {
+  const state = {
+    ai: { context: { memory: { include: true, max: 3, mode: 'v2', minScore: 0, minRelevance: 0 } } },
+    aiMemory: { entries: [] }
+  }
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const defaults = { DEFAULT_BASE: '', DEFAULT_PATH: '', DEFAULT_MODEL: '' }
+  const memory = createMemoryService({
+    state,
+    memoryStore,
+    defaults,
+    bot: { username: 'bot', game: { dimension: 'overworld' } },
+    now: () => 1000
+  })
+
+  const saved = memory.longTerm.trySaveStructuredCommandLocally('基地坐标是 100,64,200', 'Alice')
+
+  assert.equal(saved.ok, true)
+  assert.equal(state.aiMemory.entries.length, 1)
+  assert.equal(state.aiMemory.entries[0].location.x, 100)
+  assert.equal(state.aiMemory.entries[0].location.y, 64)
+  assert.equal(state.aiMemory.entries[0].location.z, 200)
+
+  const ctx = await memory.longTerm.buildContext({ query: '基地坐标在哪里', actor: 'Alice', withRefs: true })
+  assert.match(ctx.text, /基地坐标/)
+  assert.deepEqual(ctx.refs, [state.aiMemory.entries[0].id])
+})
+
+test('structured coordinate memory rejects extra trailing semantics', () => {
+  const state = {
+    ai: { context: { memory: { include: true } } },
+    aiMemory: { entries: [] }
+  }
+  const memoryStore = { save: () => {}, load: () => ({ long: [], memories: [], dialogues: [] }) }
+  const defaults = { DEFAULT_BASE: '', DEFAULT_PATH: '', DEFAULT_MODEL: '' }
+  const memory = createMemoryService({
+    state,
+    memoryStore,
+    defaults,
+    bot: { username: 'bot', game: { dimension: 'overworld' } },
+    now: () => 1000
+  })
+
+  const saved = memory.longTerm.trySaveStructuredCommandLocally('基地坐标是 100,64,200，但是入口在水下', 'Alice')
+
+  assert.equal(saved.ok, false)
+  assert.equal(state.aiMemory.entries.length, 0)
+})
+
 test('memory v2: no recent fallback when query has no usable tokens', async () => {
   const state = {
     ai: { context: { memory: { include: true, max: 3, mode: 'v2' } } },
@@ -127,4 +176,3 @@ test('memory v2: dedupes same location to keep context diverse', async () => {
   assert.ok(res.refs.includes('m3'))
   assert.ok(res.refs.includes('m1') || res.refs.includes('m2'))
 })
-

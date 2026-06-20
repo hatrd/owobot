@@ -1864,6 +1864,13 @@ function createChatExecutor ({
         pulse.sendChatReply(username, localReject.reason ? `这句记不住：${localReject.reason}` : '这句记不住喵~', { reason: 'memory_reject_local' })
         return
       }
+      const localSaved = typeof memory.longTerm.trySaveStructuredCommandLocally === 'function'
+        ? memory.longTerm.trySaveStructuredCommandLocally(memoryText, username)
+        : null
+      if (localSaved?.ok) {
+        pulse.sendChatReply(username, localSaved.msg || '记住啦~', { reason: 'memory_local' })
+        return
+      }
       if (!state.ai?.key) {
         pulse.sendChatReply(username, '现在记不住呀，AI 没开~', { reason: 'memory_key' })
         return
