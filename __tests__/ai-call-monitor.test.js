@@ -1157,6 +1157,214 @@ test('executor answers obvious pending observe followup locally without extra ma
   }
 })
 
+test('executor answers multiple local-only followups without a merged main chat call', async () => {
+  let t = 1000
+  const now = () => t
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      context: { include: true, recentCount: 12, recentWindowSec: 300 },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      followupDelayMs: 40,
+      externalCalls: buildDefaultExternalCallPolicy()
+    },
+    aiPulse: {},
+    aiStats: { perUser: new Map(), global: [] },
+    aiRecent: [],
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now })
+  const oldFetch = global.fetch
+  let fetchCalls = 0
+  const toolRuns = []
+  const sent = []
+  global.fetch = async () => {
+    fetchCalls += 1
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: fetchCalls === 1 ? '触发回复' : '不该合并调用' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2 }
+      })
+    }
+  }
+  try {
+    const executor = createChatExecutor({
+      state,
+      bot: { username: 'bot', entity: { position: { x: 0, y: 64, z: 0 } } },
+      log: null,
+      actionsMod: {
+        install: () => ({
+          run: async (tool, args = {}) => {
+            toolRuns.push({ tool, args })
+            return { ok: true, msg: '附近实体1个(半径32): cat「方头耄耋」 12.9m' }
+          },
+          dry: async () => ({ ok: true })
+        })
+      },
+      H,
+      defaults,
+      now,
+      traceChat: () => {},
+      pulse: {
+        sendChatReply: (username, text, meta = {}) => { sent.push({ username, text, meta }) },
+        isUserActive: () => true,
+        activateSession: () => {},
+        touchConversationSession: () => {}
+      },
+      memory: {
+        longTerm: {
+          buildContext: async () => ({ text: '', refs: [] }),
+          extractCommand: () => null,
+          extractForgetCommand: () => null
+        },
+        dialogue: { buildPrompt: () => '' }
+      },
+      people: {
+        buildAllProfilesContext: () => '',
+        buildAllCommitmentsContext: () => ''
+      },
+      canAfford: () => ({ ok: true, proj: 0, rem: { day: Infinity, month: Infinity, total: Infinity } }),
+      applyUsage: () => {},
+      buildGameContext: () => '',
+      contextBus: { buildXml: () => '', getStore: () => [], pushEvent: () => {}, pushTool: () => {} },
+      aiCallMonitor: monitor
+    })
+
+    await executor.handleChat('Alice', 'bot 你好')
+    assert.equal(fetchCalls, 1)
+
+    t += 100
+    await executor.handleChat('Alice', '附近有什么实体')
+    t += 100
+    await executor.handleChat('Alice', '你现在坐标在哪')
+    await new Promise(resolve => setTimeout(resolve, 70))
+
+    assert.equal(fetchCalls, 1, 'local-only followup batch should not call provider again')
+    assert.deepEqual(toolRuns.map(entry => entry.tool), ['observe_detail'])
+    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), true)
+    assert.equal(sent.some(row => /当前位置: 0, 64, 0/.test(row.text)), true)
+    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
+test('executor strips local followups before merging remaining chat into provider prompt', async () => {
+  let t = 1000
+  const now = () => t
+  const state = {
+    ai: {
+      enabled: true,
+      key: 'test-key',
+      baseUrl: 'https://example.invalid',
+      path: '/v1/chat/completions',
+      model: 'deepseek-chat',
+      context: { include: true, recentCount: 12, recentWindowSec: 300 },
+      maxTokensPerCall: 128,
+      maxToolCalls: 1,
+      followupDelayMs: 40,
+      externalCalls: buildDefaultExternalCallPolicy()
+    },
+    aiPulse: {},
+    aiStats: { perUser: new Map(), global: [] },
+    aiRecent: [],
+    aiSpend: {
+      day: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      month: { start: 0, inTok: 0, outTok: 0, cost: 0 },
+      total: { inTok: 0, outTok: 0, cost: 0 }
+    }
+  }
+  const monitor = createAiCallMonitor({ state, now })
+  const oldFetch = global.fetch
+  const bodies = []
+  const toolRuns = []
+  const sent = []
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body || '{}'))
+    bodies.push(body)
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: bodies.length === 1 ? '触发回复' : '普通跟进回复' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2 }
+      })
+    }
+  }
+  try {
+    const executor = createChatExecutor({
+      state,
+      bot: { username: 'bot', entity: { position: { x: 0, y: 64, z: 0 } } },
+      log: null,
+      actionsMod: {
+        install: () => ({
+          run: async (tool, args = {}) => {
+            toolRuns.push({ tool, args })
+            return { ok: true, msg: '附近实体1个(半径32): cat「方头耄耋」 12.9m' }
+          },
+          dry: async () => ({ ok: true })
+        })
+      },
+      H,
+      defaults,
+      now,
+      traceChat: () => {},
+      pulse: {
+        sendChatReply: (username, text, meta = {}) => { sent.push({ username, text, meta }) },
+        isUserActive: () => true,
+        activateSession: () => {},
+        touchConversationSession: () => {}
+      },
+      memory: {
+        longTerm: {
+          buildContext: async () => ({ text: '', refs: [] }),
+          extractCommand: () => null,
+          extractForgetCommand: () => null
+        },
+        dialogue: { buildPrompt: () => '' }
+      },
+      people: {
+        buildAllProfilesContext: () => '',
+        buildAllCommitmentsContext: () => ''
+      },
+      canAfford: () => ({ ok: true, proj: 0, rem: { day: Infinity, month: Infinity, total: Infinity } }),
+      applyUsage: () => {},
+      buildGameContext: () => '',
+      contextBus: { buildXml: () => '', getStore: () => [], pushEvent: () => {}, pushTool: () => {} },
+      aiCallMonitor: monitor
+    })
+
+    await executor.handleChat('Alice', 'bot 你好')
+    assert.equal(bodies.length, 1)
+
+    t += 100
+    await executor.handleChat('Alice', '附近有什么实体')
+    t += 100
+    await executor.handleChat('Alice', '顺便你刚才说的再解释一下')
+    await new Promise(resolve => setTimeout(resolve, 70))
+
+    assert.equal(bodies.length, 2)
+    assert.deepEqual(toolRuns.map(entry => entry.tool), ['observe_detail'])
+    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), true)
+    const promptText = (bodies[1].messages || bodies[1].input || []).map(m => m.content || '').join('\n')
+    assert.doesNotMatch(promptText, /附近有什么实体/)
+    assert.match(promptText, /顺便你刚才说的再解释一下/)
+  } finally {
+    global.fetch = oldFetch
+  }
+})
+
 test('executor rate limits idle followup batches before external main chat calls', async () => {
   let t = 1000
   const now = () => t

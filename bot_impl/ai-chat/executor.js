@@ -191,6 +191,44 @@ function createChatExecutor ({
     return lines.join('\n')
   }
 
+  async function filterLocalPendingBatch (batch) {
+    const out = []
+    for (const entry of Array.isArray(batch) ? batch : []) {
+      if (!entry || entry.source !== 'followup') {
+        out.push(entry)
+        continue
+      }
+      const parts = Array.isArray(entry.parts) ? entry.parts : []
+      const rawParts = Array.isArray(entry.rawParts) ? entry.rawParts : []
+      const keepParts = []
+      const keepRawParts = []
+      for (let i = 0; i < parts.length; i++) {
+        const text = String(parts[i] || '').trim()
+        if (!text) continue
+        const raw = typeof rawParts[i] === 'string' ? rawParts[i] : text
+        const intent = classifyIntent(text)
+        const handled = await maybeHandleLocalQuery({
+          username: entry.username,
+          text,
+          raw,
+          source: 'followup',
+          intent,
+          reasonTag: 'followup'
+        })
+        if (handled) continue
+        keepParts.push(text)
+        keepRawParts.push(raw)
+      }
+      if (!keepParts.length) continue
+      out.push({
+        ...entry,
+        parts: keepParts,
+        rawParts: keepRawParts
+      })
+    }
+    return out.filter(Boolean)
+  }
+
   function buildPendingInterruptNote (batch) {
     try {
       const body = buildPendingBatchText(batch)
@@ -368,6 +406,9 @@ function createChatExecutor ({
   async function processPendingBatch (batch) {
     if (!Array.isArray(batch) || !batch.length) return
     if (ctrl.busy) return
+    const filteredBatch = await filterLocalPendingBatch(batch)
+    if (!filteredBatch.length) return
+    batch = filteredBatch
     const owner = (() => {
       for (let i = batch.length - 1; i >= 0; i--) {
         const entry = batch[i]
@@ -393,21 +434,6 @@ function createChatExecutor ({
       return parts.length ? String(parts[parts.length - 1] || '') : ''
     })()
     const intent = classifyIntent(lastText || content)
-    if (source === 'followup' && batch.length === 1) {
-      const only = batch[0]
-      const parts = Array.isArray(only?.parts) ? only.parts.filter(part => String(part || '').trim()) : []
-      if (parts.length === 1) {
-        const handled = await maybeHandleLocalQuery({
-          username: owner,
-          text: parts[0],
-          raw: Array.isArray(only.rawParts) ? (only.rawParts[0] || parts[0]) : parts[0],
-          source,
-          intent,
-          reasonTag: 'followup'
-        })
-        if (handled) return
-      }
-    }
     if (source === 'followup') {
       const allowed = canProceed(owner)
       if (!allowed.ok) {
