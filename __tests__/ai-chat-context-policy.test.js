@@ -949,6 +949,35 @@ test('obvious nearby entity query is answered locally without a provider call', 
   }
 })
 
+test('obvious bot position query is answered locally without a provider call', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({ recent })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 你现在坐标在哪')
+    assert.equal(harness.calls.length, 0, `expected bot position query to avoid provider fetch, got ${harness.calls.length}`)
+    assert.equal(harness.toolRuns.length, 0)
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /当前位置/)
+    assert.match(harness.sent[0].text, /0,\s*64,\s*0/)
+  } finally {
+    harness.restore()
+  }
+})
+
+test('location knowledge query is not mistaken for bot position', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
+  const harness = makeExecutor({ recent, assistantContent: '我想一下基地的位置。' })
+  try {
+    await harness.executor.handleChat('kuleizi', 'owkowk 你知道基地在哪吗')
+    assert.equal(harness.calls.length, 1, 'expected non-bot location query to keep provider path')
+    assert.equal(harness.toolRuns.length, 0)
+    assert.equal(harness.sent.length, 1)
+    assert.match(harness.sent[0].text, /基地的位置/)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('obvious book read query is answered locally without a provider call', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({

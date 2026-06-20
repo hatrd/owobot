@@ -789,6 +789,40 @@ function createChatExecutor ({
     return null
   }
 
+  function isObviousBotPositionQuery (text, intent = {}) {
+    const raw = String(text || '')
+    const lower = raw.toLowerCase()
+    const kind = String(intent?.kind || '').toLowerCase()
+    if (kind === 'action') return false
+    const topic = String(intent?.topic || '').toLowerCase()
+    if (topic !== 'position' && !/(坐标|座标|坐標|位置|where|location|position|coords?)/.test(lower)) return false
+
+    const cleaned = stripBotMentionPrefix(raw)
+    const cleanedLower = cleaned.toLowerCase()
+    if (/(基地|家|home|base|warp|传送点|村庄|矿洞)/.test(cleanedLower)) return false
+
+    return /你(现在|当前|目前)?(在)?(哪里|哪儿|哪边|哪|什么位置|哪个位置|坐标|座标|坐標)/.test(cleanedLower) ||
+      /你.*(当前|目前|所在|位置|坐标|座标|坐標)/.test(cleanedLower) ||
+      /(现在|当前|目前).*(坐标|座标|坐標|位置)/.test(cleanedLower) ||
+      /(where are you|your\s+(position|location|coords?)|bot\s+(position|location|coords?)|current\s+(position|location|coords?))/i.test(cleanedLower)
+  }
+
+  function buildLocalBotPositionReply () {
+    const pos = bot?.entity?.position
+    if (!pos) return ''
+    const toCoord = (value) => {
+      const n = Number(value)
+      return Number.isFinite(n) ? Math.round(n) : 0
+    }
+    const x = toCoord(pos.x)
+    const y = toCoord(pos.y)
+    const z = toCoord(pos.z)
+    const dim = (() => {
+      try { return String(bot?.game?.dimension || '').trim() } catch { return '' }
+    })()
+    return dim ? `当前位置: ${x}, ${y}, ${z} | 维度: ${dim}` : `当前位置: ${x}, ${y}, ${z}`
+  }
+
   async function runLocalActionTool (tool, args = {}) {
     try {
       return await actions.run(tool, args || {})
@@ -1874,6 +1908,15 @@ function createChatExecutor ({
 
   async function maybeHandleLocalQuery ({ username, text, raw, source, intent, reasonTag }) {
     const topic = String(intent?.topic || '').toLowerCase()
+    if (isObviousBotPositionQuery(text, intent)) {
+      const textOut = H.trimReply(buildLocalBotPositionReply(), state.ai?.maxReplyLen)
+      if (textOut) {
+        pulse.sendChatReply(username, textOut, {
+          reason: `${reasonTag || source || 'chat'}_local_position`
+        })
+        return true
+      }
+    }
     let local = null
     if (topic === 'stats' || topic === 'leaderboard') {
       local = topic === 'leaderboard'
