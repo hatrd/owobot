@@ -251,6 +251,13 @@ function createChatExecutor ({
     }
   }
 
+  function buildCurrentUserMessage (username, content) {
+    const actor = String(username || '').trim()
+    const text = String(content || '').trim()
+    if (!text) return ''
+    return actor ? `${actor}: ${text}` : text
+  }
+
   function messageTokens (msg) {
     return estTokensFromText(String(msg?.content || ''))
   }
@@ -1005,7 +1012,6 @@ function createChatExecutor ({
       try { return people?.buildAllCommitmentsContext?.({ player: username }) || '' } catch { return '' }
     })()
     const metaCtx = profile.includeMeta === false ? '' : buildMetaContext()
-    const inlineUserContent = options?.inlineUserContent === true
     const withTools = options?.withTools !== false && profile.withTools !== false
     const maxToolCalls = (() => {
       const raw = Number(options?.maxToolCalls ?? state.ai?.maxToolCallsPerTurn ?? state.ai?.maxToolCalls ?? 6)
@@ -1019,7 +1025,7 @@ function createChatExecutor ({
       if (dryRun) out.dryEvents = dryEvents.slice()
       return out
     }
-    const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
+    const userPrompt = buildCurrentUserMessage(username, content)
     const maxInputTokens = Number.isFinite(profile.maxInputTokens) && profile.maxInputTokens > 0
       ? Math.floor(profile.maxInputTokens)
       : 0
@@ -1038,7 +1044,7 @@ function createChatExecutor ({
       peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx, label: 'peopleCommitmentsCtx', maxTokens: sectionBudget('commitments', 360), minTokens: sectionBudget('commitmentsMin', 48) } : null,
       memoryCtx ? { role: 'system', content: memoryCtx, label: 'memoryCtx', maxTokens: sectionBudget('memory', profile.name === 'plan_context' ? 1100 : 850), minTokens: sectionBudget('memoryMin', profile.name === 'plan_context' ? 160 : 120) } : null,
       { role: 'system', content: contextPrompt, label: 'contextPrompt', maxTokens: sectionBudget('recent', profile.name === 'plan_context' ? 1400 : 850), minTokens: sectionBudget('recentMin', profile.name === 'plan_context' ? 700 : 180) },
-      inlinePrompt ? { role: 'system', content: inlinePrompt, keep: true, label: 'userPrompt' } : null
+      userPrompt ? { role: 'user', content: userPrompt, keep: true, label: 'userPrompt' } : null
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {

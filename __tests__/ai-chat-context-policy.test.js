@@ -260,6 +260,23 @@ test('context profiles cap completion budget by conversation shape', async () =>
   }
 })
 
+test('triggered main chat sends current player input as a user message', async () => {
+  const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 8, chars: 80 })
+  const harness = makeExecutor({ recent, assistantContent: '喵？' })
+  try {
+    await harness.executor.processChatContent('izieluk', '呆猫~', 'owkowk 呆猫~', 'trigger')
+
+    assert.equal(harness.calls.length, 1)
+    const messages = harness.calls[0].body.messages
+    assert.ok(Array.isArray(messages))
+    assert.equal(messages.at(-1).role, 'user')
+    assert.equal(messages.at(-1).content, 'izieluk: 呆猫~')
+    assert.equal(messages.some(msg => msg.keep !== undefined || msg.label !== undefined), false)
+  } finally {
+    harness.restore()
+  }
+})
+
 test('2026-02-14 high-token chat shape is trimmed below 3000 tokens', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 120, chars: 260 })
   const harness = makeExecutor({ recent })
