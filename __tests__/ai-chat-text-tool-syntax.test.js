@@ -148,3 +148,14 @@ test('executor treats production LLM say{} text as a say tool instead of literal
     harness.cleanup()
   }
 })
+
+test('executor treats production LLM skip{} text as no outbound chat', async () => {
+  const harness = makeHarness({ llmContent: 'skip{}' })
+  try {
+    await harness.executor.processChatContent('izieluk', 'owk说的对喵~', 'izieluk whispers to you: owk说的对喵~', 'trigger')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.deepEqual(harness.sent, [])
+  } finally {
+    harness.cleanup()
+  }
+})

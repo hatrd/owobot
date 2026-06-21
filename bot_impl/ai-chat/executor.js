@@ -1130,7 +1130,7 @@ function createChatExecutor ({
           const selectedToolNames = selectedTools
             .map(def => String(def?.function?.name || '').trim())
             .filter(Boolean)
-          const inlineAllowedNames = selectedToolNames.length ? selectedToolNames : ['say']
+          const inlineAllowedNames = selectedToolNames.length ? selectedToolNames : ['say', 'skip']
           const inlineToolCall = extractInlineToolCallFromText(reply, inlineAllowedNames)
           if (inlineToolCall) {
             if (state.ai.trace && log?.info) log.info('inline text tool ->', inlineToolCall.function?.name)
