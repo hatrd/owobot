@@ -173,7 +173,7 @@ function classifyIntent (text) {
   if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
   if (/承诺|待办|todo|promise|commitment/.test(lower)) intent.topic = 'commitment'
   if (/附近|near|around|周围/.test(lower)) intent.nearby = true
-  if (/攻击|追击|清怪|清理|守护|防守|击杀|打怪|打架|kill|defend|hunt/.test(lower)) intent.kind = 'action'
+  if (/攻击|追击|追杀|清怪|清理|守护|防守|保护|护卫|跟随|跟着|跟我|跟上|跟来|follow|kill|defend|hunt|guard|escort/.test(lower)) intent.kind = 'action'
   if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
   return intent
 }
@@ -409,32 +409,78 @@ function extractToolCallsFromApiResponse (data) {
   return calls
 }
 
-function extractInlineToolCallFromText (text, toolNames) {
-  const raw = String(text || '').trim()
-  if (!raw) return null
-  const names = Array.isArray(toolNames)
-    ? toolNames.map(name => String(name || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length)
-    : []
-  if (!names.length) return null
-  for (const name of names) {
-    if (!raw.startsWith(name)) continue
-    const argsText = raw.slice(name.length).trimStart()
-    if (!argsText.startsWith('{')) continue
-    let args
-    try {
-      args = JSON.parse(argsText)
-    } catch {
-      return null
+function parseInlineJsonObjectAt (raw, start) {
+  if (raw[start] !== '{') return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
     }
-    if (!args || typeof args !== 'object' || Array.isArray(args)) return null
-    return {
-      function: {
-        name,
-        arguments: JSON.stringify(args)
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === '{') {
+      depth += 1
+      continue
+    }
+    if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const jsonText = raw.slice(start, i + 1)
+        try {
+          const args = JSON.parse(jsonText)
+          if (!args || typeof args !== 'object' || Array.isArray(args)) return null
+          return { args, end: i + 1 }
+        } catch {
+          return null
+        }
       }
+      if (depth < 0) return null
     }
   }
   return null
+}
+
+function extractInlineToolCallsFromText (text, toolNames) {
+  const raw = String(text || '').trim()
+  if (!raw) return []
+  const names = Array.isArray(toolNames)
+    ? toolNames.map(name => String(name || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length)
+    : []
+  if (!names.length) return []
+  const calls = []
+  let offset = 0
+  while (offset < raw.length) {
+    while (offset < raw.length && /\s/.test(raw[offset])) offset += 1
+    if (offset >= raw.length) break
+    const name = names.find(name => raw.startsWith(name, offset))
+    if (!name) return []
+    let argsOffset = offset + name.length
+    while (argsOffset < raw.length && /\s/.test(raw[argsOffset])) argsOffset += 1
+    if (raw[argsOffset] !== '{') return []
+    const parsed = parseInlineJsonObjectAt(raw, argsOffset)
+    if (!parsed) return []
+    calls.push({
+      function: {
+        name,
+        arguments: JSON.stringify(parsed.args)
+      }
+    })
+    offset = parsed.end
+  }
+  return calls
+}
+
+function extractInlineToolCallFromText (text, toolNames) {
+  const calls = extractInlineToolCallsFromText(text, toolNames)
+  return calls.length === 1 ? calls[0] : null
 }
 
 function extractUsageFromApiResponse (data) {
@@ -477,6 +523,7 @@ module.exports = {
   extractAssistantText,
   extractAssistantTextFromApiResponse,
   extractToolCallsFromApiResponse,
+  extractInlineToolCallsFromText,
   extractInlineToolCallFromText,
   extractUsageFromApiResponse,
   buildAiUrl

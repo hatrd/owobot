@@ -7,11 +7,13 @@ import {
   projectedCostForCall,
   canAfford,
   selectContextProfile,
+  classifyIntent,
   extractAssistantText,
   stripReasoningText,
   isResponsesApiPath,
   extractAssistantTextFromApiResponse,
   extractToolCallsFromApiResponse,
+  extractInlineToolCallsFromText,
   extractInlineToolCallFromText,
   extractUsageFromApiResponse
 } from '../bot_impl/ai-chat-helpers.js'
@@ -77,6 +79,23 @@ test('extractInlineToolCallFromText parses exact structured tool text without gu
   assert.equal(extractInlineToolCallFromText('我想 say{"text":"hi"}', ['say']), null)
   assert.equal(extractInlineToolCallFromText('say {bad json}', ['say']), null)
   assert.equal(extractInlineToolCallFromText('feedback{"need":"x"}', ['say']), null)
+})
+
+test('extractInlineToolCallsFromText parses consecutive exact structured tool text', () => {
+  const calls = extractInlineToolCallsFromText('defend_player{"name":"Ameyaku"} say{"steps":["跟着雨姐呢 走哪我跟哪~"]}', ['defend_player', 'say'])
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0]?.function?.name, 'defend_player')
+  assert.deepEqual(JSON.parse(calls[0].function.arguments), { name: 'Ameyaku' })
+  assert.equal(calls[1]?.function?.name, 'say')
+  assert.deepEqual(JSON.parse(calls[1].function.arguments), { steps: ['跟着雨姐呢 走哪我跟哪~'] })
+  assert.deepEqual(extractInlineToolCallsFromText('好呀 defend_player{"name":"Ameyaku"}', ['defend_player']), [])
+  assert.deepEqual(extractInlineToolCallsFromText('defend_player{"name":"Ameyaku"} 好呀', ['defend_player']), [])
+})
+
+test('classifyIntent treats follow/protect/hunt commands as actions', () => {
+  assert.deepEqual(classifyIntent('owk，跟随我'), { topic: 'generic', nearby: false, kind: 'action' })
+  assert.deepEqual(classifyIntent('owk，追杀我'), { topic: 'generic', nearby: false, kind: 'action' })
+  assert.deepEqual(classifyIntent('owk，保护 Ameyaku'), { topic: 'generic', nearby: false, kind: 'action' })
 })
 
 test('estTokensFromText approximates chars/4 ceil', () => {

@@ -184,7 +184,7 @@ function createChatExecutor ({
     }
     lines.push([
       '这是对多个玩家的批量对话输入。',
-      '如果需要分别回应，请用 say 工具分次发送；每条消息开头用“玩家名：”来点名（不要用 @）。',
+      '如果需要分别回应，请用 say 工具分次发送；只在多玩家语义确实需要区分对象时才短暂点名。',
       '对不需要回应的玩家，不要发送该玩家的消息。',
       '如果某个玩家在消息里明确要求“记住/记一下/记下来…”，请调用 write_memory 工具保存，不要只口头答应。'
     ].join(''))
@@ -317,7 +317,7 @@ function createChatExecutor ({
     }
     if (kind === 'action') {
       names.push(...DEFAULT_ACTION_TOOL_NAMES)
-      if (['attack', 'combat', 'defend'].includes(topic)) names.push(...COMBAT_TOOL_NAMES)
+      names.push(...COMBAT_TOOL_NAMES)
     }
     if (['stats', 'leaderboard'].includes(topic)) names.push(...STATS_TOOL_NAMES)
     if (topic === 'people' || topic === 'commitment') names.push(...PEOPLE_TOOL_NAMES)
@@ -1041,10 +1041,10 @@ function createChatExecutor ({
             .map(def => String(def?.function?.name || '').trim())
             .filter(Boolean)
           const inlineAllowedNames = selectedToolNames.length ? selectedToolNames : ['say', 'skip']
-          const inlineToolCall = extractInlineToolCallFromText(reply, inlineAllowedNames)
-          if (inlineToolCall) {
-            if (state.ai.trace && log?.info) log.info('inline text tool ->', inlineToolCall.function?.name)
-            return { reply: '', toolCalls: [inlineToolCall], interrupted: false }
+          const inlineToolCalls = extractInlineToolCallsFromText(reply, inlineAllowedNames)
+          if (inlineToolCalls.length) {
+            if (state.ai.trace && log?.info) log.info('inline text tools ->', inlineToolCalls.map(call => call.function?.name).filter(Boolean).join(','))
+            return { reply: '', toolCalls: inlineToolCalls, interrupted: false }
           }
         }
         return { reply: H.trimReply(reply, replyLimit), toolCalls, interrupted: false }
@@ -1093,18 +1093,35 @@ function createChatExecutor ({
       const roundEntries = []
       let speech = lastReply
 
-      for (const call of selectedCalls) {
+      for (let callIndex = 0; callIndex < selectedCalls.length; callIndex++) {
+        const call = selectedCalls[callIndex]
         if (Array.isArray(ctrl.pending) && ctrl.pending.length) break
 
         const payload = normalizeToolPayload(call)
         if (!payload || !payload.tool) continue
+        const hasFollowingSay = selectedCalls.slice(callIndex + 1).some(nextCall => {
+          const nextPayload = normalizeToolPayload(nextCall)
+          return String(nextPayload?.tool || '').toLowerCase() === 'say'
+        })
         const toolKey = toolCallFingerprint(payload)
         if (toolKey && seenToolCalls.has(toolKey)) {
           const duplicateReply = fallbackReply || '我刚刚已经查过这个了，不重复调用同一个工具。'
           return finish(H.trimReply(duplicateReply, replyLimit))
         }
         if (toolKey) seenToolCalls.add(toolKey)
-        const handled = await handleToolReply({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun, dryEvents })
+        const handled = await handleToolReply({
+          payload,
+          speech,
+          username,
+          content,
+          intent,
+          maxReplyLen,
+          memoryRefs,
+          dryRun,
+          dryEvents,
+          continueAfterToolResult: hasFollowingSay,
+          suppressActionReply: hasFollowingSay
+        })
         speech = ''
         totalToolCalls += 1
 
@@ -1176,14 +1193,23 @@ function createChatExecutor ({
   }
 
   function extractInlineToolCallFromText (text, allowedNames = INLINE_TOOL_NAMES) {
-    const call = typeof H.extractInlineToolCallFromText === 'function'
-      ? H.extractInlineToolCallFromText(text, allowedNames)
-      : null
-    if (!call) return null
-    return {
-      id: call.id || `inline_${call.function?.name || 'tool'}_${now()}`,
+    const calls = extractInlineToolCallsFromText(text, allowedNames)
+    return calls.length === 1 ? calls[0] : null
+  }
+
+  function extractInlineToolCallsFromText (text, allowedNames = INLINE_TOOL_NAMES) {
+    const calls = typeof H.extractInlineToolCallsFromText === 'function'
+      ? H.extractInlineToolCallsFromText(text, allowedNames)
+      : (() => {
+          const call = typeof H.extractInlineToolCallFromText === 'function'
+            ? H.extractInlineToolCallFromText(text, allowedNames)
+            : null
+          return call ? [call] : []
+        })()
+    return (Array.isArray(calls) ? calls : []).map((call, idx) => ({
+      id: call.id || `inline_${call.function?.name || 'tool'}_${now()}_${idx}`,
       function: call.function
-    }
+    })).filter(call => call.function?.name)
   }
 
   function isTeleportChatCommand (text) {
@@ -1414,7 +1440,7 @@ function createChatExecutor ({
     }
   }
 
-  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun = false, dryEvents = null }) {
+  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun = false, dryEvents = null, continueAfterToolResult = false, suppressActionReply = false }) {
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     const result = (resultText, fallbackReply = '') => ({ result: String(resultText || 'ok'), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
     const halt = (resultText = 'halt', fallbackReply = '') => ({ halt: true, result: String(resultText), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
@@ -1477,7 +1503,7 @@ function createChatExecutor ({
         appendDry('tool.result', { tool: 'pickup', result: compactJsonValue(pickupDryRes, 0), summary: pickupSummary })
         return halt([summary, pickupSummary].filter(Boolean).join(' ; '))
       }
-      if (shouldHaltAfterToolResult(toolName, intent)) return halt(summary)
+      if (shouldHaltAfterToolResult(toolName, intent)) return continueAfterToolResult ? result(summary) : halt(summary)
       return result(summary)
     }
     if (toolLower === 'stop_listen') {
@@ -1638,7 +1664,7 @@ function createChatExecutor ({
     const baseMsg = res && typeof res === 'object' ? (res.msg || '') : ''
     const fallback = res && res.ok ? '完成啦~' : '这次没成功！'
     const finalText = H.trimReply(baseMsg || fallback, replyLimit)
-    if (finalText) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
+    if (finalText && !suppressActionReply) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     const summary = buildActionResultSummary({ toolName, res })
     if (shouldAutoPickupAfterDropObservation(toolName, intent) && res?.ok !== false && isActionToolAllowed('pickup')) {
       const pickupArgs = buildPickupArgsFromObserveArgs(payload.args || {})
@@ -1652,7 +1678,7 @@ function createChatExecutor ({
       const pickupSummary = buildActionResultSummary({ toolName: 'pickup', res: pickupRes })
       return halt([summary, pickupSummary].filter(Boolean).join(' ; '))
     }
-    if (shouldHaltAfterToolResult(toolName, intent)) return halt(summary)
+    if (shouldHaltAfterToolResult(toolName, intent)) return continueAfterToolResult ? result(summary) : halt(summary)
     return result(summary)
   }
 

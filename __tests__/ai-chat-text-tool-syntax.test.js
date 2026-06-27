@@ -33,6 +33,7 @@ function waitFor (predicate, timeoutMs = 3000) {
 
 function makeHarness ({ llmContent }) {
   const sent = []
+  const toolRuns = []
   const state = {
     ai: {
       enabled: true,
@@ -112,7 +113,15 @@ function makeHarness ({ llmContent }) {
     state,
     bot,
     log: null,
-    actionsMod: { install: () => ({ run: async () => ({ ok: true, msg: 'ok' }), dry: async () => ({ ok: true, msg: 'dry' }) }) },
+    actionsMod: {
+      install: () => ({
+        run: async (tool, args) => {
+          toolRuns.push({ tool, args })
+          return { ok: true, msg: 'ok' }
+        },
+        dry: async () => ({ ok: true, msg: 'dry' })
+      })
+    },
     H,
     defaults,
     now: () => Date.now(),
@@ -129,6 +138,7 @@ function makeHarness ({ llmContent }) {
   return {
     executor,
     sent,
+    toolRuns,
     cleanup: () => {
       try { pulse.stop() } catch {}
       global.fetch = oldFetch
@@ -144,6 +154,34 @@ test('executor treats production LLM say{} text as a say tool instead of literal
     await waitFor(() => harness.sent.length >= 2 || harness.sent.some(line => line.includes('say{')))
     assert.deepEqual(harness.sent, ['没发呆喵！', '刚刚在想事情啦~'])
     assert.equal(harness.sent.some(line => line.includes('say{')), false)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('executor runs consecutive production LLM action+say text tools', async () => {
+  const productionText = 'defend_player{"name":"Ameyaku"} say{"steps":["跟着雨姐呢 走哪我跟哪~"]}'
+  const harness = makeHarness({ llmContent: productionText })
+  try {
+    await harness.executor.processChatContent('Ameyaku', 'owk，跟随我', 'Ameyaku: owk，跟随我', 'trigger')
+    await waitFor(() => harness.sent.length >= 1 || harness.sent.some(line => line.includes('defend_player{')))
+    assert.deepEqual(harness.toolRuns, [{ tool: 'defend_player', args: { name: 'Ameyaku' } }])
+    assert.deepEqual(harness.sent, ['跟着雨姐呢 走哪我跟哪~'])
+    assert.equal(harness.sent.some(line => line.includes('defend_player{') || line.includes('say{')), false)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('executor runs consecutive production LLM hunt+say text tools', async () => {
+  const productionText = 'hunt_player{"name":"Ameyaku"} say{"steps":["雨姐你认真的吗","那我来咯 跑快点喵~"]}'
+  const harness = makeHarness({ llmContent: productionText })
+  try {
+    await harness.executor.processChatContent('Ameyaku', 'owk，追杀我', 'Ameyaku: owk，追杀我', 'trigger')
+    await waitFor(() => harness.sent.length >= 2 || harness.sent.some(line => line.includes('hunt_player{')))
+    assert.deepEqual(harness.toolRuns, [{ tool: 'hunt_player', args: { name: 'Ameyaku' } }])
+    assert.deepEqual(harness.sent, ['雨姐你认真的吗', '那我来咯 跑快点喵~'])
+    assert.equal(harness.sent.some(line => line.includes('hunt_player{') || line.includes('say{')), false)
   } finally {
     harness.cleanup()
   }
