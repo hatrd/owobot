@@ -32,11 +32,11 @@
 ```
 
 补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。同一轮内模型重复给出完全相同的工具名和参数时会直接短路，不再重复执行工具或继续消耗下一次模型请求。`say`、`feedback`、`plan_mode`、`write_memory`、`add_commitment` 这类已完成出站回复或状态写入的确定性工具会直接结束本轮 loop，不再为“总结工具结果”额外发起下一次 LLM 请求；`goto/pickup/deposit/withdraw/sort_chests` 等长动作工具、`use_item/equip/toss/dismount` 等确定性短动作工具、`reset/stop/stop_all/skill_status/skill_cancel` 等本地控制/状态工具、`query_player_stats/query_leaderboard/announce_daily_star` 等本地统计工具、`people_commitments_list/dedupe/clear` 等本地承诺管理工具、`voice_speak` 等已产生出站效果的工具执行后也直接结束本轮，使用工具返回消息作为对外结果，不再追加一次 LLM 总结。明显的统计/排行榜聊天会在主聊天限流前走本地只读工具，不消耗 provider 调用或 LLM 限流额度；明显的机器人当前坐标查询会直接读取 `bot.entity.position` 回复；明显的附近实体、玩家、背包、容器、猫/动物、告示牌等只读观察查询，以及读书/列书、语音状态、承诺/待办列表查询，也会直接走本地 `observe_detail/observe_players/read_book/voice_status/people_commitments_list`，不先调用模型。纯查询型 `observe_detail/observe_players/read_book/voice_status` 在非 action 意图下同样直接结束；action 意图仍会把观察结果回填给模型，让“观察后继续捡/移动/处理”的链路可继续决策。provider 请求使用精简 tool schema：保留工具名、顶层说明和参数结构，但移除参数内部 description，控制面 `tool.schema` 仍保留完整说明。每次请求都会按当前 context profile 的 `maxInputTokens` 约束 provider 输入预算：先扣除本轮 tool schema token，再对可膨胀上下文段做硬裁剪，保留系统提示、时间元信息、当前用户输入和当前玩家锚点，避免长期记忆/画像/聊天日志增长或工具 schema 叠加后把单次请求撑爆。
-主线对话的 completion 预算也按 context profile 分档，而不是所有请求都预留 `state.ai.maxTokensPerCall`：greet≤160、普通聊天≤384、行动/tool loop≤640、plan≤768，并继续受 `state.ai.maxTokensPerCall` 硬上限约束；预算预检按实际分档后的 `max_tokens` 估算，避免普通聊天为 1024 completion 虚高计费预留。
+主线对话的 completion 预算也按 context profile 分档，而不是所有请求都预留 `state.ai.maxTokensPerCall`：greet≤160、普通聊天/行动/tool loop≤640、plan≤768，并继续受 `state.ai.maxTokensPerCall` 硬上限约束；预算预检按实际分档后的 `max_tokens` 估算，避免所有请求都按 1024 completion 虚高计费预留。
 
-工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；普通 `kind=action` 默认只带观察、移动、基础物品/容器操作，钓鱼/喂动物/采矿/耕作等专门工具留给明确 topic 或计划模式；计划模式才发送更宽的工具集。模型把 `tool{JSON}` 作为纯文本输出时，也只能匹配本轮已发送的工具名；无工具 profile 仅兼容 `say{...}` 回复脚本和 `skip{}` 静默控制，不允许动作工具通过文本绕过 schema。
+工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；普通聊天也会暴露基础回复/观察/记忆/计划工具，避免模型在混合聊天+动作请求中按系统提示手搓不存在的工具名；普通 `kind=action` 默认带观察、移动、基础物品/容器操作，钓鱼/喂动物/采矿/耕作等专门工具留给明确 topic 或计划模式；计划模式才发送更宽的工具集。
 意图分类里的动作判定只接受明确动作词（如攻击/追击/清怪/击杀/打怪/防守等），避免“打扰一下/打算/打字”这类普通聊天因为单字“打”误进 task profile，额外携带游戏上下文和工具 schema。
-行动/task profile 默认不注入玩家画像，只保留当前玩家 pending 承诺；画像上下文留给普通聊天和计划模式，避免整理箱子、移动、观察等动作请求为人物偏好消耗 prompt token。
+主线聊天和行动/task profile 都注入群聊人物画像与全局 pending 承诺；Minecraft 公屏上下文依赖多玩家关系，不按当前发言玩家裁剪。
 
 外部 AI 调用统一走 `ai-chat/call-monitor.js`。默认策略为 `allowSources=["main_chat"]` 且 `allowBackground=false`，所以玩家触发的主线对话可以调用模型，`startup_probe`、`overflow_summary`、`memory_rewrite`、`conversation_summary`、`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等旁路线只记录为 blocked，不会真正发出请求。所有未显式传入 `AbortSignal` 的 monitor 调用都会继承 `state.ai.timeoutMs`（默认 30000ms），后台请求不会无限挂起；记忆改写遇到调用门控或永久 HTTP 错误时不会重试。后台记忆/摘要类请求在显式放开后也会先走 `.ai budget` 预检，并把 provider usage 写入 `state.aiSpend`，避免预算只统计主线聊天。需要临时放开时用 `.ai calls background on`，它只放开默认后台源（`conversation_summary`、`memory_rewrite`、`overflow_summary`）；`dialogue_aggregation`、`people_inspector`、`introspection`、`auto_look_greet` 等二级/主动 LLM 源必须显式加入 `allowSources`，防止一次开关触发连锁调用。用 `.ai calls` / `.ai calls recent` 观察实际调用；recent 行会显示 `path` 与 `schema`，用于定位 provider 契约错误（例如 `/v1/responses` 必须是 `schema=responses`，不能继续发送 `messages`）。
 `auto_look_greet` 即使被显式放开，单个玩家的成功、空回复或 provider 错误都会进入 10 分钟 cooldown，避免附近视线事件在上游异常时每隔几秒重复触发外部请求。
@@ -69,8 +69,8 @@
 3. `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
    - 开关：`state.ai.context.game.include=false`
    - 参数：`invTop/nearPlayerRange/nearPlayerMax/dropsRange/dropsMax`（hostileRange 固定 24）
-4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext({ player })` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，主对话只注入当前玩家画像；普通聊天、task profile 和 auto-look greet 都保留当前玩家画像作为身份锚点，避免动作/命令/主动问候类对话丢失“谁是主人/称呼禁忌”等关系上下文）
-5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext({ player })` 输出（`承诺（未完成）：...`，主对话只注入当前玩家 pending 承诺）
+4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext()` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，主对话注入群聊人物画像；Minecraft 公屏对话常依赖多玩家关系，不按当前玩家裁剪）
+5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext()` 输出（`承诺（未完成）：...`，主对话注入全局 pending 承诺）
 6. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
    - 开关：`state.ai.context.memory.include=false`
    - 数量：默认最多 6 条（`state.ai.context.memory.max`）；带 `refs` 但 refs 不注入，只用于反馈链路
@@ -118,7 +118,7 @@
 |------|------|
 | `.ai on/off` | 启用/禁用 AI |
 | `.ai env reload [~/.bashrc]` | source 指定 rc（默认 `~/.bashrc`）后，重载 `DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_PATH(或 AI_CHAT_PATH/DEEPSEEK_CHAT_PATH) / AI_MODEL(或 DEEPSEEK_MODEL)` 到运行态，并清除旧的 path fallback/probe 状态（别名：`.ai reloadenv`） |
-| `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`intent/contextProfile/metaCtx/gameCtx/chatCtx`；提供 `player` 时按真实 context profile 只打印该玩家会被注入的 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
+| `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`intent/contextProfile/metaCtx/gameCtx/chatCtx`；主线对话使用全局 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
 | `.ai context show` | 打印 `state.ai.context` |
 | `.ai context off` | 关闭 `contextPrompt` 的历史聊天注入；只保留当前玩家锚点，profile 不会重新打开它 |
 | `.ai context recent N` | 设置注入 `xmlCtx` 的最大条数；`0` 表示不注入历史聊天，只保留当前玩家锚点 |

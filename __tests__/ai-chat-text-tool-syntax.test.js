@@ -173,6 +173,61 @@ test('executor runs consecutive production LLM action+say text tools', async () 
   }
 })
 
+test('executor ignores out-of-scope production LLM action after say without leaking syntax', async () => {
+  const productionText = 'say{"steps":["我穿的不是下界合金套吗喵","哼"]} defend_player{"name":"izieluk"}'
+  const harness = makeHarness({ llmContent: productionText })
+  try {
+    await harness.executor.processChatContent('izieluk', 'owkowk 身上穿的装备叫什么', 'izieluk: owkowk 身上穿的装备叫什么', 'trigger')
+    await waitFor(() => harness.sent.length >= 2 || harness.sent.some(line => line.includes('say{')))
+    assert.deepEqual(harness.sent, ['我穿的不是下界合金套吗喵', '哼'])
+    assert.deepEqual(harness.toolRuns, [])
+    assert.equal(harness.sent.some(line => line.includes('defend_player{') || line.includes('say{')), false)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('executor ignores malformed closing tail after production LLM say text tool', async () => {
+  const productionText = 'say{"steps":["哼 谁蠢了喵","我聪明着呢 不信你考考我"]}]}'
+  const harness = makeHarness({ llmContent: productionText })
+  try {
+    await harness.executor.processChatContent('izieluk', 'owkowk 蠢猫还有救呢', 'izieluk: owkowk 蠢猫还有救呢', 'trigger')
+    await waitFor(() => harness.sent.length >= 2 || harness.sent.some(line => line.includes('say{')))
+    assert.deepEqual(harness.sent, ['哼 谁蠢了喵', '我聪明着呢 不信你考考我'])
+    assert.equal(harness.sent.some(line => line.includes('say{')), false)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('executor normalizes production LLM go_to_block alias after say text tool', async () => {
+  const productionText = 'say{"steps":["雨姐我刚才差点被苦力怕炸了 吓死我了",{"pauseMs":1200},"我去床边躺会儿"]}go_to_block{"type":"bed"}'
+  const harness = makeHarness({ llmContent: productionText })
+  try {
+    await harness.executor.processChatContent('Ameyaku', '随便说点啥，然后移动到床边', 'Ameyaku: 随便说点啥，然后移动到床边', 'trigger')
+    await waitFor(() => (harness.sent.length >= 2 && harness.toolRuns.length >= 1) || harness.sent.some(line => line.includes('go_to_block{')), 6000)
+    assert.deepEqual(harness.sent, ['雨姐我刚才差点被苦力怕炸了 吓死我了', '我去床边躺会儿'])
+    assert.deepEqual(harness.toolRuns, [{ tool: 'goto_block', args: { match: 'bed' } }])
+    assert.equal(harness.sent.some(line => line.includes('go_to_block{') || line.includes('say{')), false)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('executor merges production LLM say pause say before goto_block', async () => {
+  const productionText = 'say{"steps":["雨姐你咋又喊我 草"]}{"pauseMs":800}say{"steps":["行吧我去草方块上站着"]}goto_block{"match":"grass","radius":48}'
+  const harness = makeHarness({ llmContent: productionText })
+  try {
+    await harness.executor.processChatContent('Ameyaku', '随便说点啥，然后移动到草方块上', 'Ameyaku: 随便说点啥，然后移动到草方块上', 'trigger')
+    await waitFor(() => (harness.sent.length >= 2 && harness.toolRuns.length >= 1) || harness.sent.some(line => line.includes('pauseMs') || line.includes('goto_block{')), 6000)
+    assert.deepEqual(harness.sent, ['雨姐你咋又喊我 草', '行吧我去草方块上站着'])
+    assert.deepEqual(harness.toolRuns, [{ tool: 'goto_block', args: { match: 'grass', radius: 48 } }])
+    assert.equal(harness.sent.some(line => line.includes('say{') || line.includes('pauseMs') || line.includes('goto_block{')), false)
+  } finally {
+    harness.cleanup()
+  }
+})
+
 test('executor runs consecutive production LLM hunt+say text tools', async () => {
   const productionText = 'hunt_player{"name":"Ameyaku"} say{"steps":["雨姐你认真的吗","那我来咯 跑快点喵~"]}'
   const harness = makeHarness({ llmContent: productionText })

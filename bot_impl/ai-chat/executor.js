@@ -19,6 +19,10 @@ const INLINE_TOOL_NAMES = INLINE_TOOL_FUNCTIONS
   .map(def => String(def?.function?.name || '').trim())
   .filter(Boolean)
   .sort((a, b) => b.length - a.length)
+const INLINE_TOOL_ALIASES = {
+  go_to_block: 'goto_block'
+}
+const INLINE_TOOL_ALIAS_NAMES = Object.keys(INLINE_TOOL_ALIASES).sort((a, b) => b.length - a.length)
 const REPLY_TOOL_NAMES = ['say', 'feedback', 'skip']
 const CONTROL_TOOL_NAMES = ['stop_listen', 'reset', 'stop', 'stop_all']
 const MEMORY_TOOL_NAMES = ['write_memory', 'add_commitment']
@@ -260,7 +264,7 @@ function createChatExecutor ({
       ? Math.floor(explicit)
       : (() => {
           if (profileName === 'greet_minimal') return 160
-          if (profileName === 'chat_light') return 384
+          if (profileName === 'chat_context') return 640
           if (profileName === 'task_context') return 640
           if (profileName === 'plan_context') return 768
           return 512
@@ -914,11 +918,11 @@ function createChatExecutor ({
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     const peopleProfilesCtx = (() => {
       if (profile.includePeople === false) return ''
-      try { return people?.buildAllProfilesContext?.({ player: username }) || '' } catch { return '' }
+      try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
     })()
     const peopleCommitmentsCtx = (() => {
       if (profile.includeCommitments === false) return ''
-      try { return people?.buildAllCommitmentsContext?.({ player: username }) || '' } catch { return '' }
+      try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
     })()
     const metaCtx = profile.includeMeta === false ? '' : buildMetaContext()
     const inlineUserContent = options?.inlineUserContent === true
@@ -1040,11 +1044,14 @@ function createChatExecutor ({
           const selectedToolNames = selectedTools
             .map(def => String(def?.function?.name || '').trim())
             .filter(Boolean)
-          const inlineAllowedNames = selectedToolNames.length ? selectedToolNames : ['say', 'skip']
+          const selectedNameSet = new Set(selectedToolNames)
+          const inlineAllowedAliases = INLINE_TOOL_ALIAS_NAMES.filter(alias => selectedNameSet.has(INLINE_TOOL_ALIASES[alias]))
+          const inlineAllowedNames = Array.from(new Set([...selectedToolNames, ...inlineAllowedAliases, 'say', 'skip']))
           const inlineToolCalls = extractInlineToolCallsFromText(reply, inlineAllowedNames)
           if (inlineToolCalls.length) {
-            if (state.ai.trace && log?.info) log.info('inline text tools ->', inlineToolCalls.map(call => call.function?.name).filter(Boolean).join(','))
-            return { reply: '', toolCalls: inlineToolCalls, interrupted: false }
+            const normalizedInlineToolCalls = mergeAdjacentSayToolCalls(inlineToolCalls)
+            if (state.ai.trace && log?.info) log.info('inline text tools ->', normalizedInlineToolCalls.map(call => call.function?.name).filter(Boolean).join(','))
+            return { reply: '', toolCalls: normalizedInlineToolCalls, interrupted: false }
           }
         }
         return { reply: H.trimReply(reply, replyLimit), toolCalls, interrupted: false }
@@ -1092,6 +1099,10 @@ function createChatExecutor ({
       const selectedCalls = step.toolCalls.slice(0, remaining)
       const roundEntries = []
       let speech = lastReply
+      const batchHasSay = selectedCalls.some(call => {
+        const payload = normalizeToolPayload(call)
+        return String(payload?.tool || '').toLowerCase() === 'say'
+      })
 
       for (let callIndex = 0; callIndex < selectedCalls.length; callIndex++) {
         const call = selectedCalls[callIndex]
@@ -1099,6 +1110,7 @@ function createChatExecutor ({
 
         const payload = normalizeToolPayload(call)
         if (!payload || !payload.tool) continue
+        const hasFollowingTool = selectedCalls.slice(callIndex + 1).some(nextCall => Boolean(normalizeToolPayload(nextCall)?.tool))
         const hasFollowingSay = selectedCalls.slice(callIndex + 1).some(nextCall => {
           const nextPayload = normalizeToolPayload(nextCall)
           return String(nextPayload?.tool || '').toLowerCase() === 'say'
@@ -1119,8 +1131,8 @@ function createChatExecutor ({
           memoryRefs,
           dryRun,
           dryEvents,
-          continueAfterToolResult: hasFollowingSay,
-          suppressActionReply: hasFollowingSay
+          continueAfterToolResult: hasFollowingTool,
+          suppressActionReply: batchHasSay && String(payload.tool || '').toLowerCase() !== 'say'
         })
         speech = ''
         totalToolCalls += 1
@@ -1167,7 +1179,64 @@ function createChatExecutor ({
         args = {}
       }
     }
-    return { tool: fn.name, args }
+    const rawName = String(fn.name || '').trim()
+    const aliasKey = rawName.toLowerCase()
+    const tool = INLINE_TOOL_ALIASES[aliasKey] || rawName
+    if (aliasKey === 'go_to_block') {
+      args = { ...(args || {}) }
+      if (args.match == null && args.name == null && args.type != null) {
+        args.match = args.type
+        delete args.type
+      }
+    }
+    return { tool, args }
+  }
+
+  function sayArgsToSteps (args = {}) {
+    if (Array.isArray(args?.steps)) return args.steps.slice()
+    if (Array.isArray(args?.messages)) {
+      const gapMs = Number.isFinite(Number(args.gapMs)) ? Math.max(0, Math.floor(Number(args.gapMs))) : 300
+      return args.messages.map((text, idx) => idx === args.messages.length - 1 ? String(text) : { text: String(text), pauseMs: gapMs })
+    }
+    if (args?.text != null) return [String(args.text)]
+    return []
+  }
+
+  function mergeAdjacentSayToolCalls (calls = []) {
+    const out = []
+    for (const call of Array.isArray(calls) ? calls : []) {
+      const payload = normalizeToolPayload(call)
+      if (!payload || String(payload.tool || '').toLowerCase() !== 'say') {
+        out.push(call)
+        continue
+      }
+      const steps = sayArgsToSteps(payload.args || {})
+      if (!steps.length) {
+        out.push(call)
+        continue
+      }
+      const prev = out[out.length - 1]
+      const prevPayload = normalizeToolPayload(prev)
+      if (!prevPayload || String(prevPayload.tool || '').toLowerCase() !== 'say') {
+        out.push({
+          id: call.id,
+          function: {
+            name: 'say',
+            arguments: JSON.stringify({ ...(payload.args || {}), steps })
+          }
+        })
+        continue
+      }
+      const mergedSteps = [...sayArgsToSteps(prevPayload.args || {}), ...steps]
+      out[out.length - 1] = {
+        id: prev.id || call.id,
+        function: {
+          name: 'say',
+          arguments: JSON.stringify({ ...(prevPayload.args || {}), steps: mergedSteps })
+        }
+      }
+    }
+    return out
   }
 
   function stableJson (value) {
@@ -1468,7 +1537,7 @@ function createChatExecutor ({
       appendDry('tool.call', { tool: toolName, args: payload.args || {} })
       if (toolLower === 'say') {
         appendDry('tool.say', { args: payload.args || {}, fallbackText: speech || '' })
-        return halt('say_dry_preview', speech || '')
+        return continueAfterToolResult ? result('say_dry_preview', speech || '') : halt('say_dry_preview', speech || '')
       }
       if (!isActionToolAllowed(toolName)) return result('tool_unknown', '这个我还不会哟~')
       let dryRes
@@ -1599,7 +1668,7 @@ function createChatExecutor ({
       if (!ok && speech) {
         pulse.sendChatReply(username, speech, { reason: 'tool_say_fallback', from: 'LLM', memoryRefs })
       }
-      return halt(ok ? 'say_sent' : 'say_fallback')
+      return continueAfterToolResult ? result(ok ? 'say_sent' : 'say_fallback') : halt(ok ? 'say_sent' : 'say_fallback')
     }
     try {
       if (toolName === 'mount_player') {

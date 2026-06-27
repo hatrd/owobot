@@ -72,28 +72,28 @@ function selectContextProfile (intent = {}, options = {}) {
       includeMeta: false,
       includeGame: false,
       includeMemory: false,
-      includePeople: true,
+      includePeople: false,
       includeCommitments: false,
       includeDialogue: false,
       includeRecent: false,
       withTools: false,
       maxInputTokens: 1200
     },
-    chat_light: {
-      name: 'chat_light',
-      recentCount: 10,
-      recentWindowSec: 30 * 60,
-      memoryQueryRecentCount: 0,
+    chat_context: {
+      name: 'chat_context',
+      recentCount: 50,
+      recentWindowSec: 24 * 60 * 60,
+      memoryQueryRecentCount: 8,
       includeSystem: true,
       includeMeta: true,
-      includeGame: false,
+      includeGame: true,
       includeMemory: true,
       includePeople: true,
       includeCommitments: true,
       includeDialogue: false,
       includeRecent: true,
-      withTools: false,
-      maxInputTokens: 3000
+      withTools: true,
+      maxInputTokens: 5000
     },
     task_context: {
       name: 'task_context',
@@ -120,7 +120,7 @@ function selectContextProfile (intent = {}, options = {}) {
       includeMeta: true,
       includeGame: true,
       includeMemory: false,
-      includePeople: false,
+      includePeople: true,
       includeCommitments: false,
       includeDialogue: false,
       includeRecent: true,
@@ -147,7 +147,7 @@ function selectContextProfile (intent = {}, options = {}) {
 
   const clone = (name) => ({ ...profiles[name] })
   if (explicit === 'greet' || explicit === 'minimal' || explicit === 'greet_minimal') return clone('greet_minimal')
-  if (explicit === 'chat' || explicit === 'light' || explicit === 'chat_light') return clone('chat_light')
+  if (explicit === 'chat' || explicit === 'chat_context') return clone('chat_context')
   if (explicit === 'task' || explicit === 'action' || explicit === 'query' || explicit === 'task_context') return clone('task_context')
   if (explicit === 'plan' || explicit === 'loop' || explicit === 'tool_loop' || explicit === 'plan_context') return clone('plan_context')
 
@@ -157,7 +157,7 @@ function selectContextProfile (intent = {}, options = {}) {
   if (['drops', 'players'].includes(topic)) return clone('local_observe_context')
   if (kind === 'action' || kind === 'command') return clone('task_context')
   if (['position', 'players', 'drops', 'observe'].includes(topic)) return clone('task_context')
-  return clone('chat_light')
+  return clone('chat_context')
 }
 
 function classifyIntent (text) {
@@ -173,7 +173,7 @@ function classifyIntent (text) {
   if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
   if (/承诺|待办|todo|promise|commitment/.test(lower)) intent.topic = 'commitment'
   if (/附近|near|around|周围/.test(lower)) intent.nearby = true
-  if (/攻击|追击|追杀|清怪|清理|守护|防守|保护|护卫|跟随|跟着|跟我|跟上|跟来|follow|kill|defend|hunt|guard|escort/.test(lower)) intent.kind = 'action'
+  if (/攻击|追击|追杀|清怪|清理|守护|防守|保护|护卫|跟随|跟着|跟我|跟上|跟来|移动|走到|走去|过去|去到|站到|站在|到.+上|到.+边|follow|kill|defend|hunt|guard|escort|move|walk|go to|goto/.test(lower)) intent.kind = 'action'
   if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
   return intent
 }
@@ -448,6 +448,26 @@ function parseInlineJsonObjectAt (raw, start) {
   return null
 }
 
+function isIgnorableInlineToolTail (tail) {
+  const trimmed = String(tail || '').trim()
+  if (!trimmed) return true
+  return /^[\]}),，。！？!?.、；;：:\s]+$/.test(trimmed)
+}
+
+function isInlinePauseArgs (args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return false
+  const keys = Object.keys(args)
+  if (!keys.length) return false
+  if (!keys.every(key => ['kind', 'pauseMs', 'ms', 'delayMs'].includes(key))) return false
+  if (args.kind != null && String(args.kind) !== 'pause') return false
+  return args.pauseMs != null || args.ms != null || args.delayMs != null
+}
+
+function parseInlineToolNameAt (raw, offset) {
+  const m = String(raw || '').slice(offset).match(/^([A-Za-z_][A-Za-z0-9_]*)/)
+  return m ? m[1] : ''
+}
+
 function extractInlineToolCallsFromText (text, toolNames) {
   const raw = String(text || '').trim()
   if (!raw) return []
@@ -460,8 +480,34 @@ function extractInlineToolCallsFromText (text, toolNames) {
   while (offset < raw.length) {
     while (offset < raw.length && /\s/.test(raw[offset])) offset += 1
     if (offset >= raw.length) break
+    if (raw[offset] === '{') {
+      const parsed = parseInlineJsonObjectAt(raw, offset)
+      if (!parsed || !isInlinePauseArgs(parsed.args)) return []
+      calls.push({
+        function: {
+          name: 'say',
+          arguments: JSON.stringify({ steps: [{ kind: 'pause', pauseMs: parsed.args.pauseMs ?? parsed.args.ms ?? parsed.args.delayMs }] })
+        }
+      })
+      offset = parsed.end
+      const tail = raw.slice(offset)
+      if (tail && isIgnorableInlineToolTail(tail)) break
+      continue
+    }
     const name = names.find(name => raw.startsWith(name, offset))
-    if (!name) return []
+    if (!name) {
+      const unknownName = parseInlineToolNameAt(raw, offset)
+      if (!unknownName || !calls.length) return []
+      let unknownArgsOffset = offset + unknownName.length
+      while (unknownArgsOffset < raw.length && /\s/.test(raw[unknownArgsOffset])) unknownArgsOffset += 1
+      if (raw[unknownArgsOffset] !== '{') return []
+      const unknownParsed = parseInlineJsonObjectAt(raw, unknownArgsOffset)
+      if (!unknownParsed) return []
+      offset = unknownParsed.end
+      const tail = raw.slice(offset)
+      if (tail && isIgnorableInlineToolTail(tail)) break
+      continue
+    }
     let argsOffset = offset + name.length
     while (argsOffset < raw.length && /\s/.test(raw[argsOffset])) argsOffset += 1
     if (raw[argsOffset] !== '{') return []
@@ -474,6 +520,8 @@ function extractInlineToolCallsFromText (text, toolNames) {
       }
     })
     offset = parsed.end
+    const tail = raw.slice(offset)
+    if (tail && isIgnorableInlineToolTail(tail)) break
   }
   return calls
 }

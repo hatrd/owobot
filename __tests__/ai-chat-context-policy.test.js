@@ -232,7 +232,7 @@ test('context profiles cap completion budget by conversation shape', async () =>
     {
       name: 'chat',
       args: ['Alice', 'owkowk 你好呀', { topic: 'generic', kind: 'chat' }, { inlineUserContent: true }],
-      max: 384
+      max: 640
     },
     {
       name: 'action',
@@ -260,7 +260,7 @@ test('context profiles cap completion budget by conversation shape', async () =>
   }
 })
 
-test('2026-02-14 high-token chat shape is trimmed below 3000 tokens', async () => {
+test('2026-02-14 high-token chat shape uses full chat context below budget', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 120, chars: 260 })
   const harness = makeExecutor({ recent })
   try {
@@ -272,13 +272,13 @@ test('2026-02-14 high-token chat shape is trimmed below 3000 tokens', async () =
     )
     const text = promptTextFromCall(harness.calls[0])
     const tokens = H.estTokensFromText(text)
-    assert.ok(tokens < 3000, `expected normal chat prompt < 3000 tokens, got ${tokens}`)
+    assert.ok(tokens < 5000, `expected normal chat prompt < 5000 tokens, got ${tokens}`)
     assert.ok(tokens < HISTORICAL_2026_02_14_AVG_INPUT_TOKENS, `expected prompt below historical 2026-02-14 avg ${HISTORICAL_2026_02_14_AVG_INPUT_TOKENS}, got ${tokens}`)
     assert.match(text, /长期记忆/)
     assert.match(text, /玩家画像/)
-    assert.doesNotMatch(text, /游戏上下文/)
-    assert.equal((text.match(/<p |<b /g) || []).length <= 12, true)
-    assert.equal(harness.calls[0].body.tools, undefined)
+    assert.match(text, /游戏上下文/)
+    assert.equal((text.match(/<p |<b /g) || []).length <= 50, true)
+    assert.equal(Array.isArray(harness.calls[0].body.tools), true)
   } finally {
     harness.restore()
   }
@@ -301,7 +301,7 @@ test('chat profile enforces maxInputTokens even when memory and people context g
     )
     const text = promptTextFromCall(harness.calls[0])
     const tokens = H.estTokensFromText(text)
-    assert.ok(tokens <= 3000, `expected chat prompt <= 3000 tokens, got ${tokens}`)
+    assert.ok(tokens <= 5000, `expected chat prompt <= 5000 tokens, got ${tokens}`)
     assert.match(text, /长期记忆/)
     assert.match(text, /玩家画像/)
     assert.match(text, /当前对话玩家/)
@@ -365,18 +365,18 @@ test('explicit context off disables online context bus history despite profile d
   }
 })
 
-test('chat profile scopes people context to the active player', async () => {
+test('chat profile keeps group people context for Minecraft chat', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 20, chars: 120 })
   const harness = makeExecutor({
     recent,
     people: {
-      buildAllProfilesContext: ({ player } = {}) => {
-        assert.equal(player, 'Alice')
-        return '<people>\n<profile n="Alice">喜欢被叫阿猫</profile>\n</people>'
+      buildAllProfilesContext: (opts = {}) => {
+        assert.deepEqual(opts, {})
+        return '<people>\n<profile n="Alice">喜欢被叫阿猫</profile>\n<profile n="Bob">服里经常和 Alice 一起聊天</profile>\n</people>'
       },
-      buildAllCommitmentsContext: ({ player } = {}) => {
-        assert.equal(player, 'Alice')
-        return '承诺（未完成）：\nAlice：帮 Alice 找回家路线'
+      buildAllCommitmentsContext: (opts = {}) => {
+        assert.deepEqual(opts, {})
+        return '承诺（未完成）：\nAlice：帮 Alice 找回家路线\nBob：等 Alice 回来'
       }
     }
   })
@@ -389,13 +389,13 @@ test('chat profile scopes people context to the active player', async () => {
     )
     const text = promptTextFromCall(harness.calls[0])
     assert.match(text, /Alice/)
-    assert.doesNotMatch(text, /Bob/)
+    assert.match(text, /Bob/)
   } finally {
     harness.restore()
   }
 })
 
-test('chat memory query does not let previous topic inject unrelated memory into casual replies', async () => {
+test('chat memory query uses recent group context in full chat context', async () => {
   const now = Date.now()
   const recent = [
     { t: now - 20_000, user: 'Alice', text: '之前那个基地坐标我先记一下', kind: 'player' },
@@ -428,9 +428,9 @@ test('chat memory query does not let previous topic inject unrelated memory into
       { inlineUserContent: true }
     )
     const text = promptTextFromCall(harness.calls[0])
-    assert.doesNotMatch(memoryQuery, /坐标|基地/)
-    assert.doesNotMatch(text, /长期记忆/)
-    assert.doesNotMatch(text, /基地坐标在 100,64,200/)
+    assert.match(memoryQuery, /坐标|基地/)
+    assert.match(text, /长期记忆/)
+    assert.match(text, /基地坐标在 100,64,200/)
   } finally {
     harness.restore()
   }
@@ -456,27 +456,27 @@ test('chat prompt caps repeated bot/tool context bus echoes without dropping pla
       { inlineUserContent: true }
     )
     const text = promptTextFromCall(harness.calls[0])
-    assert.equal((text.match(/<p n="Alice">/g) || []).length, 3)
+    assert.equal((text.match(/<p n="Alice">/g) || []).length, 10)
     assert.ok((text.match(/<b f="LLM">/g) || []).length <= 3)
     assert.ok((text.match(/<b f="tool">/g) || []).length <= 3)
-    assert.ok(H.estTokensFromText(text) < 3000)
+    assert.ok(H.estTokensFromText(text) < 5000)
   } finally {
     harness.restore()
   }
 })
 
-test('chat profile does not spend prompt tokens on unrelated people records', async () => {
+test('chat profile includes group people records for Minecraft chat', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 20, chars: 120 })
-  const unrelated = Array.from({ length: 80 }, (_, i) => `<profile n="Other${i}">${repeatedText(`无关画像${i}`, 120)}</profile>`).join('\n')
+  const groupProfiles = Array.from({ length: 4 }, (_, i) => `<profile n="Other${i}">群聊关系画像${i}</profile>`).join('\n')
   const harness = makeExecutor({
     recent,
     people: {
-      buildAllProfilesContext: ({ player } = {}) => {
-        assert.equal(player, 'Alice')
-        return '<people>\n<profile n="Alice">喜欢被叫阿猫</profile>\n</people>'
+      buildAllProfilesContext: (opts = {}) => {
+        assert.deepEqual(opts, {})
+        return `<people>\n<profile n="Alice">喜欢被叫阿猫</profile>\n${groupProfiles}\n</people>`
       },
-      buildAllCommitmentsContext: ({ player } = {}) => {
-        assert.equal(player, 'Alice')
+      buildAllCommitmentsContext: (opts = {}) => {
+        assert.deepEqual(opts, {})
         return ''
       }
     }
@@ -489,17 +489,14 @@ test('chat profile does not spend prompt tokens on unrelated people records', as
       { inlineUserContent: true }
     )
     const text = promptTextFromCall(harness.calls[0])
-    const scopedTokens = H.estTokensFromText(text)
-    const oldFullPeopleTokens = H.estTokensFromText(`${text}\n${unrelated}`)
-    assert.ok(scopedTokens < oldFullPeopleTokens / 3, `expected scoped prompt to avoid unrelated people records: scoped=${scopedTokens}, old=${oldFullPeopleTokens}`)
-    assert.doesNotMatch(text, /Other0/)
-    assert.doesNotMatch(text, /无关画像/)
+    assert.match(text, /Other0/)
+    assert.match(text, /群聊关系画像/)
   } finally {
     harness.restore()
   }
 })
 
-test('non-action Chinese chat containing 打 stays on lightweight chat profile', async () => {
+test('non-action Chinese chat containing 打 stays on non-action chat profile', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
   const harness = makeExecutor({
     recent,
@@ -516,16 +513,17 @@ test('non-action Chinese chat containing 打 stays on lightweight chat profile',
     )
     assert.equal(harness.calls.length, 1)
     const call = harness.calls[0]
-    assert.equal(call.body.tools, undefined)
+    assert.equal(Array.isArray(call.body.tools), true)
+    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), false)
     const text = promptTextFromCall(call)
-    assert.doesNotMatch(text, /不该注入的游戏状态/)
-    assert.ok(providerInputTokensFromCall(call) <= 3000, `expected lightweight chat input <= 3000 tokens, got ${providerInputTokensFromCall(call)}`)
+    assert.match(text, /不该注入的游戏状态/)
+    assert.ok(providerInputTokensFromCall(call) <= 5000, `expected chat input <= 5000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
 })
 
-test('casual Chinese chat containing 哪有 stays on lightweight chat profile', async () => {
+test('casual Chinese chat containing 哪有 stays on non-action chat profile', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
   const harness = makeExecutor({
     recent,
@@ -542,16 +540,17 @@ test('casual Chinese chat containing 哪有 stays on lightweight chat profile', 
     )
     assert.equal(harness.calls.length, 1)
     const call = harness.calls[0]
-    assert.equal(call.body.tools, undefined)
+    assert.equal(Array.isArray(call.body.tools), true)
+    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), false)
     const text = promptTextFromCall(call)
-    assert.doesNotMatch(text, /不该注入的位置游戏状态/)
-    assert.ok(providerInputTokensFromCall(call) <= 3000, `expected casual 哪有 chat input <= 3000 tokens, got ${providerInputTokensFromCall(call)}`)
+    assert.match(text, /不该注入的位置游戏状态/)
+    assert.ok(providerInputTokensFromCall(call) <= 5000, `expected casual 哪有 chat input <= 5000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
 })
 
-test('casual Chinese chat containing 谁懂 stays on lightweight chat profile', async () => {
+test('casual Chinese chat containing 谁懂 stays on non-action chat profile', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
   const harness = makeExecutor({
     recent,
@@ -568,10 +567,11 @@ test('casual Chinese chat containing 谁懂 stays on lightweight chat profile', 
     )
     assert.equal(harness.calls.length, 1)
     const call = harness.calls[0]
-    assert.equal(call.body.tools, undefined)
+    assert.equal(Array.isArray(call.body.tools), true)
+    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), false)
     const text = promptTextFromCall(call)
-    assert.doesNotMatch(text, /不该注入的玩家观察状态/)
-    assert.ok(providerInputTokensFromCall(call) <= 3000, `expected casual 谁懂 chat input <= 3000 tokens, got ${providerInputTokensFromCall(call)}`)
+    assert.match(text, /不该注入的玩家观察状态/)
+    assert.ok(providerInputTokensFromCall(call) <= 5000, `expected casual 谁懂 chat input <= 5000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
@@ -1304,7 +1304,7 @@ test('observe and drops actions do not spend prompt tokens on memory or commitme
     )
     const text = promptTextFromCall(harness.calls[0])
     assert.doesNotMatch(text, /长期记忆/)
-    assert.doesNotMatch(text, /承诺/)
+    assert.doesNotMatch(text, /^承诺:/m)
     assert.match(text, /游戏上下文/)
     const tokens = providerInputTokensFromCall(harness.calls[0])
     assert.ok(tokens <= 3600, `expected observe/drop provider input <= 3600 tokens, got ${tokens}`)
@@ -1367,24 +1367,24 @@ test('generic action uses a narrow default tool schema without unrelated resourc
     assert.equal(toolNames.includes('mine_ore'), false)
     assert.equal(toolNames.includes('harvest'), false)
     const toolTokens = H.estTokensFromText(JSON.stringify(call.body.tools))
-    assert.ok(toolTokens < 2100, `expected generic action tool schema < 2100 tokens, got ${toolTokens}`)
+    assert.ok(toolTokens < 2700, `expected generic action tool schema < 2700 tokens, got ${toolTokens}`)
   } finally {
     harness.restore()
   }
 })
 
-test('generic action does not spend prompt tokens on people profile context', async () => {
+test('generic action keeps people profile context for group chat grounding', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 40, chars: 180 })
-  const hugeProfile = repeatedText('动作请求不需要的人物画像', 6000)
+  const profile = '动作请求也需要的人物关系画像'
   const harness = makeExecutor({
     recent,
     people: {
-      buildAllProfilesContext: ({ player } = {}) => {
-        assert.equal(player, 'kuleizi')
-        return `<people>\n<profile n="kuleizi">${hugeProfile}</profile>\n</people>`
+      buildAllProfilesContext: (opts = {}) => {
+        assert.deepEqual(opts, {})
+        return `<people>\n<profile n="kuleizi">${profile}</profile>\n</people>`
       },
-      buildAllCommitmentsContext: ({ player } = {}) => {
-        assert.equal(player, 'kuleizi')
+      buildAllCommitmentsContext: (opts = {}) => {
+        assert.deepEqual(opts, {})
         return ''
       }
     }
@@ -1397,8 +1397,8 @@ test('generic action does not spend prompt tokens on people profile context', as
       { inlineUserContent: true }
     )
     const text = promptTextFromCall(harness.calls[0])
-    assert.doesNotMatch(text, /人物画像/)
-    assert.doesNotMatch(text, /<people>/)
+    assert.match(text, /人物关系画像/)
+    assert.match(text, /<people>/)
   } finally {
     harness.restore()
   }
