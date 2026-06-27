@@ -72,7 +72,7 @@ function selectContextProfile (intent = {}, options = {}) {
       includeMeta: false,
       includeGame: false,
       includeMemory: false,
-      includePeople: false,
+      includePeople: true,
       includeCommitments: false,
       includeDialogue: false,
       includeRecent: false,
@@ -89,7 +89,7 @@ function selectContextProfile (intent = {}, options = {}) {
       includeGame: false,
       includeMemory: true,
       includePeople: true,
-      includeCommitments: false,
+      includeCommitments: true,
       includeDialogue: false,
       includeRecent: true,
       withTools: false,
@@ -104,7 +104,7 @@ function selectContextProfile (intent = {}, options = {}) {
       includeMeta: true,
       includeGame: true,
       includeMemory: true,
-      includePeople: false,
+      includePeople: true,
       includeCommitments: true,
       includeDialogue: false,
       includeRecent: true,
@@ -158,6 +158,106 @@ function selectContextProfile (intent = {}, options = {}) {
   if (kind === 'action' || kind === 'command') return clone('task_context')
   if (['position', 'players', 'drops', 'observe'].includes(topic)) return clone('task_context')
   return clone('chat_light')
+}
+
+function classifyIntent (text) {
+  const trimmed = String(text || '').trim()
+  const lower = trimmed.toLowerCase()
+  const intent = { topic: 'generic', nearby: false, kind: 'chat' }
+  if (!trimmed) return intent
+  if (/^\/tpa\s+/i.test(trimmed)) return { topic: 'command', nearby: false, kind: 'command' }
+  if (/座标|坐标|坐標|在哪|哪里|哪儿|哪边|where|location|position|位置/.test(lower)) intent.topic = 'position'
+  if (/谁在线|在线.*谁|附近.*谁|谁.*附近|附近.*玩家|玩家.*附近|player|玩家|同行|online/.test(lower)) intent.topic = 'players'
+  if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
+  if (/排行榜|排行|榜单|leaderboard|rank(ing)?/.test(lower)) intent.topic = 'leaderboard'
+  if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
+  if (/承诺|待办|todo|promise|commitment/.test(lower)) intent.topic = 'commitment'
+  if (/附近|near|around|周围/.test(lower)) intent.nearby = true
+  if (/攻击|追击|清怪|清理|守护|防守|击杀|打怪|打架|kill|defend|hunt/.test(lower)) intent.kind = 'action'
+  if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
+  return intent
+}
+
+function stripInternalMessageFields (msg, options = {}) {
+  if (!msg || typeof msg !== 'object') return msg
+  const out = {
+    role: msg.role || 'system',
+    content: String(msg.content || '')
+  }
+  if (options.keepName === true) out.name = msg.name || msg.label || undefined
+  return out
+}
+
+function messageTokens (msg) {
+  return estTokensFromText(String(msg?.content || ''))
+}
+
+function truncateTextForTokens (text, maxTokens, label = '') {
+  const limit = Math.floor(Number(maxTokens) || 0)
+  const raw = String(text || '')
+  if (limit <= 0 || !raw) return ''
+  if (estTokensFromText(raw) <= limit) return raw
+  const prefix = label ? `[${label} 已按预算截断]\n` : '[已按预算截断]\n'
+  const reserveChars = Math.max(0, (limit * 4) - prefix.length - 8)
+  if (reserveChars <= 0) return prefix.trim()
+  return prefix + raw.slice(0, reserveChars)
+}
+
+function fitMessagesToTokenBudget (messages, maxInputTokens, options = {}) {
+  const budget = Math.floor(Number(maxInputTokens) || 0)
+  const list = Array.isArray(messages) ? messages.filter(Boolean) : []
+  const strip = (msg) => stripInternalMessageFields(msg, options)
+  if (budget <= 0) return list.map(strip)
+  if (list.reduce((sum, msg) => sum + messageTokens(msg), 0) <= budget) return list.map(strip)
+
+  const fixed = list.filter(msg => msg.keep === true)
+  const flexible = list.filter(msg => msg.keep !== true)
+  const fixedTokens = fixed.reduce((sum, msg) => sum + messageTokens(msg), 0)
+  let remaining = Math.max(0, budget - fixedTokens)
+  const out = []
+  for (const msg of list) {
+    if (msg.keep === true) {
+      out.push(msg)
+      continue
+    }
+    const minTokens = Math.max(0, Math.floor(Number(msg.minTokens) || 0))
+    const maxShare = Math.max(minTokens, Math.floor(Number(msg.maxTokens) || 0))
+    const laterFlexible = flexible.filter(item => !out.includes(item) && item !== msg)
+    const reservedForLater = laterFlexible.reduce((sum, item) => {
+      const min = Math.max(0, Math.floor(Number(item?.minTokens) || 0))
+      return sum + min
+    }, 0)
+    const allowance = Math.max(0, Math.min(
+      maxShare || remaining,
+      remaining - Math.min(remaining, reservedForLater)
+    ))
+    if (allowance <= 0) continue
+    const content = truncateTextForTokens(msg.content, allowance, msg.label || msg.name || '')
+    if (!content) continue
+    const next = { ...msg, content }
+    out.push(next)
+    remaining = Math.max(0, remaining - messageTokens(next))
+  }
+
+  const finalTokens = out.reduce((sum, msg) => sum + messageTokens(msg), 0)
+  if (finalTokens <= budget) return out.map(strip)
+
+  const trimmed = []
+  let used = 0
+  for (const msg of out) {
+    const tok = messageTokens(msg)
+    if (used + tok <= budget) {
+      trimmed.push(msg)
+      used += tok
+      continue
+    }
+    if (msg.keep === true) {
+      const content = truncateTextForTokens(msg.content, Math.max(1, budget - used), msg.label || msg.name || '')
+      if (content) trimmed.push({ ...msg, content })
+      break
+    }
+  }
+  return trimmed.map(strip)
 }
 
 function projectedCostForCall (priceInPerKT, priceOutPerKT, promptTok, outTokMax) {
@@ -367,6 +467,9 @@ module.exports = {
   trimReply,
   buildContextPrompt,
   selectContextProfile,
+  classifyIntent,
+  stripInternalMessageFields,
+  fitMessagesToTokenBudget,
   projectedCostForCall,
   canAfford,
   stripReasoningText,

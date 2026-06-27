@@ -2,6 +2,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
+const H = require('../ai-chat-helpers')
 
 const AI_ENV_KEYS = Object.freeze([
   'DEEPSEEK_API_KEY',
@@ -235,18 +236,25 @@ function createAiCliHandler (options = {}) {
         }
         case 'ctx': {
           try {
+            const targetPlayer = rest[0] || ''
+            const query = rest.slice(targetPlayer ? 1 : 0).join(' ').trim()
+            const intent = typeof H.classifyIntent === 'function' ? H.classifyIntent(query) : { topic: 'generic', nearby: false, kind: 'chat' }
+            const profile = typeof H.selectContextProfile === 'function' ? H.selectContextProfile(intent) : null
+            const scoped = Boolean(targetPlayer)
             if (typeof buildMetaContext === 'function') {
               print('metaCtx ->', buildMetaContext())
             }
             print('gameCtx ->', buildGameContext())
-            const targetPlayer = rest[0] || ''
-            const query = rest.slice(targetPlayer ? 1 : 0).join(' ').trim()
+            print('intent ->', JSON.stringify(intent))
+            print('contextProfile ->', profile?.name || 'default')
             const peopleProfilesCtx = (() => {
-              try { return people?.buildAllProfilesContext?.() || '' } catch { return '' }
+              if (profile?.includePeople === false && scoped) return ''
+              try { return people?.buildAllProfilesContext?.(scoped ? { player: targetPlayer } : {}) || '' } catch { return '' }
             })()
             if (peopleProfilesCtx) print('peopleProfilesCtx ->', peopleProfilesCtx)
             const peopleCommitmentsCtx = (() => {
-              try { return people?.buildAllCommitmentsContext?.() || '' } catch { return '' }
+              if (profile?.includeCommitments === false && scoped) return ''
+              try { return people?.buildAllCommitmentsContext?.(scoped ? { player: targetPlayer } : {}) || '' } catch { return '' }
             })()
             if (peopleCommitmentsCtx) print('peopleCommitmentsCtx ->', peopleCommitmentsCtx)
             if (memory?.longTerm?.buildContext && targetPlayer) {
@@ -264,7 +272,7 @@ function createAiCliHandler (options = {}) {
             } else if (query) {
               print('memoryCtx -> (skipped: memory service not available)')
             }
-            print('chatCtx ->', buildContextPrompt(targetPlayer))
+            print('chatCtx ->', buildContextPrompt(targetPlayer, profile))
           } catch (e) {
             log?.warn && log.warn('ctx dump error:', e?.message || e)
           }

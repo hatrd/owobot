@@ -2,7 +2,7 @@
 
 `bot_impl/ai-chat.js` 负责装配 AI 聊天模块；真正的「上下文注入/Prompt 拼装」主要发生在：
 
-- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（上下文以 system 注入为主；当前玩家输入作为最后一条保留的 `user` message）
+- `bot_impl/ai-chat/executor.js`：构造 DeepSeek `messages[]`（以 system 注入为主；玩家原始消息来自 `xmlCtx`，不再额外注入 `user`）
 - `bot_impl/ai-chat/context-bus.js`：把时序事件序列化成紧凑 XML（`<ctx>...</ctx>`）
 - `bot_impl/ai-chat/memory.js`：长期记忆检索（`长期记忆: ...`）+ 对话摘要（`对话记忆：...`）
 - `bot_impl/agent/observer.js`：游戏快照（`游戏: ...`）
@@ -62,14 +62,14 @@
 
 > 注意：这里说的是“LLM 看到的 messages[]”。动作工具 schema 通过 function-calling 传给模型，不在 prompt 文本里拼接，且会按结构化 intent 分片发送；`say{...}` 和 `skip{}` 是系统 prompt 明示的短回复控制语法，若模型把它们作为纯文本返回，`executor` 会按精确的 `<工具名>{JSON}` 结构解析处理，避免原样发到公屏。
 
-顺序：
+顺序（全部为 system message）：
 
 1. `systemPrompt()`（必有）：来自 `bot_impl/prompts/ai-system.txt`，并替换 `{{BOT_NAME}}`
 2. `metaCtx`（几乎必有）：`现在是北京时间 ...，你在 ShikiMC 服务器中。服主为 Shiki。`
 3. `gameCtx`（可关）：`bot_impl/agent/observer.toPrompt(snapshot)`，形如 `游戏: 位置:... | 维度:... | HP:... | 背包:...`
    - 开关：`state.ai.context.game.include=false`
    - 参数：`invTop/nearPlayerRange/nearPlayerMax/dropsRange/dropsMax`（hostileRange 固定 24）
-4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext({ player })` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，主对话只注入当前玩家画像；行动/task profile 默认关闭）
+4. `peopleProfilesCtx`（可无）：`bot_impl/ai-chat/people.buildAllProfilesContext({ player })` 输出（XML：`<people>...<profile n=...>...</profile>...</people>`，主对话只注入当前玩家画像；普通聊天、task profile 和 auto-look greet 都保留当前玩家画像作为身份锚点，避免动作/命令/主动问候类对话丢失“谁是主人/称呼禁忌”等关系上下文）
 5. `peopleCommitmentsCtx`（可无）：`bot_impl/ai-chat/people.buildAllCommitmentsContext({ player })` 输出（`承诺（未完成）：...`，主对话只注入当前玩家 pending 承诺）
 6. `memoryCtx`（可关）：`memory.longTerm.buildContext({ query: 玩家消息, withRefs:true })`
    - 开关：`state.ai.context.memory.include=false`
@@ -89,9 +89,9 @@
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）；默认注入视图会截短过长玩家行，并限制已发给游戏的 bot/tool echo（各保留最近 3 条，单条也截短），只压 prompt，不丢 `state.aiContextBus` 原始记录；profile 的 recent/window 是场景上限，用户显式设置更小值时取更小值，`recentCount=0` 时只保留当前玩家锚点，不注入历史聊天
    - `conv`：`memory.dialogue.buildPrompt(username)`，形如 `对话记忆：\n1. ...\n2. ...`
-8. `userPrompt`（user，必有）：当前输入，格式为 `<玩家名>: <内容>`；主聊天、plan mode、auto-look greet 都走这一条，保证 chat-completions provider 收到合法的当前用户消息。
+8. （可选）`inlinePrompt`（system）：仅少数内部调用会额外附加一段临时指令（如 plan mode、auto-look greet）；玩家对话不使用这段。
 
-这些段在进入 provider 请求前会统一过 `maxInputTokens` 裁剪；带工具的请求会先为本轮 tool schema 预留输入预算，剩余预算再分给 messages。`systemPrompt/metaCtx/userPrompt` 是保留段；`gameCtx/peopleProfilesCtx/peopleCommitmentsCtx/memoryCtx/contextPrompt` 是可裁剪段，并有各自的默认 token 份额和最低保留份额，避免前面的长段挤掉当前玩家/对话摘要锚点。裁剪标记会留在对应 system message 内，内部预算字段不会发送给 provider。
+这些段在进入 provider 请求前会统一过 `maxInputTokens` 裁剪；带工具的请求会先为本轮 tool schema 预留输入预算，剩余预算再分给 messages。`systemPrompt/metaCtx/inlinePrompt` 是保留段；`gameCtx/peopleProfilesCtx/peopleCommitmentsCtx/memoryCtx/contextPrompt` 是可裁剪段，并有各自的默认 token 份额和最低保留份额，避免前面的长段挤掉当前玩家/对话摘要锚点。裁剪标记会留在对应 system message 内，内部预算字段不会发送给 provider。
 
 ### 4.2 如何对齐“真实注入内容”
 
@@ -118,7 +118,7 @@
 |------|------|
 | `.ai on/off` | 启用/禁用 AI |
 | `.ai env reload [~/.bashrc]` | source 指定 rc（默认 `~/.bashrc`）后，重载 `DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_PATH(或 AI_CHAT_PATH/DEEPSEEK_CHAT_PATH) / AI_MODEL(或 DEEPSEEK_MODEL)` 到运行态，并清除旧的 path fallback/probe 状态（别名：`.ai reloadenv`） |
-| `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`metaCtx/gameCtx/chatCtx`；若可用还会打印 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
+| `.ai ctx [player] [query...]` | 打印对齐 LLM 注入片段：`intent/contextProfile/metaCtx/gameCtx/chatCtx`；提供 `player` 时按真实 context profile 只打印该玩家会被注入的 `peopleProfilesCtx/peopleCommitmentsCtx`，并在提供 `player+query` 时额外打印 `memoryCtx/memoryRefs` |
 | `.ai context show` | 打印 `state.ai.context` |
 | `.ai context off` | 关闭 `contextPrompt` 的历史聊天注入；只保留当前玩家锚点，profile 不会重新打开它 |
 | `.ai context recent N` | 设置注入 `xmlCtx` 的最大条数；`0` 表示不注入历史聊天，只保留当前玩家锚点 |

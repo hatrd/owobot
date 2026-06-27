@@ -243,90 +243,12 @@ function createChatExecutor ({
     }
   }
 
-  function stripInternalMessageFields (msg) {
-    if (!msg || typeof msg !== 'object') return msg
-    return {
+  function fitMessagesToTokenBudget (messages, maxInputTokens) {
+    if (typeof H.fitMessagesToTokenBudget === 'function') return H.fitMessagesToTokenBudget(messages, maxInputTokens)
+    return (Array.isArray(messages) ? messages.filter(Boolean) : []).map(msg => ({
       role: msg.role || 'system',
       content: String(msg.content || '')
-    }
-  }
-
-  function buildCurrentUserMessage (username, content) {
-    const actor = String(username || '').trim()
-    const text = String(content || '').trim()
-    if (!text) return ''
-    return actor ? `${actor}: ${text}` : text
-  }
-
-  function messageTokens (msg) {
-    return estTokensFromText(String(msg?.content || ''))
-  }
-
-  function truncateTextForTokens (text, maxTokens, label = '') {
-    const limit = Math.floor(Number(maxTokens) || 0)
-    const raw = String(text || '')
-    if (limit <= 0 || !raw) return ''
-    if (estTokensFromText(raw) <= limit) return raw
-    const prefix = label ? `[${label} 已按预算截断]\n` : '[已按预算截断]\n'
-    const reserveChars = Math.max(0, (limit * 4) - prefix.length - 8)
-    if (reserveChars <= 0) return prefix.trim()
-    return prefix + raw.slice(0, reserveChars)
-  }
-
-  function fitMessagesToTokenBudget (messages, maxInputTokens) {
-    const budget = Math.floor(Number(maxInputTokens) || 0)
-    const list = Array.isArray(messages) ? messages.filter(Boolean) : []
-    if (budget <= 0) return list.map(stripInternalMessageFields)
-    if (list.reduce((sum, msg) => sum + messageTokens(msg), 0) <= budget) return list.map(stripInternalMessageFields)
-
-    const fixed = list.filter(msg => msg.keep === true)
-    const flexible = list.filter(msg => msg.keep !== true)
-    const fixedTokens = fixed.reduce((sum, msg) => sum + messageTokens(msg), 0)
-    let remaining = Math.max(0, budget - fixedTokens)
-    const out = []
-    for (const msg of list) {
-      if (msg.keep === true) {
-        out.push(msg)
-        continue
-      }
-      const minTokens = Math.max(0, Math.floor(Number(msg.minTokens) || 0))
-      const maxShare = Math.max(minTokens, Math.floor(Number(msg.maxTokens) || 0))
-      const laterFlexible = flexible.filter(item => !out.includes(item) && item !== msg)
-      const reservedForLater = laterFlexible.reduce((sum, item) => {
-        const min = Math.max(0, Math.floor(Number(item?.minTokens) || 0))
-        return sum + min
-      }, 0)
-      const allowance = Math.max(0, Math.min(
-        maxShare || remaining,
-        remaining - Math.min(remaining, reservedForLater)
-      ))
-      if (allowance <= 0) continue
-      const content = truncateTextForTokens(msg.content, allowance, msg.label || '')
-      if (!content) continue
-      const next = { ...msg, content }
-      out.push(next)
-      remaining = Math.max(0, remaining - messageTokens(next))
-    }
-
-    const finalTokens = out.reduce((sum, msg) => sum + messageTokens(msg), 0)
-    if (finalTokens <= budget) return out.map(stripInternalMessageFields)
-
-    const trimmed = []
-    let used = 0
-    for (const msg of out) {
-      const tok = messageTokens(msg)
-      if (used + tok <= budget) {
-        trimmed.push(msg)
-        used += tok
-        continue
-      }
-      if (msg.keep === true) {
-        const content = truncateTextForTokens(msg.content, Math.max(1, budget - used), msg.label || '')
-        if (content) trimmed.push({ ...msg, content })
-        break
-      }
-    }
-    return trimmed.map(stripInternalMessageFields)
+    }))
   }
 
   function resolveMaxOutputTokens (profile, options = {}) {
@@ -671,21 +593,8 @@ function createChatExecutor ({
   }
 
   function classifyIntent (text) {
-    const trimmed = String(text || '').trim()
-    const lower = trimmed.toLowerCase()
-    const intent = { topic: 'generic', nearby: false, kind: 'chat' }
-    if (!trimmed) return intent
-    if (/^\/tpa\s+/i.test(trimmed)) return { topic: 'command', nearby: false, kind: 'command' }
-    if (/座标|坐标|坐標|在哪|哪里|哪儿|哪边|where|location|position|位置/.test(lower)) intent.topic = 'position'
-    if (/谁在线|在线.*谁|附近.*谁|谁.*附近|附近.*玩家|玩家.*附近|player|玩家|同行|online/.test(lower)) intent.topic = 'players'
-    if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
-    if (/排行榜|排行|榜单|leaderboard|rank(ing)?/.test(lower)) intent.topic = 'leaderboard'
-    if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
-    if (/承诺|待办|todo|promise|commitment/.test(lower)) intent.topic = 'commitment'
-    if (/附近|near|around|周围/.test(lower)) intent.nearby = true
-    if (/攻击|追击|清怪|清理|守护|防守|击杀|打怪|打架|kill|defend|hunt/.test(lower)) intent.kind = 'action'
-    if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
-    return intent
+    if (typeof H.classifyIntent === 'function') return H.classifyIntent(text)
+    return { topic: 'generic', nearby: false, kind: 'chat' }
   }
 
   function stripBotMentionPrefix (text) {
@@ -1012,6 +921,7 @@ function createChatExecutor ({
       try { return people?.buildAllCommitmentsContext?.({ player: username }) || '' } catch { return '' }
     })()
     const metaCtx = profile.includeMeta === false ? '' : buildMetaContext()
+    const inlineUserContent = options?.inlineUserContent === true
     const withTools = options?.withTools !== false && profile.withTools !== false
     const maxToolCalls = (() => {
       const raw = Number(options?.maxToolCalls ?? state.ai?.maxToolCallsPerTurn ?? state.ai?.maxToolCalls ?? 6)
@@ -1025,7 +935,7 @@ function createChatExecutor ({
       if (dryRun) out.dryEvents = dryEvents.slice()
       return out
     }
-    const userPrompt = buildCurrentUserMessage(username, content)
+    const inlinePrompt = inlineUserContent ? String(content || '').trim() : ''
     const maxInputTokens = Number.isFinite(profile.maxInputTokens) && profile.maxInputTokens > 0
       ? Math.floor(profile.maxInputTokens)
       : 0
@@ -1044,7 +954,7 @@ function createChatExecutor ({
       peopleCommitmentsCtx ? { role: 'system', content: peopleCommitmentsCtx, label: 'peopleCommitmentsCtx', maxTokens: sectionBudget('commitments', 360), minTokens: sectionBudget('commitmentsMin', 48) } : null,
       memoryCtx ? { role: 'system', content: memoryCtx, label: 'memoryCtx', maxTokens: sectionBudget('memory', profile.name === 'plan_context' ? 1100 : 850), minTokens: sectionBudget('memoryMin', profile.name === 'plan_context' ? 160 : 120) } : null,
       { role: 'system', content: contextPrompt, label: 'contextPrompt', maxTokens: sectionBudget('recent', profile.name === 'plan_context' ? 1400 : 850), minTokens: sectionBudget('recentMin', profile.name === 'plan_context' ? 700 : 180) },
-      userPrompt ? { role: 'user', content: userPrompt, keep: true, label: 'userPrompt' } : null
+      inlinePrompt ? { role: 'system', content: inlinePrompt, keep: true, label: 'userPrompt' } : null
     ].filter(Boolean)
     if (state.ai.trace && log?.info) {
       try {

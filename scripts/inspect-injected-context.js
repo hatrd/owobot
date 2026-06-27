@@ -90,10 +90,12 @@ function usage () {
     '  node scripts/inspect-injected-context.js --player <name> --query <text> [--memory-limit <n>] [--debug] [--compare] [--json]',
     '',
     'Prints the exact snippets injected into LLM context for that player:',
+    '- selected context profile and intent',
     '- system prompt (ai-system.txt)',
-    '- meta time context (buildMetaContext)',
-    '- long-term memory system message (memory.longTerm.buildContext)',
-    '- chat context system message (context bus XML + dialogue memory)',
+    '- meta time context (when profile includes it)',
+    '- people profiles/commitments (when profile includes them)',
+    '- long-term memory system message (when profile includes it)',
+    '- chat context system message (context bus XML + dialogue memory when profile includes them)',
     '',
     'Examples:',
     "  node scripts/inspect-injected-context.js --player Shiki --query '我家在哪' --debug",
@@ -196,11 +198,31 @@ async function main () {
     try { pulse.captureChat(player, query) } catch {}
   }
 
+  const intent = typeof H.classifyIntent === 'function'
+    ? H.classifyIntent(query)
+    : { topic: 'generic', nearby: false, kind: 'chat' }
+  const profile = typeof H.selectContextProfile === 'function'
+    ? H.selectContextProfile(intent, args)
+    : {
+        name: 'default',
+        includeSystem: true,
+        includeMeta: true,
+        includeMemory: true,
+        includePeople: true,
+        includeCommitments: true,
+        includeDialogue: true,
+        includeRecent: true
+      }
+
   const recentChat = (() => {
+    const cap = Number.isFinite(profile?.memoryQueryRecentCount)
+      ? Math.max(0, Math.floor(Number(profile.memoryQueryRecentCount)))
+      : 8
+    if (cap <= 0) return []
     try {
       const store = contextBus.getStore ? contextBus.getStore() : []
       const out = []
-      for (let i = store.length - 1; i >= 0 && out.length < 8; i--) {
+      for (let i = store.length - 1; i >= 0 && out.length < cap; i--) {
         const e = store[i]
         if (!e || e.type !== 'player') continue
         const who = e.payload?.name
@@ -251,8 +273,8 @@ async function main () {
   }
 
   const memoryMode = typeof memoryCfg.mode === 'string' ? memoryCfg.mode : ''
-  const memoryMain = await runMemoryContext(memoryMode)
-  const memoryCtx = memoryMain.text || ''
+  const memoryMain = profile.includeMemory === false ? { text: '', refs: [], debug: null, trace: null } : await runMemoryContext(memoryMode)
+  const memoryCtx = profile.includeMemory === false ? '' : (memoryMain.text || '')
   const memoryRefs = memoryMain.refs || []
   const memoryDebug = memoryMain.debug || null
   const memoryTrace = memoryMain.trace || null
@@ -282,29 +304,87 @@ async function main () {
   }
 
   const ctx = state.ai?.context || defaults.buildDefaultContext()
-  const maxEntries = Number.isFinite(ctx.recentCount) ? Math.max(1, Math.floor(ctx.recentCount)) : defaults.DEFAULT_RECENT_COUNT
-  const windowSec = Number.isFinite(ctx.recentWindowSec) ? Math.max(0, Math.floor(ctx.recentWindowSec)) : defaults.DEFAULT_RECENT_WINDOW_SEC
-  const xmlCtx = contextBus.buildXml({ maxEntries, windowSec, includeGaps: true })
-  const conv = memory.dialogue.buildPrompt(player)
-  const contextPrompt = [`当前对话玩家: ${player}`, xmlCtx, conv].filter(Boolean).join('\n\n')
+  const buildContextPrompt = () => {
+    if (ctx.include === false) return {
+      xml: '',
+      dialogue: '',
+      text: `当前对话玩家: ${player}`
+    }
+    const includeRecent = profile ? profile.includeRecent !== false : true
+    if (!includeRecent) return {
+      xml: '',
+      dialogue: '',
+      text: `当前对话玩家: ${player}`
+    }
+    const profileRecentCount = profile && Number.isFinite(profile.recentCount)
+      ? Math.max(0, Math.floor(profile.recentCount))
+      : null
+    const userRecentCount = ctx.userRecentOverride === true && Number.isFinite(Number(ctx.recentCount))
+      ? Math.max(0, Math.floor(Number(ctx.recentCount)))
+      : null
+    const recentCount = profileRecentCount != null && userRecentCount != null
+      ? Math.min(profileRecentCount, userRecentCount)
+      : (profileRecentCount != null ? profileRecentCount : userRecentCount)
+    const profileRecentWindowSec = profile && Number.isFinite(profile.recentWindowSec)
+      ? Math.max(0, Math.floor(profile.recentWindowSec))
+      : null
+    const userRecentWindowSec = ctx.userWindowOverride === true && Number.isFinite(Number(ctx.recentWindowSec))
+      ? Math.max(0, Math.floor(Number(ctx.recentWindowSec)))
+      : null
+    const recentWindowSec = profileRecentWindowSec != null && userRecentWindowSec != null
+      ? Math.min(profileRecentWindowSec, userRecentWindowSec)
+      : (profileRecentWindowSec != null ? profileRecentWindowSec : userRecentWindowSec)
+    const maxEntries = recentCount != null
+      ? Math.max(0, recentCount)
+      : (Number.isFinite(ctx.recentCount) ? Math.max(1, ctx.recentCount) : defaults.DEFAULT_RECENT_COUNT)
+    const windowSec = recentWindowSec != null
+      ? Math.max(0, recentWindowSec)
+      : (Number.isFinite(ctx.recentWindowSec) ? Math.max(0, ctx.recentWindowSec) : defaults.DEFAULT_RECENT_WINDOW_SEC)
+    const xml = contextBus.buildXml({ maxEntries, windowSec, includeGaps: true })
+    const dialogue = profile && profile.includeDialogue === false ? '' : memory.dialogue.buildPrompt(player)
+    const parts = profile && profile.includeDialogue !== false && dialogue
+      ? [`当前对话玩家: ${player}`, dialogue, xml]
+      : [`当前对话玩家: ${player}`, xml, dialogue]
+    return { xml, dialogue, text: parts.filter(Boolean).join('\n\n') }
+  }
+  const chatContext = buildContextPrompt()
+  const xmlCtx = chatContext.xml || ''
+  const conv = chatContext.dialogue || ''
+  const contextPrompt = chatContext.text || ''
 
-  const systemPrompt = buildSystemPrompt({ projectRoot, botName: bot.username })
-  const metaCtx = buildMetaContext({ projectRoot, now })
+  const systemPrompt = profile.includeSystem === false ? '' : buildSystemPrompt({ projectRoot, botName: bot.username })
+  const metaCtx = profile.includeMeta === false ? '' : buildMetaContext({ projectRoot, now })
   const peopleProfilesCtx = (() => {
-    try { return people.buildAllProfilesContext() || '' } catch { return '' }
+    if (profile.includePeople === false) return ''
+    try { return people.buildAllProfilesContext({ player }) || '' } catch { return '' }
   })()
   const peopleCommitmentsCtx = (() => {
-    try { return people.buildAllCommitmentsContext() || '' } catch { return '' }
+    if (profile.includeCommitments === false) return ''
+    try { return people.buildAllCommitmentsContext({ player }) || '' } catch { return '' }
   })()
 
-  const messages = [
-    systemPrompt ? { role: 'system', name: 'systemPrompt', content: systemPrompt } : null,
-    metaCtx ? { role: 'system', name: 'metaCtx', content: metaCtx } : null,
-    peopleProfilesCtx ? { role: 'system', name: 'peopleProfilesCtx', content: peopleProfilesCtx } : null,
-    peopleCommitmentsCtx ? { role: 'system', name: 'peopleCommitmentsCtx', content: peopleCommitmentsCtx } : null,
-    memoryCtx ? { role: 'system', name: 'memoryCtx', content: memoryCtx } : null,
-    { role: 'system', name: 'contextPrompt', content: contextPrompt }
+  const sectionBudget = (name, fallback) => {
+    const raw = profile?.sectionTokenBudget && typeof profile.sectionTokenBudget === 'object'
+      ? Number(profile.sectionTokenBudget[name])
+      : NaN
+    if (Number.isFinite(raw) && raw > 0) return Math.floor(raw)
+    return fallback
+  }
+  const maxInputTokens = Number.isFinite(profile.maxInputTokens) && profile.maxInputTokens > 0
+    ? Math.floor(profile.maxInputTokens)
+    : 0
+  const rawMessages = [
+    systemPrompt ? { role: 'system', name: 'systemPrompt', label: 'systemPrompt', content: systemPrompt, keep: true } : null,
+    metaCtx ? { role: 'system', name: 'metaCtx', label: 'metaCtx', content: metaCtx, keep: true } : null,
+    peopleProfilesCtx ? { role: 'system', name: 'peopleProfilesCtx', label: 'peopleProfilesCtx', content: peopleProfilesCtx, maxTokens: sectionBudget('people', 650), minTokens: sectionBudget('peopleMin', 64) } : null,
+    peopleCommitmentsCtx ? { role: 'system', name: 'peopleCommitmentsCtx', label: 'peopleCommitmentsCtx', content: peopleCommitmentsCtx, maxTokens: sectionBudget('commitments', 360), minTokens: sectionBudget('commitmentsMin', 48) } : null,
+    memoryCtx ? { role: 'system', name: 'memoryCtx', label: 'memoryCtx', content: memoryCtx, maxTokens: sectionBudget('memory', profile.name === 'plan_context' ? 1100 : 850), minTokens: sectionBudget('memoryMin', profile.name === 'plan_context' ? 160 : 120) } : null,
+    { role: 'system', name: 'contextPrompt', label: 'contextPrompt', content: contextPrompt, maxTokens: sectionBudget('recent', profile.name === 'plan_context' ? 1400 : 850), minTokens: sectionBudget('recentMin', profile.name === 'plan_context' ? 700 : 180) },
+    query ? { role: 'user', name: 'userPrompt', label: 'userPrompt', content: `${player}: ${query}`, keep: true } : null
   ].filter(Boolean)
+  const messages = typeof H.fitMessagesToTokenBudget === 'function'
+    ? H.fitMessagesToTokenBudget(rawMessages, maxInputTokens, { keepName: true })
+    : rawMessages.map(msg => ({ role: msg.role || 'system', name: msg.name || msg.label || undefined, content: String(msg.content || '') }))
 
   const tokenEst = messages.map(m => ({ name: m.name, tokens: H.estTokensFromText(m.content) }))
   const totalTokens = tokenEst.reduce((acc, it) => acc + (it.tokens || 0), 0)
@@ -340,6 +420,8 @@ async function main () {
       player,
       query,
       injectedQuery: Boolean(injectQuery && query),
+      intent,
+      contextProfile: profile.name || 'default',
       memory: {
         mode: memoryMode || null,
         query: memoryQuery || '',
@@ -372,6 +454,8 @@ async function main () {
   const blocks = [
     `player: ${player}`,
     query ? `query: ${query}` : null,
+    `intent: ${JSON.stringify(intent)}`,
+    `contextProfile: ${profile.name || 'default'}`,
     `injected.query: ${injectQuery && query ? 'yes' : 'no'}`,
     memoryQuery ? `memory.query: ${memoryQuery}` : null,
     `memory.limit: ${Number.isFinite(memoryLimit) && memoryLimit > 0 ? Math.floor(memoryLimit) : (state.ai?.context?.memory?.max || 6)}`,
