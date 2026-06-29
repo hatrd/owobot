@@ -975,6 +975,7 @@ function createChatExecutor ({
 
     async function requestModel (rawRequestMessages, allowTools) {
       const selectedTools = allowTools ? selectToolFunctionsForIntent(intent, options) : []
+      const toolChoice = selectedTools.length ? 'auto' : null
       const toolTokens = selectedTools.length ? estTokensFromText(JSON.stringify(selectedTools)) : 0
       const messageInputBudget = maxInputTokens > 0
         ? Math.max(1, maxInputTokens - toolTokens)
@@ -994,6 +995,7 @@ function createChatExecutor ({
             input: requestMessages,
             max_output_tokens: maxOut,
             ...(selectedTools.length ? { tools: selectedTools } : null),
+            ...(toolChoice ? { tool_choice: toolChoice } : null),
             ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
           }
         : {
@@ -1002,7 +1004,8 @@ function createChatExecutor ({
             temperature: 0.2,
             max_tokens: maxOut,
             stream: false,
-            ...(selectedTools.length ? { tools: selectedTools } : null)
+            ...(selectedTools.length ? { tools: selectedTools } : null),
+            ...(toolChoice ? { tool_choice: toolChoice } : null)
           }
 
       const ac = new AbortController()

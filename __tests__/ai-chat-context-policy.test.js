@@ -279,6 +279,7 @@ test('2026-02-14 high-token chat shape uses full chat context below budget', asy
     assert.match(text, /游戏上下文/)
     assert.equal((text.match(/<p |<b /g) || []).length <= 50, true)
     assert.equal(Array.isArray(harness.calls[0].body.tools), true)
+    assert.equal(harness.calls[0].body.tool_choice, 'auto')
   } finally {
     harness.restore()
   }
@@ -1273,6 +1274,7 @@ test('2026-01-31 action/query shape keeps world tools but stays below 5000 token
     assert.match(text, /游戏上下文/)
     assert.match(text, /长期记忆/)
     assert.equal(Array.isArray(harness.calls[0].body.tools), true)
+    assert.equal(harness.calls[0].body.tool_choice, 'auto')
     const toolNames = harness.calls[0].body.tools.map(tool => tool?.function?.name).filter(Boolean)
     const toolTokens = H.estTokensFromText(JSON.stringify(harness.calls[0].body.tools))
     assert.ok(toolTokens < 1500, `expected intent-scoped tool schema < 1500 tokens, got ${toolTokens}`)
