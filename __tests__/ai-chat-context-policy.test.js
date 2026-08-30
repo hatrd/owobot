@@ -220,6 +220,7 @@ test('2026-05-16/17 auto-look greet shape sends minimal context under 1200 token
     assert.doesNotMatch(text, /长期记忆/)
     assert.doesNotMatch(text, /玩家画像/)
     assert.equal(harness.calls[0].body.tools, undefined)
+    assert.deepEqual(harness.calls[0].body.chat_template_kwargs, { enable_thinking: false })
     assert.ok(Number(harness.calls[0].body.max_tokens) <= 160, `expected greet max_tokens <= 160, got ${harness.calls[0].body.max_tokens}`)
   } finally {
     harness.restore()

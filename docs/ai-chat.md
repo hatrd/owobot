@@ -8,6 +8,12 @@
 - `bot_impl/agent/observer.js`：游戏快照（`游戏: ...`）
 - `bot_impl/prompts/ai-system.txt`：系统 Prompt（强制存在）
 
+NVIDIA Nemotron 的 `/v1/chat/completions` 请求使用官方
+`chat_template_kwargs` 参数控制思考：默认发送
+`{"enable_thinking":false}`，只有显式设置 `AI_REASONING_EFFORT=low/high`
+才启用对应模式。出站文本始终读取 `choices[0].message.content`；
+`reasoning_content` 等字段不会发送到 Minecraft 聊天。
+
 ## 1. 状态结构
 
 | 字段 | 说明 |

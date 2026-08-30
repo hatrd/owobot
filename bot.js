@@ -777,3 +777,32 @@ process.on('SIGINT', () => {
 process.on('unhandledRejection', (reason) => {
   console.error('UnhandledRejection:', reason)
 })
+
+// A rare protocol/plugin exception must not take down the supervisor process.
+// Keep the existing reconnect path as the single recovery mechanism: terminate
+// the affected connection and let its `end` listener schedule a fresh instance.
+let uncaughtExceptionActive = false
+process.on('uncaughtException', (err) => {
+  console.error('UncaughtException:', err?.stack || err?.message || err)
+  if (uncaughtExceptionActive || shuttingDown) return
+  uncaughtExceptionActive = true
+  try {
+    const current = bot
+    try {
+      if (current && typeof current.end === 'function') current.end('uncaughtException')
+    } catch (closeErr) {
+      console.error('Failed to close bot after uncaught exception:', closeErr?.message || closeErr)
+    }
+    // Schedule independently as a safety net in case end() does not emit the
+    // normal event (or a plugin removed the listener). The timer is guarded,
+    // so the regular end listener cannot create a duplicate reconnect.
+    scheduleReconnect('uncaughtException')
+  } catch (closeErr) {
+    console.error('Failed to recover after uncaught exception:', closeErr?.message || closeErr)
+    try { scheduleReconnect('uncaughtException') } catch {}
+  } finally {
+    // The guard only prevents a re-entrant storm while the current connection
+    // is being closed; a newly created bot starts with a clean recovery state.
+    setTimeout(() => { uncaughtExceptionActive = false }, 1000).unref?.()
+  }
+})

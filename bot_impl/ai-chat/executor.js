@@ -1004,6 +1004,7 @@ function createChatExecutor ({
             temperature: 0.2,
             max_tokens: maxOut,
             stream: false,
+            chat_template_kwargs: H.buildChatTemplateKwargs(state.ai?.reasoningEffort),
             ...(selectedTools.length ? { tools: selectedTools } : null),
             ...(toolChoice ? { tool_choice: toolChoice } : null)
           }

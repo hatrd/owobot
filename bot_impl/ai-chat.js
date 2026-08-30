@@ -432,7 +432,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
           messages,
           temperature: temp,
           max_tokens: cappedOut,
-          stream: false
+          stream: false,
+          chat_template_kwargs: H.buildChatTemplateKwargs(state.ai?.reasoningEffort)
         }
 
     const ac = new AbortController()

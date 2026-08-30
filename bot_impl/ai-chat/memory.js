@@ -1237,7 +1237,8 @@ function createMemoryService ({
           messages,
           temperature: 0.2,
           max_tokens: MEMORY_REWRITE_MAX_TOKENS,
-          stream: false
+          stream: false,
+          chat_template_kwargs: H.buildChatTemplateKwargs(state.ai?.reasoningEffort)
         }
     try {
       const res = await callMonitor.request({
@@ -2380,7 +2381,14 @@ function createMemoryService ({
           max_output_tokens: maxTokens,
           ...(state.ai?.reasoningEffort ? { reasoning: { effort: String(state.ai.reasoningEffort) } } : null)
         }
-      : { model: model || defaults.DEFAULT_MODEL, messages, temperature, max_tokens: maxTokens, stream: false }
+      : {
+          model: model || defaults.DEFAULT_MODEL,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          stream: false,
+          chat_template_kwargs: H.buildChatTemplateKwargs(state.ai?.reasoningEffort)
+        }
     try {
       const res = await callMonitor.request({
         source,

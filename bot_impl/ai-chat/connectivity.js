@@ -31,7 +31,10 @@ function buildConnectivityBody ({ model, apiPath, prompt, maxOutputTokens }) {
       messages,
       temperature: 0,
       max_tokens: maxOut,
-      stream: false
+      stream: false,
+      ...(typeof H.buildChatTemplateKwargs === 'function'
+        ? { chat_template_kwargs: H.buildChatTemplateKwargs() }
+        : null)
     }
   }
 }

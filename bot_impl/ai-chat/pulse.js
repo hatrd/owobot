@@ -462,7 +462,16 @@ function createPulseService ({
         const useResponses = typeof H.isResponsesApiPath === 'function' && H.isResponsesApiPath(apiPath)
         const body = useResponses
           ? { model: state.ai.model || defaults.DEFAULT_MODEL, input: messages, max_output_tokens: OVERFLOW_SUMMARY_MAX_TOKENS }
-          : { model: state.ai.model || defaults.DEFAULT_MODEL, messages, temperature: 0.2, max_tokens: OVERFLOW_SUMMARY_MAX_TOKENS, stream: false }
+          : {
+              model: state.ai.model || defaults.DEFAULT_MODEL,
+              messages,
+              temperature: 0.2,
+              max_tokens: OVERFLOW_SUMMARY_MAX_TOKENS,
+              stream: false,
+              ...(typeof H.buildChatTemplateKwargs === 'function'
+                ? { chat_template_kwargs: H.buildChatTemplateKwargs(state.ai?.reasoningEffort) }
+                : null)
+            }
         try {
           const res = await callMonitor.request({
             source: 'overflow_summary',

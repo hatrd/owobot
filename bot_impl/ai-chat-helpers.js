@@ -296,6 +296,16 @@ function isResponsesApiPath (path) {
   return p.includes('/responses')
 }
 
+// NVIDIA Nemotron's OpenAI-compatible chat endpoint controls thinking through
+// chat_template_kwargs. Keep this protocol setting centralized for every
+// chat-completions request. The default is disabled so only normal content is
+// ever eligible for Minecraft chat; explicit low/high modes remain opt-in.
+function buildChatTemplateKwargs (reasoningEffort) {
+  const effort = String(reasoningEffort || 'none').trim().toLowerCase()
+  if (effort === 'low') return { enable_thinking: true, low_effort: true }
+  return { enable_thinking: effort !== 'none' }
+}
+
 function extractAssistantText (message, options = {}) {
   if (typeof message === 'string') return message
   if (!message || typeof message !== 'object') return ''
@@ -363,21 +373,32 @@ function extractAssistantTextFromApiResponse (data, options = {}) {
   // Responses API (OpenAI) shapes:
   // - { output_text: "..." }
   // - { output: [{ type: "message", content: [...] }, { type: "function_call", ... }] }
-  const direct = typeof data.output_text === 'string' ? data.output_text.trim() : ''
-  if (direct) return (options?.allowReasoning === false) ? stripReasoningText(direct) : direct
-
+  // Prefer typed output items. Some OpenAI-compatible Responses gateways
+  // expose output_text as an aggregate that includes reasoning; the typed
+  // message item is the protocol-level正文 field.
   const output = Array.isArray(data.output) ? data.output : []
+  let sawReasoning = false
+  let sawMessage = false
+  let typedOutputText = ''
   for (const item of output) {
     if (!item || typeof item !== 'object') continue
-    if (item.type === 'message' || item.content != null) {
+    const type = String(item.type || '').toLowerCase()
+    if (type.includes('reasoning') || type.includes('thinking') || type === 'analysis') sawReasoning = true
+    if (type === 'message' || (item.content != null && !type.includes('reasoning') && !type.includes('thinking') && type !== 'analysis')) {
+      sawMessage = true
       const text = extractAssistantText(item, options)
       if (text) return text
     }
     if (item.type === 'output_text' && typeof item.text === 'string') {
       const text = (options?.allowReasoning === false) ? stripReasoningText(item.text) : item.text.trim()
-      if (text) return text
+      if (text) typedOutputText = text
     }
   }
+
+  if (typedOutputText && !sawReasoning && !sawMessage) return typedOutputText
+
+  const direct = typeof data.output_text === 'string' ? data.output_text.trim() : ''
+  if (direct && !sawMessage && !sawReasoning) return (options?.allowReasoning === false) ? stripReasoningText(direct) : direct
 
   return ''
 }
@@ -568,6 +589,7 @@ module.exports = {
   canAfford,
   stripReasoningText,
   isResponsesApiPath,
+  buildChatTemplateKwargs,
   extractAssistantText,
   extractAssistantTextFromApiResponse,
   extractToolCallsFromApiResponse,

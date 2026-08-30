@@ -11,12 +11,20 @@ import {
   extractAssistantText,
   stripReasoningText,
   isResponsesApiPath,
+  buildChatTemplateKwargs,
   extractAssistantTextFromApiResponse,
   extractToolCallsFromApiResponse,
   extractInlineToolCallsFromText,
   extractInlineToolCallFromText,
   extractUsageFromApiResponse
 } from '../bot_impl/ai-chat-helpers.js'
+
+test('NVIDIA chat template disables reasoning by default and maps documented effort modes', () => {
+  assert.deepEqual(buildChatTemplateKwargs(), { enable_thinking: false })
+  assert.deepEqual(buildChatTemplateKwargs('none'), { enable_thinking: false })
+  assert.deepEqual(buildChatTemplateKwargs('low'), { enable_thinking: true, low_effort: true })
+  assert.deepEqual(buildChatTemplateKwargs('high'), { enable_thinking: true })
+})
 
 test('extractAssistantText supports string/segment content and avoids reasoning when content exists', () => {
   assert.equal(extractAssistantText('hi'), 'hi')
@@ -70,6 +78,31 @@ test('OpenAI-compatible response helpers support chat-completions and responses 
   assert.equal(extractAssistantTextFromApiResponse(respData, { allowReasoning: false }), 'hello')
   assert.equal(extractToolCallsFromApiResponse(respData)[0]?.function?.name, 'say')
   assert.deepEqual(extractUsageFromApiResponse(respData), { inTok: 3, outTok: 4 })
+})
+
+test('Responses parser uses typed message正文 and excludes reasoning output', () => {
+  const mixed = {
+    output_text: 'internal reasoning aggregate',
+    output: [
+      { type: 'reasoning', content: [{ type: 'output_text', text: 'secret' }] },
+      { type: 'message', content: [{ type: 'output_text', text: '正常正文' }] }
+    ]
+  }
+  assert.equal(extractAssistantTextFromApiResponse(mixed, { allowReasoning: false }), '正常正文')
+
+  const reasoningOnly = {
+    output_text: 'internal reasoning aggregate',
+    output: [{ type: 'reasoning', content: [{ type: 'output_text', text: 'secret' }] }]
+  }
+  assert.equal(extractAssistantTextFromApiResponse(reasoningOnly, { allowReasoning: false }), '')
+
+  const reasoningWithTypedAggregate = {
+    output: [
+      { type: 'reasoning', content: [{ type: 'output_text', text: 'secret' }] },
+      { type: 'output_text', text: 'aggregate that must not leak' }
+    ]
+  }
+  assert.equal(extractAssistantTextFromApiResponse(reasoningWithTypedAggregate, { allowReasoning: false }), '')
 })
 
 test('extractInlineToolCallFromText parses exact structured tool text without guessing prose', () => {
