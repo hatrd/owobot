@@ -927,7 +927,23 @@ function snapshot (bot, opts = {}) {
   const blocks = collectBlocks(bot)
   // Current task from shared state (if any)
   const task = (bot.state && bot.state.currentTask) ? { name: bot.state.currentTask.name, source: bot.state.currentTask.source, startedAt: bot.state.currentTask.startedAt } : null
-  return { t: now, pos, dim, time: tod, env, vitals, inv, hotbar, nearby: { players, drops, hostiles }, blocks, task }
+  const incomingChat = (() => {
+    try {
+      const source = bot.state?.incomingChat
+      if (!source || typeof source !== 'object') return null
+      return {
+        structuredSeen: Number(source.structuredSeen) || 0,
+        synthesized: Number(source.synthesized) || 0,
+        unresolvedSender: Number(source.unresolvedSender) || 0,
+        contextMirrorRemoved: Number(source.contextMirrorRemoved) || 0,
+        contextMirrorRemaining: Number(source.contextMirrorRemaining) || 0,
+        lastPacket: source.lastPacket || null,
+        lastPlayerPacket: source.lastPlayerPacket || null,
+        lastResolved: source.last || null
+      }
+    } catch { return null }
+  })()
+  return { t: now, pos, dim, time: tod, env, vitals, inv, hotbar, nearby: { players, drops, hostiles }, blocks, task, incomingChat }
 }
 
 function toPrompt (snap) {

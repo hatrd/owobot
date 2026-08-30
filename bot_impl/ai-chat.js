@@ -14,6 +14,7 @@ const { createIntrospectionEngine } = require('./ai-chat/introspection')
 const { createPureSurprise } = require('./ai-chat/pure-surprise')
 const { createContextBus } = require('./ai-chat/context-bus')
 const { createAiCallMonitor } = require('./ai-chat/call-monitor')
+const { ensureIncomingChatState, isStructuredPlayerChat } = require('./incoming-chat')
 const {
   DEFAULT_MODEL,
   DEFAULT_BASE,
@@ -258,6 +259,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   // REFS: 创建上下文总线
   const contextBus = createContextBus({ state, now })
+  const incomingChat = ensureIncomingChatState(state)
+  const removedMirroredContext = contextBus.removeMirroredPlayerServerEntries()
+  incomingChat.contextMirrorRemoved = (Number(incomingChat.contextMirrorRemoved) || 0) + removedMirroredContext
+  incomingChat.contextMirrorRemaining = contextBus.countMirroredPlayerServerEntries()
 
   function recordPickupEvent (entity) {
     try {
@@ -380,7 +385,8 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (!isNew) return
     executor.handleChat(username, message).catch(() => {})
   }
-  const onMessage = (message) => {
+  const onMessage = (message, position, senderUuid) => {
+    if (isStructuredPlayerChat(position, senderUuid)) return
     const parsed = pulse.captureSystemMessage(message)
     if (parsed && parsed.name && parsed.content) {
       executor.handleChat(parsed.name, parsed.content).catch(() => {})

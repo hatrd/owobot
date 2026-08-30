@@ -9,6 +9,7 @@ const { prepareSharedState } = require('./state')
 const { sanitizeOutboundText } = require('./outbound-text-filter')
 const greetings = require('./greetings')
 const watchers = require('./watchers')
+const { createStructuredChatBridge, extractPlainText } = require('./incoming-chat')
 const coreLog = logging.getLogger('core')
 
 function dlog (...args) { coreLog.debug(...args) }
@@ -222,18 +223,11 @@ function activate (botInstance, options = {}) {
 
   // Event: display server messages
   let chatDisabledTriggered = false
-  function extractPlainText (message) {
-    try {
-      const text = typeof message.getText === 'function'
-        ? message.getText()
-        : (typeof message.toString === 'function' ? message.toString() : String(message))
-      if (!text) return ''
-      return String(text).replace(/\u00a7./g, '')
-    } catch (err) {
-      try { coreLog.warn('message text extract error:', err?.message || err) } catch {}
-      return ''
-    }
-  }
+  const structuredChatBridge = createStructuredChatBridge({ bot, state })
+
+  on('chat', (_username, _content, _translate, jsonMessage) => {
+    structuredChatBridge.noteNativeChat(jsonMessage)
+  })
 
   function handleChatDisabled (plainText) {
     if (chatDisabledTriggered) return
@@ -258,13 +252,21 @@ function activate (botInstance, options = {}) {
     }
   }
 
-  on('message', (message) => {
+  on('message', (message, position, senderUuid) => {
+    let structured = null
     try {
-      const rendered = typeof message.toAnsi === 'function' ? message.toAnsi() : String(message)
+      structured = structuredChatBridge.handleMessage(message, position, senderUuid)
+    } catch (err) {
+      try { coreLog.warn('structured chat bridge error:', err?.message || err) } catch {}
+    }
+    try {
+      const rendered = structured?.playerChat && !structured.nativeHandled
+        ? `<${structured.playerChat.username}> ${structured.playerChat.content}`
+        : (typeof message.toAnsi === 'function' ? message.toAnsi() : String(message))
       const max = 800
       const out = rendered.length > max ? (rendered.slice(0, max - 1) + '…') : rendered
       console.log(out)
-    } catch (e) {
+    } catch {
       try { console.log(String(message)) } catch {}
     }
     try {
@@ -273,6 +275,13 @@ function activate (botInstance, options = {}) {
         handleChatDisabled(plain)
       }
     } catch {}
+    try {
+      if (!structured?.shouldEmit) return
+      const playerChat = structured.playerChat
+      bot.emit('chat', playerChat.username, playerChat.content, null, message, [])
+    } catch (err) {
+      try { coreLog.warn('structured chat emit error:', err?.message || err) } catch {}
+    }
   })
 
   function installModule (entry) {

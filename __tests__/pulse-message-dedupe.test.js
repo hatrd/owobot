@@ -2,9 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import pulseMod from '../bot_impl/ai-chat/pulse.js'
 import ctxMod from '../bot_impl/ai-chat/context-bus.js'
+import incomingChatMod from '../bot_impl/incoming-chat.js'
 
 const { createPulseService } = pulseMod
 const { createContextBus } = ctxMod
+const { isStructuredPlayerChat } = incomingChatMod
 
 function makeNow () {
   let t = Date.now()
@@ -133,6 +135,30 @@ test('system message <player> msg is treated as player chat when chat event is m
   assert.deepEqual(store[0].payload, { name: 'kuleizi', content: 'owkowk 在哪' })
   assert.equal(state.aiRecent.length, 1)
   assert.equal(state.aiRecent[0].kind, 'player')
+})
+
+test('structured playerChat is not injected again as a server message', () => {
+  const { contextBus, pulse } = makePulse()
+  pulse.captureChat('Ameyaku', 'owk 说话')
+  if (!isStructuredPlayerChat('chat', 'player-uuid')) {
+    pulse.captureSystemMessage({ getText: () => 'owk 说话' })
+  }
+  const store = contextBus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].type, 'player')
+  assert.deepEqual(store[0].payload, { name: 'Ameyaku', content: 'owk 说话' })
+})
+
+test('context migration removes an existing mirrored player/server pair', () => {
+  const { contextBus } = makePulse()
+  contextBus.pushPlayer('Ameyaku', 'owk 说话')
+  contextBus.pushServer('owk 说话')
+  assert.equal(contextBus.countMirroredPlayerServerEntries(), 1)
+  assert.equal(contextBus.removeMirroredPlayerServerEntries(), 1)
+  assert.equal(contextBus.countMirroredPlayerServerEntries(), 0)
+  const store = contextBus.getStore()
+  assert.equal(store.length, 1)
+  assert.equal(store[0].type, 'player')
 })
 
 test('non chat system messages still go to server context', () => {

@@ -353,6 +353,37 @@ function createContextBus ({ state, now = () => Date.now() }) {
     state.aiContextSeq = 0
   }
 
+  function isMirroredPlayerServerEntry (store, index, maxGapMs) {
+    const entry = store[index]
+    if (entry?.type !== 'server') return false
+    const previous = store[index - 1]
+    if (previous?.type !== 'player') return false
+    const playerText = String(previous.payload?.content || '')
+    const serverText = String(entry.payload?.content || '')
+    const gap = Number(entry.t) - Number(previous.t)
+    return Boolean(playerText && playerText === serverText && Number.isFinite(gap) && gap >= 0 && gap <= maxGapMs)
+  }
+
+  function countMirroredPlayerServerEntries (maxGapMs = 1000) {
+    const store = ensureStore()
+    let count = 0
+    for (let index = 1; index < store.length; index++) {
+      if (isMirroredPlayerServerEntry(store, index, maxGapMs)) count++
+    }
+    return count
+  }
+
+  function removeMirroredPlayerServerEntries (maxGapMs = 1000) {
+    const store = ensureStore()
+    let removed = 0
+    for (let index = store.length - 1; index > 0; index--) {
+      if (!isMirroredPlayerServerEntry(store, index, maxGapMs)) continue
+      store.splice(index, 1)
+      removed++
+    }
+    return removed
+  }
+
   return {
     push,
     pushPlayer,
@@ -364,6 +395,8 @@ function createContextBus ({ state, now = () => Date.now() }) {
     buildXml,
     getStore,
     clear,
+    countMirroredPlayerServerEntries,
+    removeMirroredPlayerServerEntries,
     escapeXml,
     formatDuration
   }

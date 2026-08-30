@@ -1,7 +1,7 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-06-20T09:41:32.637Z`
-- Source: `offline-module`
+- GeneratedAt: `2026-08-30T02:26:28.930Z`
+- Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
 

@@ -51,6 +51,10 @@ function prepareSharedState (existing, { greetEnabled, loginPassword, voiceEnabl
   // Player stats module state
   if (!state.playerStats) state.playerStats = {}
   state.playerStats.activeSessions = ensureMap(state.playerStats.activeSessions)
+  state.incomingChat = ensureObject(state.incomingChat)
+  state.incomingChat.structuredSeen = Number.isFinite(state.incomingChat.structuredSeen) ? state.incomingChat.structuredSeen : 0
+  state.incomingChat.synthesized = Number.isFinite(state.incomingChat.synthesized) ? state.incomingChat.synthesized : 0
+  state.incomingChat.unresolvedSender = Number.isFinite(state.incomingChat.unresolvedSender) ? state.incomingChat.unresolvedSender : 0
   // Shared runtime for actions/tools (interval handles, abort flags, debug toggles, etc.)
   if (!state.actionsRuntime || typeof state.actionsRuntime !== 'object') state.actionsRuntime = {}
   return state
