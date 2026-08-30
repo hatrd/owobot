@@ -2,6 +2,8 @@
 
 这份文档是后续 AI 运维本项目的入口。先读本文件，再根据故障类型查 `docs/interaction.md`、`docs/hot-reload.md` 和生成的 schema 文档。
 
+运维判断必须以 live schema、结构化状态和可回放日志为准；不要从自然语言 action 或散落字符串猜测状态，也不要用一次成功的人工观察替代控制面证据。
+
 ## 运行结构
 
 - `bot.js`：连接 Minecraft、装载 `bot_impl/`、提供热重载和 Unix socket 控制面。
@@ -120,7 +122,7 @@ AI 只能执行 dry interaction。`tool.run` 和服务器内真实操作必须�
 ```bash
 latest="logs/bot-$(date +%F).log"
 tail -120 "$latest"
-rg -n 'ERROR|FATAL|\\[WARN\\]|ai error|external call|keepAlive|reconnect|Connected to server|joined the game' "$latest"
+rg -n 'ERROR|FATAL|\[WARN\]|ai error|external call|keepAlive|reconnect|Connected to server|joined the game' "$latest"
 ```
 
 常见信号：
@@ -139,7 +141,7 @@ rg -n 'ERROR|FATAL|\\[WARN\\]|ai error|external call|keepAlive|reconnect|Connect
 ```bash
 ps -eo pid,ppid,etime,%cpu,%mem,rss,cmd | rg 'bot-watch|/home/oyxy/src/mcbot/bot.js' | rg -v rg
 botpid=$(cat .mcbot.pid)
-tr '\\0' '\\n' </proc/$botpid/environ | rg '^(MC_HOST|MC_PORT|MC_USERNAME|DEEPSEEK_BASE_URL|DEEPSEEK_MODEL|MCBOT_WATCHER)='
+tr '\0' '\n' </proc/$botpid/environ | rg '^(MC_HOST|MC_PORT|MC_USERNAME|DEEPSEEK_BASE_URL|DEEPSEEK_MODEL|MCBOT_WATCHER)='
 ```
 
 环境输出必须脱敏；不要输出 `DEEPSEEK_API_KEY` 的值。
@@ -151,7 +153,7 @@ tr '\\0' '\\n' </proc/$botpid/environ | rg '^(MC_HOST|MC_PORT|MC_USERNAME|DEEPSE
 1. `node scripts/botctl.js hello`：控制面、PID、`hasBot`、schema hash。
 2. `ps` 和 `.mcbot.pid`：确认 watcher、bot 是否存在，是否有重复实例。
 3. `tail`/`rg` 当日日志：确定首次错误时间和错误类别。
-4. `node scripts/botctl.js schema ctl|observe|tool`：以 live schema 为准。
+4. 分别执行 `node scripts/botctl.js schema ctl`、`node scripts/botctl.js schema observe`、`node scripts/botctl.js schema tool`，以 live schema 为准。
 5. `node scripts/botctl.js ai-connectivity ...`：只测 provider 连通性。
 6. `npm run interaction:dry`：验证完整 dry interaction 闭环。
 7. 观察类问题使用 `dry observe_detail`，失败时保留 `error`/`openErrors` 等诊断字段。
