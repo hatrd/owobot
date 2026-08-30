@@ -7,6 +7,8 @@
 - 服务器环境变量（可选）：`MC_HOST`、`MC_PORT`、`MC_USERNAME`、`MC_AUTH`、`MC_PASSWORD`、`MC_DEBUG(默认1)`、`MC_GREET(默认1)`、`MC_LOG_DIR`(默认 `./logs`)、`MC_LOG_FILE`（自定义路径或 `off`）
 - AI 环境变量（可选）：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_PATH`（或 `AI_CHAT_PATH`/`DEEPSEEK_CHAT_PATH`）、`DEEPSEEK_MODEL`（或 `AI_MODEL`）
 
+运维入口：`AGENT_OPS.md`（启动、重启、热重载、日志取证和 dry 验证流程）。
+
 ## 运行
 - `npm start`（默认 watcher 模式，启动 `scripts/bot-watch.js --takeover=true`）
 - `bash scripts/start-bot.sh`（等价于 `npm start`，适合直接拉起守护启动）

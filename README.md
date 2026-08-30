@@ -16,6 +16,7 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 
 ## Documentation Index
 
+- Operations runbook for AI agents: `AGENT_OPS.md`
 - Interaction contract (first-class): `docs/interaction.md`
 - Interaction schema snapshot (generated): `docs/interaction.generated.md`
 - Hot reload manual: `docs/hot-reload.md`
