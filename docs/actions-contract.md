@@ -98,3 +98,11 @@ node scripts/botctl.js list
 ```
 
 若 `list` 返回 `missing/extra`，先修复注册与白名单不一致，再继续。
+
+## Explicit building tools
+
+- `craft_preview` is read-only: uses registered Minecraft recipes and current inventory counts, returning required ingredients and shortages. `count` is desired output quantity; one recipe may produce more (e.g. three signs).
+- `craft_item` executes the selected `recipeIndex` and checks the inventory delta. Recipes requiring a table must provide explicit reachable `table: {x,y,z}`. It does not gather materials or infer a crafting location.
+- `place_sign` places one new standing sign at an explicit integer position. It requires air and solid support, refuses to overwrite any existing block, waits for the server's sign editor permission, and confirms text by observer readback. Partial failures return `data.stage` (`preparing`, `placed`, `write_sent`, `confirmed`), coordinates and intended lines; do not retry placement blindly after a partial failure. Recent receipts are bounded in `state.actionsRuntime.signPlacements`.
+
+Both mutation tools are validate-only in dry mode. Live execution uses the existing action control/hand lock boundaries. Neither tool is a controller behavior primitive; no cancellable multi-step crafting support is claimed.

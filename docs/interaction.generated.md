@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T08:02:46.457Z`
+- GeneratedAt: `2026-09-19T08:14:37.168Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -42,6 +42,8 @@
 | inventory | Current bot inventory summary. |
 | cows | Nearby cows. |
 | blocks | Nearby non-air blocks around current position. |
+| block_search | Find exact registered block names in loaded chunks; requires names array. |
+| block_at | Read one exact block coordinate including collision and properties; requires x/y/z. |
 
 ### Aliases
 
@@ -67,6 +69,9 @@
 
 | tool | dryCapability | hasSchema | description |
 | --- | --- | --- | --- |
+| craft_preview | read_only | yes | Read real recipe ingredients and inventory shortages; does not craft. |
+| craft_item | validate_only | yes | Craft an explicit recipe; requires reachable table coordinates when applicable. |
+| place_sign | validate_only | yes | Place a new standing sign at an empty coordinate and confirm four lines by readback. Never overwrites existing blocks. |
 | controller_read | read_only | yes | Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts. |
 | controller_write | validate_only | yes | Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first. |
 | goto | validate_only | yes | Pathfind to an absolute coordinate. |
@@ -120,6 +125,6 @@
 
 ### Coverage Report
 
-- allowlistCount: 50
+- allowlistCount: 53
 - missingSchema: (none)
 - staleSchema: (none)

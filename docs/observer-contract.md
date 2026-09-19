@@ -106,3 +106,7 @@ Entity observation rows include `position: {x,y,z}` (or null when unavailable). 
 `what=online_players` reads the server TAB list (including self), independent of nearby entity loading. Output contains `source`, `total`, `truncated`, and `players` with name/self/pingMs. Entries explicitly marked listed=false are omitted; this does not reveal hidden players or prove that every listed account is a human.
 
 `what=terrain` performs bounded read-only local block connectivity inspection and ranks candidate positions with actual exploration visits. `what=exploration_memory` recalls world/dimension-scoped persisted checkpoints, discoveries and route outcomes, with save errors and stale evidence flags. See `docs/exploration-memory.md`.
+
+Inventory output includes `carriedContainers`, decoded directly from inventory item components or legacy NBT without placing/opening shulker boxes. Missing contents remain `source=unavailable`, not asserted empty.
+
+`what=block_search` requires an array of exact registered block `names`, queries only loaded chunks (radius capped at 64, max at 64), and returns coordinates/collision/properties. `what=block_at` requires integer x/y/z and reports `unloaded_block` rather than guessing air. `what=blocks` remains the existing unfiltered local scan.

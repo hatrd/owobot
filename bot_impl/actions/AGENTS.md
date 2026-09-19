@@ -61,3 +61,6 @@
 - `controller_read` 是只读 dry；`controller_write` 的 dry 只校验请求，绝不调用写入口。
 - 租约期间公共 run 入口拒绝其他修改类动作，stop/reset 保留紧急停止能力。
 - 行为动作的完成/取消驱动在 `../controller/`，不能把后台 action 的“启动成功”当作任务完成。
+
+## 建造工具
+- `modules/building.js` 提供真实配方预览、显式合成与新告示牌放置/文字回读。放牌失败必须保留已执行阶段，不能把未确认写字当成功，也不能盲目重复放置。

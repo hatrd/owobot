@@ -260,7 +260,7 @@ const ACTION_TOOL_SCHEMAS = [
       properties: {
         what: {
           type: 'string',
-          description: 'Inspection target: terrain|exploration_memory|controller|view|runtime|online_players|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
+          description: 'Inspection target: block_at|block_search|terrain|exploration_memory|controller|view|runtime|online_players|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
         },
         namedOnly: {
           type: 'boolean',
@@ -659,6 +659,13 @@ ACTION_TOOL_SCHEMAS.push(
   { name: 'controller_write', description: 'Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first.', parameters: controllerContract.envelope(controllerContract.writeOps) }
 )
 
+const blockPosition = object({ x: { type: 'integer' }, y: { type: 'integer' }, z: { type: 'integer' } }, ['x', 'y', 'z'])
+const craftArgs = { item: { type: 'string', minLength: 1 }, count: { type: 'integer', minimum: 1, maximum: 64 } }
+ACTION_TOOL_SCHEMAS.push(
+  { name: 'craft_preview', description: 'Read real recipe ingredients and inventory shortages; does not craft.', parameters: object(craftArgs, ['item']) },
+  { name: 'craft_item', description: 'Craft an explicit recipe; requires reachable table coordinates when applicable.', parameters: object({ ...craftArgs, recipeIndex: { type: 'integer', minimum: 0, maximum: 1000 }, table: blockPosition }, ['item']) },
+  { name: 'place_sign', description: 'Place a new standing sign at an empty coordinate and confirm four lines by readback. Never overwrites existing blocks.', parameters: object({ item: { type: 'string', minLength: 1 }, position: blockPosition, lines: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 15, pattern: '^[^\\r\\n]+$' } } }, ['item', 'position', 'lines']) }
+)
 const definitions = new Map()
 for (const def of ACTION_TOOL_SCHEMAS) {
   if (definitions.has(def.name)) throw new Error(`Duplicate action schema: ${def.name}`)

@@ -1,3 +1,4 @@
+const { Vec3 } = require('vec3')
 // Observer: provide lightweight game snapshot for prompts, and on-demand detailed fetchers
 
 const HOSTILE_TOKENS_EN = ['creeper','zombie','zombie_villager','skeleton','spider','cave_spider','enderman','witch','slime','drowned','husk','pillager','vex','ravager','phantom','blaze','ghast','magma','guardian','elder_guardian','shulker','wither_skeleton','hoglin','zoglin','stray','silverfish','evoker','vindicator','warden','piglin','piglin_brute']
@@ -357,8 +358,8 @@ function extractSignText (block) {
     }
   } catch {}
   return {
-    front: Array.from(new Set(front)),
-    back: Array.from(new Set(back))
+    front,
+    back
   }
 }
 
@@ -858,7 +859,7 @@ function collectInventorySummary (bot, top = 6) {
     for (const t of tiers) { const key = `${t}_pickaxe`; if (byBaseName.get(key)) { bestPick = key; break } }
     const allSorted = Array.from(byKey.values()).sort((a, b) => (b.count || 0) - (a.count || 0))
     const rows = allSorted.slice(0, Math.max(1, top))
-    return { held, offhand, armor, top: rows, all: allSorted, foodCount, bestPick }
+    return { held, offhand, armor, top: rows, all: allSorted, foodCount, bestPick, carriedContainers: require('./carried-containers').read(bot) }
   } catch { return { held: null, top: [], foodCount: 0, bestPick: null } }
 }
 
@@ -1360,12 +1361,16 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
   'space_snapshot',
   'inventory',
   'cows',
-  'blocks'
+  'blocks',
+  'block_search',
+  'block_at'
 ])
 
 const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
   controller: 'External controller state, task status and behavior versions.',
   view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
+  block_search: 'Find exact registered block names in loaded chunks; requires names array.',
+  block_at: 'Read one exact block coordinate including collision and properties; requires x/y/z.',
   terrain: 'Conservative local traversable positions ranked by exploration memory; never moves.',
   exploration_memory: 'Durable world-scoped mission checkpoints, nearby discoveries and route outcomes.',
   runtime: 'Bounded process memory, GC, event loop and collection size history; available before spawn.',
@@ -1428,6 +1433,19 @@ function detail (bot, args = {}) {
       pingMs: Number.isFinite(rec?.ping) && rec.ping >= 0 ? rec.ping : null
     })).sort((a, b) => a.name.localeCompare(b.name))
     return { ok: true, msg: `TAB 在线列表 ${rows.length} 人: ${rows.slice(0, max).map(p => p.name).join(', ')}`, data: { source: 'server_tablist', total: rows.length, truncated: rows.length > max, players: rows.slice(0, max) } }
+  }
+  if (what === 'block_at' || what === 'block_search') {
+    const row = block => block && ({ name: block.name, x: block.position.x, y: block.position.y, z: block.position.z, boundingBox: block.boundingBox, properties: block.getProperties?.() || {} })
+    if (what === 'block_at') {
+      if (![args.x, args.y, args.z].every(Number.isInteger)) return { ok: false, msg: 'Integer coordinates required', error: 'invalid_position' }
+      const block = bot.blockAt(new Vec3(args.x, args.y, args.z))
+      return block ? { ok: true, msg: block.name, data: row(block) } : { ok: false, msg: 'Block not loaded', error: 'unloaded_block' }
+    }
+    if (!Array.isArray(args.names) || !args.names.length || args.names.length > 32) return { ok: false, msg: 'Explicit names required', error: 'missing_names' }
+    const ids = args.names.map(n => bot.registry?.blocksByName[n]?.id)
+    if (ids.some(id => !Number.isInteger(id))) return { ok: false, msg: 'Unknown block name', error: 'unknown_block' }
+    const found = bot.findBlocks({ matching: ids, maxDistance: Math.max(1, Math.min(64, Number(args.radius) || 32)), count: Math.max(1, Math.min(64, Number(args.max) || 20)) }) || []
+    return { ok: true, msg: `Found ${found.length} blocks`, data: found.map(p => row(bot.blockAt(p))).filter(Boolean) }
   }
   if (what === 'terrain') return require('../exploration/terrain').survey(bot, args)
   if (what === 'exploration_memory') return require('../exploration').read(bot, args)

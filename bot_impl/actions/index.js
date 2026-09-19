@@ -48,6 +48,7 @@ function buildToolRegistryReport (registeredNames = []) {
 
 const MODULES = [
   require('./modules/controller'),
+  require('./modules/building'),
   require('./modules/movement'),
   require('./modules/voice'),
   require('./modules/skills'),
