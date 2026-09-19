@@ -39,11 +39,13 @@ async function main(){
   const [action,raw='{}',...flags]=process.argv.slice(2)
   if(action==='schema'){console.log(JSON.stringify(await call('schema'),null,2));return}
   const args=JSON.parse(raw)
-  if(flags.includes('--dry')){console.log(JSON.stringify(await call('behavior.validate',{behavior:makeBehavior(action,args,30000)}),null,2));return}
+  const timeoutMs=Number(flags.find(f=>f.startsWith('--timeout-ms='))?.split('=')[1] || 30000)
+  if(!Number.isInteger(timeoutMs)||timeoutMs<100||timeoutMs>298000)throw new Error('invalid_timeout')
+  if(flags.includes('--dry')){console.log(JSON.stringify(await call('behavior.validate',{behavior:makeBehavior(action,args,timeoutMs)}),null,2));return}
   const s=await session('codex-cli')
   const stop=()=>s.close().finally(()=>process.exit(130))
   process.once('SIGINT',stop);process.once('SIGTERM',stop)
-  try{const result=await s.action(action,args);console.log(JSON.stringify(result,null,2));if(!result.ok)process.exitCode=1}
+  try{const result=await s.action(action,args,timeoutMs);console.log(JSON.stringify(result,null,2));if(!result.ok)process.exitCode=1}
   finally{await s.close();process.off('SIGINT',stop);process.off('SIGTERM',stop)}
 }
 if(require.main===module)main().catch(e=>{console.error(JSON.stringify({ok:false,error:e.message,detail:e.result}));process.exitCode=1})

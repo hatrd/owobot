@@ -143,7 +143,7 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     if (hazard) {
       const node = s.behaviors.find(b => b.hash === t.hash)?.nodes[t.node]
       // Feeding is not idempotent: never resume an uncertain interaction after suspension.
-      if (['feed_cat', 'excavate', 'discard', 'storage_transfer'].includes(node?.action) && pending) return finish(t, 'canceled', 'mutation_interrupted_by_hazard')
+      if (['feed_cat', 'excavate', 'discard', 'storage_transfer', 'smelt', 'tunnel_step'].includes(node?.action) && pending) return finish(t, 'canceled', 'mutation_interrupted_by_hazard')
       if (t.status !== 'suspended') {
         if (pending) { pending.cancel(); pending = null }
         driver.stop()

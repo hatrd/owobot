@@ -45,6 +45,8 @@ module.exports = function registerBuilding (ctx) {
       const before = count(type)
       const recipe = bot.recipesAll(type, null, true)[selected.index]
       await bot.craft(recipe, selected.times, table)
+      const deadline = Date.now() + 2000
+      while (count(type) - before < selected.output && Date.now() < deadline) await ctx.wait(50)
       const produced = count(type) - before
       return produced >= selected.output ? ok('Craft confirmed', { data: { item: args.item, produced } }) : fail('Craft not confirmed', { error: 'craft_unconfirmed', data: { produced, expected: selected.output } })
     })

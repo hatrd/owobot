@@ -5,6 +5,7 @@ const position = object(Object.fromEntries(['x', 'y', 'z'].map(k => [k, { type: 
 const record = object({
   id: text, kind: { enum: ['home', 'protected', 'mining', 'hazard', 'route', 'resource', 'player', 'task'] },
   subject: text, dimension: text, position, radius: { type: 'number', minimum: 0, maximum: 2048 },
+  minY: { type: 'integer', minimum: -30000000, maximum: 30000000 }, maxY: { type: 'integer', minimum: -30000000, maximum: 30000000 },
   fact: { type: 'string', minLength: 1, maxLength: 4000 }, source: text,
   confidence: { enum: ['observed', 'reported', 'inferred'] },
   expiresAt: { type: 'integer', minimum: 0 }
@@ -14,6 +15,6 @@ const schemas = { 'knowledge.query': query, 'knowledge.put': record, 'knowledge.
 const validator = new Ajv().compile(record)
 function validRecord (r) {
   const { updatedAt, createdAt, ...input } = r || {}
-  return validator(input) && (!['home', 'protected', 'mining', 'hazard', 'resource', 'route'].includes(input.kind) || (input.position && input.dimension && Number.isFinite(input.radius)))
+  return validator(input) && (input.minY === undefined || input.maxY === undefined || input.minY <= input.maxY) && (!['home', 'protected', 'mining', 'hazard', 'resource', 'route'].includes(input.kind) || (input.position && input.dimension && Number.isFinite(input.radius)))
 }
 module.exports = { schemas, record, validRecord }

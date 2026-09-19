@@ -26,6 +26,18 @@ class Movements extends upstream.Movements {
     }
     return block
   }
+  getLandingBlock (node, dir) {
+    // Upstream compares feet height to the supporting block's BASE and thus
+    // rejects even a one-block stair when maxDropDown=1. Bound the feet drop.
+    let floor = this.getBlock(node, dir.x, -2, dir.z)
+    while (floor.position && floor.position.y > this.bot.game.minY) {
+      if (floor.liquid && floor.safe) return node.y - floor.position.y <= this.maxDropDown ? floor : null
+      if (floor.physical) return node.y - (floor.position.y + 1) <= this.maxDropDown ? this.getBlock(floor.position, 0, 1, 0) : null
+      if (!floor.safe) return null
+      floor = this.getBlock(floor.position, 0, -1, 0)
+    }
+    return null
+  }
   safeToBreak (block) {
     if (!require('../safety').checkDig(this.bot, block).ok) return false
     return super.safeToBreak(block)

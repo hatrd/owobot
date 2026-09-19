@@ -66,3 +66,12 @@ test('navigation arrival accounts for actual half-height support without accepti
   assert.equal(reached(slab,target,new Vec3(2.5,68.5,3.5)),true)
   assert.equal(reached({blockAt:()=>({shapes:[]})},target,new Vec3(2.5,68.5,3.5)),false)
 })
+test('mining height bounds never weaken a protected column',()=>{
+  const {bot,target}=fixture()
+  bot.state.knowledge.document.records[0].maxY=9
+  assert.equal(checkDig(bot,target).error,'outside_mining_region')
+  bot.state.knowledge.document.records[0].maxY=10
+  assert.equal(checkDig(bot,target).ok,true)
+  bot.state.knowledge.document.records.push({...record,minY:100,maxY:110})
+  assert.equal(checkDig(bot,target).error,'protected_region')
+})

@@ -20,8 +20,10 @@ async function excavate (bot, state, args, cancellation) {
   if (bot.entity.position.distanceTo(target.offset(0.5, 0.5, 0.5)) > 4.5 || !bot.canDigBlock(block)) return fail('out_of_reach')
   const pickaxes = new Set(['iron_pickaxe', 'diamond_pickaxe', 'netherite_pickaxe'])
   const tools = bot.inventory.items().filter(i => pickaxes.has(i.name) && (!i.maxDurability || i.maxDurability - (i.durabilityUsed || 0) > 32))
-  const tool = tools.sort((a,b) => bot.digTime(block, false, false, a.type) - bot.digTime(block, false, false, b.type))[0]
-  if (!tool) return fail('missing_durable_pickaxe')
+  const itemInfo = require('../safety/items')
+  const candidates = ['diamond_ore','deepslate_diamond_ore'].includes(block.name) ? tools.filter(i=>!itemInfo.enchantments(bot,i).some(e=>e.name==='silk_touch')) : tools
+  const tool = candidates.sort((a,b) => itemInfo.digTime(bot,block,a) - itemInfo.digTime(bot,block,b))[0]
+  if (!tool) return fail(tools.length ? 'non_silk_pickaxe_required' : 'missing_durable_pickaxe')
   if (bot.inventory.emptySlotCount() < 2) return fail('inventory_reserve_required')
   await bot.equip(tool, 'hand')
   error = check(); if (error) return fail(error)

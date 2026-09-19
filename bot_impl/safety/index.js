@@ -14,7 +14,7 @@ function checkDig (bot, block) {
   if (!areas) return { ok: false, error: 'protection_memory_unavailable' }
   const protectedArea = areas.find(r => ['home', 'protected'].includes(r.kind))
   if (protectedArea) return { ok: false, error: 'protected_region', evidence: protectedArea.id }
-  if (!areas.some(r => r.kind === 'mining' && r.confidence === 'observed' && (!r.expiresAt || r.expiresAt > Date.now()))) return { ok: false, error: 'outside_mining_region' }
+  if (!areas.some(r => r.kind === 'mining' && (r.minY === undefined || p.y >= r.minY) && (r.maxY === undefined || p.y <= r.maxY) && r.confidence === 'observed' && (!r.expiresAt || r.expiresAt > Date.now()))) return { ok: false, error: 'outside_mining_region' }
   if (!NATURAL.has(block.name)) return { ok: false, error: 'block_not_in_excavation_policy', block: block.name }
   const feet = bot.entity?.position?.floored()
   if (!feet || (p.x === feet.x && p.z === feet.z && p.y < feet.y)) return { ok: false, error: 'underfoot_excavation' }
@@ -28,6 +28,9 @@ function checkDig (bot, block) {
 }
 function install (bot, { state, registerCleanup }) {
   const original = bot.dig
+  const originalTime = bot.digTime
+  const accurateTime = block => require('./items').digTime(bot, block)
+  if (originalTime) bot.digTime = accurateTime
   const guarded = async function (block, ...args) {
     const current = block?.position && bot.blockAt(block.position, false)
     const result = checkDig(bot, current)
@@ -39,6 +42,6 @@ function install (bot, { state, registerCleanup }) {
     return original.call(bot, current, ...args)
   }
   bot.dig = guarded
-  registerCleanup(() => { if (bot.dig === guarded) bot.dig = original })
+  registerCleanup(() => { if (bot.dig === guarded) bot.dig = original; if (bot.digTime === accurateTime) bot.digTime = originalTime })
 }
 module.exports = { install, checkDig, regions, NATURAL }

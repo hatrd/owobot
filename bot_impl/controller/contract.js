@@ -6,9 +6,12 @@ const duration = { type: 'integer', minimum: 100, maximum: 300000 }
 const coordinate = { type: 'number', minimum: -30000000, maximum: 30000000 }
 const next = text
 const actionSchemas = {
+  tunnel_step: object({ x: { ...coordinate, type: 'integer' }, y: { ...coordinate, type: 'integer' }, z: { ...coordinate, type: 'integer' } }),
+  smelt: object({ x: { ...coordinate, type: 'integer' }, y: { ...coordinate, type: 'integer' }, z: { ...coordinate, type: 'integer' }, input: text, output: text, count: { type: 'integer', minimum: 1, maximum: 8 }, fuel: text, fuelCount: { type: 'integer', minimum: 1, maximum: 64 } }),
+  surface_travel: object({ x: coordinate, y: { ...coordinate, type: 'integer' }, z: coordinate }),
   storage_transfer: object({ x: { ...coordinate, type: 'integer' }, y: { ...coordinate, type: 'integer' }, z: { ...coordinate, type: 'integer' }, direction: { enum: ['deposit', 'withdraw'] }, item: text, count: { type: 'integer', minimum: 1, maximum: 2304 } }),
   excavate: object({ x: { ...coordinate, type: 'integer' }, y: { ...coordinate, type: 'integer' }, z: { ...coordinate, type: 'integer' }, expected: text }),
-  discard: object({ item: { enum: ['cobblestone', 'cobbled_deepslate', 'dirt', 'granite', 'diorite', 'andesite', 'tuff', 'netherrack'] }, keep: { type: 'integer', minimum: 0, maximum: 256 } }),
+  discard: object({ item: { enum: ['stone', 'deepslate', 'cobblestone', 'cobbled_deepslate', 'dirt', 'granite', 'diorite', 'andesite', 'tuff', 'netherrack'] }, keep: { type: 'integer', minimum: 0, maximum: 256 } }),
   feed_cat: object({ uuid: { type: 'string', minLength: 1, maxLength: 64 } }),
   goto: object({ x: coordinate, y: coordinate, z: coordinate, range: { type: 'number', minimum: 0.5, maximum: 8 } }, ['x', 'y', 'z']),
   look: object({ yaw: { type: 'number', minimum: -6.284, maximum: 6.284 }, pitch: { type: 'number', minimum: -1.571, maximum: 1.571 } }),

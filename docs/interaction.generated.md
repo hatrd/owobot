@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T11:44:11.787Z`
+- GeneratedAt: `2026-09-19T12:22:19.937Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -27,6 +27,8 @@
 | --- | --- |
 | knowledge | Persistent world and player evidence; query filters through controller knowledge.query. |
 | excavation | Loaded diamond ores, excavation safety decisions, inventory space, durability and enchantments. |
+| layer_map | Read-only bounded horizontal block layer, with physical support/fluid legend, at explicit y. |
+| surface_route | Read-only short surface travel corridor and dry landing validation at x/y/z. |
 | life | Autonomous life config/schema, current activity, recent outcomes and read-only decision preview. |
 | runtime | Bounded process memory, GC, event loop and collection size history; available before spawn. |
 | terrain | Conservative local traversable positions ranked by exploration memory; never moves. |

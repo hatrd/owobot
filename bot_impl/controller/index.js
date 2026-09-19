@@ -6,6 +6,7 @@ const { oxygen } = require('../navigation/oxygen')
 
 function install (bot, { state, on, registerCleanup, log }) {
   const navigator = createNavigator(bot, state)
+  const surface = require('../navigation/surface').createSurfaceDriver(bot, state)
   const driver = {
     beforeAcquire (args) { if (args.controllerId !== require('../life/runtime').OWNER) state.lifeApi?.yield('external_controller') },
     knowledgeRead: args => state.knowledgeApi?.query(args),
@@ -25,12 +26,12 @@ function install (bot, { state, on, registerCleanup, log }) {
     isBusy () {
       return Boolean((state.externalBusyCount > (state.controllerBusy ? 1 : 0) || (state.externalBusy && !state.controllerBusy)) || state.holdItemLock || state.isFishing || state.autoEat?.eating || bot.pathfinder?.goal || bot.currentWindow || bot.targetDigBlock || bot._skillRunner?.listTasks().some(t => t.status === 'running'))
     },
-    stop () { navigator.stop(); if (bot.targetDigBlock) bot.stopDigging(); if (state.storageTransfer?.phase === 'opening' || state.storageTransfer?.phase === 'transferring') { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } },
+    stop () { navigator.stop(); surface.stop(); if (bot.targetDigBlock) bot.stopDigging(); if (state.storageTransfer?.phase === 'opening' || state.storageTransfer?.phase === 'transferring') { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } },
     facts: () => ({ health: bot.health, food: bot.food, oxygenLevel: oxygen(bot).level }),
     hazard () {
       if (!state.hasSpawned || !bot.entity?.position) return 'not_spawned'
       if (state.autoSwim?.runtime?.active) return 'water_recovery'
-      if (typeof bot.blockAt === 'function' && body(bot).head === 'water') return 'water_recovery'
+      if (typeof bot.blockAt === 'function' && body(bot).head === 'water' && state.surfaceTravel?.phase !== 'moving') return 'water_recovery'
       if (bot.health <= 6) return 'low_health'
       if (oxygen(bot).level !== null && oxygen(bot).level <= 10) return 'low_oxygen'
       if (bot.food <= 6 || state.autoEat?.eating) return 'needs_food'
@@ -38,6 +39,9 @@ function install (bot, { state, on, registerCleanup, log }) {
     },
     async action (action, args, cancellation) {
       if (cancellation.canceled) return { ok: false, error: 'canceled' }
+      if (action === 'tunnel_step') return require('./tunnel').step(bot, state, args, cancellation, navigator)
+      if (action === 'smelt') return require('./smelt').smelt(bot, state, args, cancellation)
+      if (action === 'surface_travel') return surface.start(args, cancellation)
       if (action === 'storage_transfer') return require('./storage').transfer(bot, state, args, cancellation)
       if (action === 'excavate') return require('./excavate').excavate(bot, state, args, cancellation)
       if (action === 'discard') return require('./excavate').discard(bot, args, cancellation)

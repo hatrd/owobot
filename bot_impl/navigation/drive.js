@@ -35,8 +35,12 @@ function createNavigator (bot, state, { now = Date.now } = {}) {
       function onPath (result) {
         if (bot.pathfinder.goal !== target) return
         s.path = { status: result.status, nodes: result.path?.length || 0, cost: result.cost ?? null, visitedNodes: result.visitedNodes ?? null, at: now() }
-        if (result.status === 'noPath') return finish(false, 'navigation_no_path')
-        if (result.status === 'timeout') return finish(false, 'navigation_search_timeout')
+        // Upstream assigns its result path AFTER emitting path_update. Stop on the
+        // microtask boundary so a failed search cannot reinstall a partial path.
+        if (result.status === 'noPath' || result.status === 'timeout') {
+          queueMicrotask(() => finish(false, result.status === 'noPath' ? 'navigation_no_path' : 'navigation_search_timeout'))
+          return
+        }
         s.phase = result.path?.length ? 'moving' : 'planning'
       }
       function onReset (reason) { if (bot.pathfinder.goal === target) { s.pathResets++; s.lastReset = reason } }

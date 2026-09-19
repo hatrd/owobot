@@ -33,3 +33,14 @@ test('cancel settles pending navigation and ignores late path events', async t =
   assert.equal(h.state.navigation.reason, 'reload')
   assert.equal(h.bot.listenerCount('path_reset'), 0)
 })
+test('noPath cleanup occurs after upstream installs its partial result path', async t => {
+  const h=fixture(t)
+  h.bot.pathfinder.path=[]
+  h.bot.pathfinder.setGoal=function(goal){this.goal=goal;this.path=[]}
+  const result=h.start()
+  h.bot.emit('path_update',{status:'noPath',path:[{x:4,y:64,z:0}]})
+  // This order matches mineflayer-pathfinder monitorMovement.
+  h.bot.pathfinder.path=[{x:4,y:64,z:0}]
+  await result
+  assert.deepEqual(h.bot.pathfinder.path,[])
+})

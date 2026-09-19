@@ -1347,6 +1347,8 @@ const DETAIL_WHAT_ALIASES = Object.freeze({
 const DETAIL_WHAT_CANONICAL = Object.freeze([
   'knowledge',
   'excavation',
+  'layer_map',
+  'surface_route',
   'life',
   'runtime',
   'terrain',
@@ -1371,6 +1373,8 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
 ])
 
 const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
+  surface_route: 'Read-only short surface travel corridor and dry landing validation at x/y/z.',
+  layer_map: 'Read-only bounded horizontal block layer, with physical support/fluid legend, at explicit y.',
   excavation: 'Loaded diamond ores, excavation safety decisions, inventory space, durability and enchantments.',
   knowledge: 'Persistent world and player evidence; query filters through controller knowledge.query.',
   life: 'Autonomous life config/schema, current activity, recent outcomes and read-only decision preview.',
@@ -1462,6 +1466,12 @@ function detail (bot, args = {}) {
   if (what === 'navigation') return require('../navigation/observe').observe(bot, args)
   if (what === 'terrain') return require('../exploration/terrain').survey(bot, args)
   if (what === 'exploration_memory') return require('../exploration').read(bot, args)
+  if (what === 'surface_route') {
+    if (![args.x,args.y,args.z].every(Number.isFinite) || !Number.isInteger(args.y)) return { ok: false, error: 'invalid_position', msg: 'Explicit x/y/z required, y must be integer' }
+    const result = require('../navigation/surface').corridor(bot, args)
+    return { ...result, msg: result.ok ? 'Surface route has loaded water/ground and dry landing' : result.error, data: result }
+  }
+  if (what === 'layer_map') return require('../safety/layer-map').read(bot, args)
   if (what === 'excavation') return require('../safety/observe').read(bot, args)
   if (what === 'knowledge') return require('../memory').read(bot, { max: args.max })
   if (what === 'life') return require('../life').read(bot)

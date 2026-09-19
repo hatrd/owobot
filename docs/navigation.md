@@ -30,3 +30,11 @@ node scripts/botctl.js dry observe_detail what=navigation x=-1365 y=69 z=1349 li
 这些完成/卡住/取消保证适用于控制器 goto；旧动作的“开始前往”回执仍然只代表启动。所有入口的液体规划均已统一。默认不自动游过深水；跨海、潜水或无岸封闭水体需要另外的明确移动能力，不能声称总能走通。
 
 氧气来自 `navigation/oxygen.js`：按 registry 的 air_supply 字段索引读取**自身实体** metadata，缺失返回 null。当前 Mineflayer 的 entities 元数据分支会把其他实体的 air_supply 写入 bot.oxygenLevel；不再将该共享字段当作当前玩家氧气真相。老版本无 metadataKeys 时才使用按自身 entityId 过滤的 breath 插件字段。
+
+## 显式水面通行
+
+`surface_travel` 是独立控制器动作：最多48格直线水面通行，目标必须是已加载的干燥实体落脚点。使用 `dry observe_detail what=surface_route x=... y=... z=...` 预查整段路径；`what=layer_map y=62 radius=32` 查看水平层的实体/水/熔岩/未知格。动作每100ms复查路线，不自动拆建筑或搭桥。
+
+入水后持续上浮；上岸前不在干燥平台上提前起跳，避免落水惯性。血量<16、食物<10、氧气<16、头部连续入水超过2秒、下沉超过2.5格、8秒无进展或45秒总限时均终止。取消/热重载释放按键，现有自动脱困接管意外入水。它不支持潜水、水下洞穴、流动水、气泡柱、未知区块或没有确认岸边的跨海。
+
+到达支持半格实体顶面；失败 path_update 的停止清理在微任务中执行，避免上游事件返回后重新安装部分路径，出现报告失败却继续移动。

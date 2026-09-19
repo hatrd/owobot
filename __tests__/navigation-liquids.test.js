@@ -65,3 +65,11 @@ test('an island with no shallow exit returns noPath instead of planning a dive',
   }
   assert.equal(route(world(overrides), [6, 64, 0]).status, 'noPath')
 })
+test('one-block cardinal stair is allowed while a two-block fall is rejected',()=>{
+  const overrides=new Map([[new Vec3(1,63,0).toString(),{name:'air'}]])
+  const bot=world(overrides),m=new Movements(bot),start=new Move(0,64,0,0,0)
+  const landing=m.getLandingBlock(start,{x:1,z:0})
+  assert.equal(landing.position.y,63)
+  overrides.set(new Vec3(1,62,0).toString(),{name:'air'})
+  assert.equal(m.getLandingBlock(start,{x:1,z:0}),null)
+})
