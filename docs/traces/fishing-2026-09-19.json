@@ -1,0 +1,440 @@
+{
+  "worldId": "40d030d2c1ff2bdfc887efcb",
+  "bootstrap": {
+    "id": "82c82a94-92a2-4a46-9025-44837793174a",
+    "startedAt": 1789827584261,
+    "finishedAt": 1789828692533,
+    "baseline": 0,
+    "receipt": {
+      "caught": 8,
+      "retainedRaw": 8,
+      "position": {
+        "x": -1361.6693706772394,
+        "y": 69,
+        "z": 1347.3031807588802
+      },
+      "health": 20,
+      "food": 20
+    },
+    "sleep": [
+      {
+        "at": 1789828501143,
+        "type": "action",
+        "kind": "sleep"
+      },
+      {
+        "at": 1789828506479,
+        "type": "result",
+        "kind": "sleep",
+        "result": {
+          "slept": true,
+          "bed": {
+            "x": -1361,
+            "y": 69,
+            "z": 1347
+          }
+        }
+      }
+    ],
+    "developmentRun": true
+  },
+  "cancellation": {
+    "castObserved": true,
+    "status": "canceled",
+    "operation": null,
+    "lease": null,
+    "fish": 8
+  },
+  "finalGoal": {
+    "id": "5980d7a0-1d1e-4397-a12d-1e6dfa5f8e15",
+    "status": "running",
+    "count": 8,
+    "home": {
+      "x": -1361.5,
+      "y": 69,
+      "z": 1347.5,
+      "dimension": "overworld"
+    }
+  },
+  "finalRun": {
+    "id": "5980d7a0-1d1e-4397-a12d-1e6dfa5f8e15",
+    "codeCommit": "62f36cb",
+    "startedAt": 1789828877440,
+    "finishedAt": 1789829154940,
+    "durationSeconds": 277.5,
+    "baseline": 9,
+    "home": {
+      "x": -1361.5,
+      "y": 69,
+      "z": 1347.5,
+      "dimension": "overworld"
+    },
+    "receipt": {
+      "caught": 8,
+      "retainedRaw": 8,
+      "position": {
+        "x": -1361.5,
+        "y": 69,
+        "z": 1347.5
+      },
+      "health": 20,
+      "food": 20
+    },
+    "stats": {
+      "casts": 10,
+      "sleeps": 1,
+      "damage": 0,
+      "storageChecks": 2
+    },
+    "events": [
+      {
+        "at": 1789828877454,
+        "type": "start",
+        "goalId": "5980d7a0-1d1e-4397-a12d-1e6dfa5f8e15"
+      },
+      {
+        "at": 1789828878693,
+        "type": "action",
+        "kind": "choose_spot"
+      },
+      {
+        "at": 1789828878752,
+        "type": "result",
+        "kind": "choose_spot",
+        "result": {
+          "spot": {
+            "stand": {
+              "x": -1361.5,
+              "y": 63,
+              "z": 1351.5
+            },
+            "aim": {
+              "x": -1361.5,
+              "y": 62.65,
+              "z": 1355.5
+            }
+          }
+        }
+      },
+      {
+        "at": 1789828879695,
+        "type": "action",
+        "kind": "travel"
+      },
+      {
+        "at": 1789828880030,
+        "type": "result",
+        "kind": "travel",
+        "result": {
+          "arrived": true
+        }
+      },
+      {
+        "at": 1789828880697,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789828898705,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 9,
+          "after": 10
+        }
+      },
+      {
+        "at": 1789828899220,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789828932611,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 10,
+          "after": 11
+        }
+      },
+      {
+        "at": 1789828933252,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789828952492,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 11,
+          "after": 12
+        }
+      },
+      {
+        "at": 1789828953290,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789828980303,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 12,
+          "after": 13
+        }
+      },
+      {
+        "at": 1789828980830,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789829000462,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 0,
+          "before": 13,
+          "after": 13
+        }
+      },
+      {
+        "at": 1789829001352,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789829015849,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 13,
+          "after": 14
+        }
+      },
+      {
+        "at": 1789829016410,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789829028095,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 0,
+          "before": 14,
+          "after": 14
+        }
+      },
+      {
+        "at": 1789829028919,
+        "type": "action",
+        "kind": "prepare"
+      },
+      {
+        "at": 1789829042411,
+        "type": "result",
+        "kind": "prepare",
+        "result": {
+          "checked": {
+            "x": -1357,
+            "y": 69,
+            "z": 1345
+          },
+          "paired": [],
+          "ready": false,
+          "errors": [
+            {
+              "position": {
+                "x": -1357,
+                "y": 69,
+                "z": 1345
+              },
+              "error": "destination full"
+            }
+          ]
+        }
+      },
+      {
+        "at": 1789829042971,
+        "type": "action",
+        "kind": "prepare"
+      },
+      {
+        "at": 1789829044878,
+        "type": "result",
+        "kind": "prepare",
+        "result": {
+          "checked": {
+            "x": -1356,
+            "y": 69,
+            "z": 1343
+          },
+          "paired": [],
+          "ready": false,
+          "errors": []
+        }
+      },
+      {
+        "at": 1789829045796,
+        "type": "action",
+        "kind": "travel"
+      },
+      {
+        "at": 1789829055696,
+        "type": "result",
+        "kind": "travel",
+        "result": {
+          "arrived": true
+        }
+      },
+      {
+        "at": 1789829056308,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789829073626,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 14,
+          "after": 15
+        }
+      },
+      {
+        "at": 1789829074326,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789829106226,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 15,
+          "after": 16
+        }
+      },
+      {
+        "at": 1789829106849,
+        "type": "action",
+        "kind": "cast"
+      },
+      {
+        "at": 1789829125551,
+        "type": "result",
+        "kind": "cast",
+        "result": {
+          "caught": 1,
+          "before": 16,
+          "after": 17
+        }
+      },
+      {
+        "at": 1789829126358,
+        "type": "action",
+        "kind": "return_complete"
+      },
+      {
+        "at": 1789829132863,
+        "type": "interrupted",
+        "kind": "return_complete"
+      },
+      {
+        "at": 1789829133862,
+        "type": "action",
+        "kind": "return_for_sleep"
+      },
+      {
+        "at": 1789829139141,
+        "type": "result",
+        "kind": "return_for_sleep",
+        "result": {
+          "home": true
+        }
+      },
+      {
+        "at": 1789829139868,
+        "type": "action",
+        "kind": "sleep"
+      },
+      {
+        "at": 1789829145507,
+        "type": "result",
+        "kind": "sleep",
+        "result": {
+          "slept": true,
+          "bed": {
+            "x": -1361,
+            "y": 69,
+            "z": 1347
+          }
+        }
+      },
+      {
+        "at": 1789829146374,
+        "type": "action",
+        "kind": "sleep"
+      },
+      {
+        "at": 1789829149446,
+        "type": "failure",
+        "kind": "sleep",
+        "error": "sleep_rejected",
+        "detail": "bot is not sleeping"
+      },
+      {
+        "at": 1789829154883,
+        "type": "action",
+        "kind": "verify"
+      },
+      {
+        "at": 1789829154941,
+        "type": "complete",
+        "caught": 8,
+        "retainedRaw": 8,
+        "position": {
+          "x": -1361.5,
+          "y": 69,
+          "z": 1347.5
+        },
+        "health": 20,
+        "food": 20
+      }
+    ]
+  },
+  "finalInventory": [
+    {
+      "name": "diamond",
+      "label": null,
+      "count": 64
+    },
+    {
+      "name": "cod",
+      "label": null,
+      "count": 11
+    },
+    {
+      "name": "salmon",
+      "label": null,
+      "count": 6
+    },
+    {
+      "name": "fishing_rod",
+      "label": null,
+      "count": 1
+    }
+  ],
+  "finalLease": null
+}
