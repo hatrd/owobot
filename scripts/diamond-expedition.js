@@ -26,7 +26,18 @@ async function main(){
    if(actions>=85){await s.close();s=await session('diamond-expedition');actions=0}
    snapshot=await observe()
    if(snapshot.vitals.health<16||snapshot.vitals.food<10)throw Error('unsafe_vitals')
-   if(snapshot.freeSlots<4){for(const item of ['stone','deepslate','cobblestone','cobbled_deepslate','granite','diorite','andesite','tuff']){if(!snapshot.inventory.some(it=>it.name===item&&it.count>32))continue;const discarded=await s.action('discard',{item,keep:32});actions++;if(!discarded.ok)throw Error(discarded.task.reason)}snapshot=await observe()}
+   if(snapshot.freeSlots<4){
+    const bulk=['stone','deepslate','cobblestone','cobbled_deepslate','granite','diorite','andesite','tuff']
+      .map(item=>({item,count:snapshot.inventory.filter(it=>it.name===item).reduce((n,it)=>n+it.count,0)}))
+      .filter(it=>it.count>0).sort((a,b)=>b.count-a.count)
+    for(const [index,{item,count}] of bulk.entries()){
+     const keep=index===0?32:0
+     if(count<=keep)continue
+     const discarded=await s.action('discard',{item,keep});actions++
+     if(!discarded.ok)throw Error(discarded.task.reason)
+    }
+    snapshot=await observe()
+   }
    if(snapshot.freeSlots<2)throw Error('inventory_reserve_required')
    const from={x:Math.floor(snapshot.position.x),y:Math.floor(snapshot.position.y),z:Math.floor(snapshot.position.z)}
    const target={x:from.x+heading[0],y:Math.max(floor,from.y-1),z:from.z+heading[1]}

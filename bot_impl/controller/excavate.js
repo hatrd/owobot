@@ -46,12 +46,22 @@ async function excavate (bot, state, args, cancellation) {
 async function discard (bot, args, cancellation) {
   const before = bot.inventory.items().filter(i => i.name === args.item).reduce((n,i)=>n+i.count,0)
   let remaining = Math.max(0, before - args.keep)
-  for (const item of bot.inventory.items().filter(i => i.name === args.item)) {
-    if (cancellation.canceled) return { ok:false,error:'canceled' }
-    if (!remaining) break
-    const amount = Math.min(remaining, item.count)
-    await bot.toss(item.type, item.metadata, amount)
-    remaining -= amount
+  if (cancellation.canceled) return { ok:false,error:'canceled' }
+  // Toss behind the current heading so forward travel does not recollect the pile.
+  const { yaw, pitch } = bot.entity
+  if (remaining) {
+    try {
+      await bot.look(yaw + Math.PI, 0, true)
+      for (const item of bot.inventory.items().filter(i => i.name === args.item)) {
+        if (cancellation.canceled) return { ok:false,error:'canceled' }
+        if (!remaining) break
+        const amount = Math.min(remaining, item.count)
+        await bot.toss(item.type, item.metadata, amount)
+        remaining -= amount
+      }
+    } finally {
+      if (!cancellation.canceled) await bot.look(yaw, pitch, true)
+    }
   }
   const after = bot.inventory.items().filter(i => i.name === args.item).reduce((n,i)=>n+i.count,0)
   return {ok:after === Math.min(before,args.keep),data:{item:args.item,before,after},...(after !== Math.min(before,args.keep) ? {error:'discard_unconfirmed'} : {})}
