@@ -117,7 +117,7 @@ module.exports = function mineOreFactory ({ bot, args, log }) {
 
   function ensureMcData () { try { if (!bot.mcData) bot.mcData = require('minecraft-data')(bot.version) } catch {} ; return bot.mcData }
   function ensurePathfinder () {
-    try { if (!pathfinder) pathfinder = require('mineflayer-pathfinder'); if (!bot.pathfinder) bot.loadPlugin(pathfinder.pathfinder); return true } catch { return false }
+    try { if (!pathfinder) pathfinder = require('../navigation/pathfinder'); if (!bot.pathfinder) bot.loadPlugin(pathfinder.pathfinder); return true } catch { return false }
   }
   function ensureToolSel () { if (!toolSel) toolSel = require('../tool-select'); return toolSel }
   function ensureActions () { if (!actions) { try { actions = require('../actions').install(bot, { log }) } catch {} } return actions }

@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T08:35:23.334Z`
+- GeneratedAt: `2026-09-19T08:44:20.545Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -27,6 +27,7 @@
 | --- | --- |
 | runtime | Bounded process memory, GC, event loop and collection size history; available before spawn. |
 | terrain | Conservative local traversable positions ranked by exploration memory; never moves. |
+| navigation | Read-only liquid state, navigation/recovery diagnostics and bounded A* preview with optional x/y/z target. |
 | exploration_memory | Durable world-scoped mission checkpoints, nearby discoveries and route outcomes. |
 | controller | External controller state, task status and behavior versions. |
 | view | On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI. |

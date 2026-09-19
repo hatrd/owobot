@@ -15,7 +15,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function ensurePathfinderLoaded () {
     try {
-      if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
+      if (!pathfinderPkg) pathfinderPkg = require('./navigation/pathfinder')
       if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder)
       return true
     } catch (e) {
@@ -38,7 +38,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   async function walkToPos (pos, range = 1, timeoutMs = 5000) {
     try {
-      if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
+      if (!pathfinderPkg) pathfinderPkg = require('./navigation/pathfinder')
       const { goals } = pathfinderPkg
       bot.pathfinder.setGoal(new goals.GoalNear(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), Math.max(0, range)), true)
       const until = Date.now() + Math.max(1000, timeoutMs)

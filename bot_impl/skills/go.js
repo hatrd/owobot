@@ -2,7 +2,7 @@
 
 function ensurePathfinder (bot, log) {
   try {
-    const pkg = require('mineflayer-pathfinder')
+    const pkg = require('../navigation/pathfinder')
     if (!bot.pathfinder) bot.loadPlugin(pkg.pathfinder)
     const { Movements } = pkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)

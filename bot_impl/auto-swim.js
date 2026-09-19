@@ -58,7 +58,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function ensurePathfinder () {
     try {
-      const pf = require('mineflayer-pathfinder')
+      const pf = require('./navigation/pathfinder')
       if (!bot.pathfinder) bot.loadPlugin(pf.pathfinder)
       return pf
     } catch { return null }

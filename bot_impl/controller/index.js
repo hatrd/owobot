@@ -44,7 +44,7 @@ function install (bot, { state, on, registerCleanup, log }) {
       if (action === 'say') { bot.chat(args.text); return { ok: true } }
       if (action === 'look') { await bot.look(args.yaw, args.pitch, true); return { ok: true } }
       if (action !== 'goto') return { ok: false, error: 'unsupported_action' }
-      const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
+      const { pathfinder, Movements, goals } = require('../navigation/pathfinder')
       if (!bot.pathfinder) bot.loadPlugin(pathfinder)
       const movements = new Movements(bot)
       movements.canDig = false

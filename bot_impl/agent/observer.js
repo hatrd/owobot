@@ -1347,6 +1347,7 @@ const DETAIL_WHAT_ALIASES = Object.freeze({
 const DETAIL_WHAT_CANONICAL = Object.freeze([
   'runtime',
   'terrain',
+  'navigation',
   'exploration_memory',
   'controller',
   'view',
@@ -1371,6 +1372,7 @@ const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
   view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
   block_search: 'Find exact registered block names in loaded chunks; requires names array.',
   block_at: 'Read one exact block coordinate including collision and properties; requires x/y/z.',
+  navigation: 'Read-only liquid state, navigation/recovery diagnostics and bounded A* preview with optional x/y/z target.',
   terrain: 'Conservative local traversable positions ranked by exploration memory; never moves.',
   exploration_memory: 'Durable world-scoped mission checkpoints, nearby discoveries and route outcomes.',
   runtime: 'Bounded process memory, GC, event loop and collection size history; available before spawn.',
@@ -1418,6 +1420,10 @@ function getDetailSchema () {
       what: { type: 'string', enum: DETAIL_WHAT_CANONICAL.slice(), aliases: aliases.map(entry => entry.alias) },
       radius: { type: 'integer', minimum: 1, default: 16 },
       max: { type: 'integer', minimum: 1, default: 24 },
+      liquidMode: { type: 'string', enum: ['dry', 'wade'], default: 'wade', description: 'navigation preview policy; deep water and lava are excluded.' },
+      x: { type: 'number', description: 'navigation preview target or block_at coordinate; provide x/y/z together.' },
+      y: { type: 'number' }, z: { type: 'number' },
+      range: { type: 'number', minimum: 0.5, maximum: 8, default: 1.5 },
       namedOnly: { type: 'boolean', description: 'Applies to entities/animals/cats/cows.' }
     }
   }
@@ -1447,6 +1453,7 @@ function detail (bot, args = {}) {
     const found = bot.findBlocks({ matching: ids, maxDistance: Math.max(1, Math.min(64, Number(args.radius) || 32)), count: Math.max(1, Math.min(64, Number(args.max) || 20)) }) || []
     return { ok: true, msg: `Found ${found.length} blocks`, data: found.map(p => row(bot.blockAt(p))).filter(Boolean) }
   }
+  if (what === 'navigation') return require('../navigation/observe').observe(bot, args)
   if (what === 'terrain') return require('../exploration/terrain').survey(bot, args)
   if (what === 'exploration_memory') return require('../exploration').read(bot, args)
   if (what === 'controller') return require('../controller').read(bot, { op: 'status' })

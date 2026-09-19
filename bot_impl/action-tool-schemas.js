@@ -260,7 +260,7 @@ const ACTION_TOOL_SCHEMAS = [
       properties: {
         what: {
           type: 'string',
-          description: 'Inspection target: block_at|block_search|terrain|exploration_memory|controller|view|runtime|online_players|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
+          description: 'Inspection target: block_at|block_search|navigation|terrain|exploration_memory|controller|view|runtime|online_players|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
         },
         namedOnly: {
           type: 'boolean',

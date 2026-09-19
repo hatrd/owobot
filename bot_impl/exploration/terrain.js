@@ -1,4 +1,5 @@
 const { Vec3 } = require('vec3')
+const { cell } = require('../navigation/liquids')
 const positionKey = p => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
 
@@ -19,6 +20,7 @@ function survey (bot, args = {}) {
   }
   const clear = b => b && b.boundingBox === 'empty' && !hazardous.has(b.type)
   const standable = p => {
+    if (!cell(bot, new Vec3(p.x, p.y, p.z), 'dry').allowed) return false
     const floor = block({ ...p, y: p.y - 1 })
     return floor && floor.boundingBox === 'block' && !hazardous.has(floor.type) && clear(block(p)) && clear(block({ ...p, y: p.y + 1 }))
   }

@@ -110,3 +110,5 @@ Entity observation rows include `position: {x,y,z}` (or null when unavailable). 
 Inventory output includes `carriedContainers`, decoded directly from inventory item components or legacy NBT without placing/opening shulker boxes. Missing contents remain `source=unavailable`, not asserted empty.
 
 `what=block_search` requires an array of exact registered block `names`, queries only loaded chunks (radius capped at 64, max at 64), and returns coordinates/collision/properties. `what=block_at` requires integer x/y/z and reports `unloaded_block` rather than guessing air. `what=blocks` remains the existing unfiltered local scan.
+
+`what=navigation` 返回统一液体状态、导航/脱困运行态与可选 x/y/z 路径预览。预览不执行动作，不改变 pathfinder 目标，partial 不等于可达。详见 [液体与导航](navigation.md)。

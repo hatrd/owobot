@@ -159,3 +159,5 @@
 支持独立模型通过租约控制、异步任务和版本化 JSON 行为驱动机器人；安装行为无需代码热重载。`node scripts/controller-client.js status` 查看状态，`node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry` 校验导览示例。支持按需简化画面，详见[接口与限制](docs/external-controller.md)。
 
 持续探索已接入持久化空间记忆：保存出发点、访问区域、发现、失败路线和检查点，支持跨重载/重启续探。使用 `node scripts/explore-survival.js --dry` 预览，详见[探索记忆](docs/exploration-memory.md)。
+
+液体寻路、只读路径预览与支持边界见 [docs/navigation.md](docs/navigation.md)。

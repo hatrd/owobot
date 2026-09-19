@@ -114,7 +114,7 @@ function createContext (bot, { log, on, registerCleanup, runtime } = {}) {
     },
     ensurePathfinder () {
       try {
-        if (!pathfinderPkg) pathfinderPkg = require('mineflayer-pathfinder')
+        if (!pathfinderPkg) pathfinderPkg = require('../navigation/pathfinder')
         if (!bot.pathfinder) bot.loadPlugin(pathfinderPkg.pathfinder)
         return true
       } catch (err) {
