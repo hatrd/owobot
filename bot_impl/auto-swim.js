@@ -6,8 +6,10 @@ function install (bot, { on, state, registerCleanup, log, now = Date.now }) {
   const s = state.autoSwim ||= {}
   s.cfg = { enabled: true, tickMs: 120, ...s.cfg }
   // A hot reload must not replay stale steering or retain a busy contribution.
-  if (s.runtime?.ownsBusy) state.externalBusyCount = Math.max(0, (state.externalBusyCount || 0) - 1)
-  state.externalBusy = (state.externalBusyCount || 0) > 0
+  if (s.runtime?.ownsBusy) {
+    state.externalBusyCount = Math.max(0, (state.externalBusyCount || 0) - 1)
+    state.externalBusy = state.externalBusyCount > 0
+  }
   const r = s.runtime = { active: false, ownsBusy: false, phase: 'idle', route: [], reason: null, startedAt: null, lastProgressAt: null, lastPosition: null, nextPlanAt: 0, visited: 0 }
   let timer
   function own (value) {

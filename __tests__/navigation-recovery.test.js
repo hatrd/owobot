@@ -61,3 +61,15 @@ test('recovery yields to explicit input and releases on reaching supported dry g
     api.tick(); assert.equal(bot.state.externalBusyCount, 0); assert.equal(bot.state.autoSwim.runtime.active, false)
   } finally { api.stop() }
 })
+
+test('install never clears another module legacy busy flag', () => {
+  const bot = fixture(() => 'water')
+  bot.state.externalBusy = true
+  const api = install(bot, { state: bot.state, on: bot.on.bind(bot), registerCleanup () {} })
+  try {
+    api.tick()
+    assert.equal(bot.state.externalBusy, true)
+    assert.equal(bot.state.autoSwim.runtime.ownsBusy, false)
+    assert.equal(bot.controlState.jump, undefined)
+  } finally { api.stop() }
+})
