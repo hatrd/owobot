@@ -93,6 +93,41 @@ module.exports = function registerBuilding (ctx) {
     })
   }
   register('craft_preview', args => plan(args))
+  register('place_block', async args => {
+    const target = position(args.position)
+    const before = bot.blockAt(target)
+    const reference = bot.blockAt(target.offset(0, -1, 0))
+    if (!near(target)) return fail('Target out of reach', { error: 'out_of_reach' })
+    if (!before || !['air', 'cave_air', 'void_air'].includes(before.name)) return fail('Target must be empty', { error: 'occupied_target' })
+    if (reference?.boundingBox !== 'block') return fail('Solid support required', { error: 'missing_support' })
+    if (!bot.registry?.blocksByName[args.item]) return fail('Block item required', { error: 'invalid_block_item' })
+    const item = (bot.inventory?.items() || []).find(i => i.name === args.item)
+    if (!item) return fail('Item unavailable', { error: 'missing_item' })
+    return locked(args.item, async () => {
+      await bot.equip(item, 'hand')
+      await bot.placeBlock(reference, new Vec3(0, 1, 0))
+      const actual = bot.blockAt(target)?.name || null
+      return actual === args.item ? ok('Block placed', { data: { position: args.position, actual } }) : fail('Placement unconfirmed; inspect target before retrying', { error: 'place_unconfirmed', data: { position: args.position, actual } })
+    })
+  })
+  register('dig_block', async args => {
+    const target = position(args.position)
+    const block = bot.blockAt(target)
+    if (!near(target)) return fail('Target out of reach', { error: 'out_of_reach' })
+    if (!block || block.name !== args.expected) return fail('Target changed', { error: 'block_mismatch', data: { actual: block?.name || null } })
+    if (!bot.canDigBlock(block)) return fail('Target not diggable', { error: 'not_diggable' })
+    const item = (bot.inventory?.items() || []).find(i => i.name === args.tool)
+    if (!item) return fail('Tool unavailable', { error: 'missing_tool' })
+    return locked(args.tool, async () => {
+      await bot.equip(item, 'hand')
+      await bot.lookAt(target.offset(0.5, 0.5, 0.5), true)
+      const visible = bot.blockAtCursor(4.5)
+      if (!visible?.position.equals(target)) return fail('Target obstructed', { error: 'obstructed', data: { actual: visible?.name || null } })
+      await bot.dig(block, 'raycast')
+      const actual = bot.blockAt(target)?.name || null
+      return actual && actual !== args.expected ? ok('Block removed', { data: { position: args.position, removed: args.expected, actual } }) : fail('Removal unconfirmed', { error: 'dig_unconfirmed', data: { actual } })
+    })
+  })
   register('craft_item', craft)
   register('place_sign', placeSign)
 }

@@ -1,6 +1,9 @@
 const TOOL_SPECS = Object.freeze([
   { name: 'craft_preview', dryCapability: 'read_only' },
   { name: 'craft_item' },
+  { name: 'dig_block' },
+  { name: 'place_block' },
+  { name: 'move_input' },
   { name: 'place_sign' },
   { name: 'controller_read', dryCapability: 'read_only' },
   { name: 'controller_write' },

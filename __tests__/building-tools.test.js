@@ -73,3 +73,37 @@ test('block_at reads exact coordinates and diagnoses unloaded blocks', async () 
   assert.equal(observer.detail(bot, { what: 'block_at', x: 1, y: 64, z: 0 }).data.name, 'air')
   assert.equal(observer.detail(bot, { what: 'block_at', x: 2, y: 64, z: 0 }).error, 'unloaded_block')
 })
+
+test('dig_block refuses changed and occluded targets without digging', async () => {
+  const h = harness()
+  const p = new Vec3(1, 64, 0)
+  const args = { position: p, expected: 'oak_log', tool: 'cherry_sign' }
+  let digs = 0
+  h.bot.canDigBlock = () => true
+  h.bot.lookAt = async () => {}
+  h.bot.dig = async () => { digs++ }
+  assert.equal((await h.registry.get('dig_block')(args)).error, 'block_mismatch')
+  h.bot.blockAt = position => ({ name: 'oak_log', position })
+  h.bot.blockAtCursor = () => ({ name: 'stone', position: new Vec3(0, 64, 0) })
+  assert.equal((await h.registry.get('dig_block')(args)).error, 'obstructed')
+  assert.equal(digs, 0)
+  h.bot.blockAtCursor = () => ({ name: 'oak_log', position: p })
+  h.bot.dig = async () => { digs++; h.bot.blockAt = position => ({ name: 'air', position }) }
+  assert.equal((await h.registry.get('dig_block')(args)).ok, true)
+  assert.equal(digs, 1)
+})
+
+test('dig_block dry validation never executes world operations', async () => {
+  const a = actions.install({ state: {}, dig: () => { throw new Error('must not dig') } })
+  const args = { position: { x: 1, y: 64, z: 0 }, expected: 'oak_log', tool: 'diamond_pickaxe' }
+  assert.equal((await a.dry('dig_block', args)).ok, true)
+  assert.equal((await a.dry('dig_block', { ...args, expected: undefined })).ok, false)
+})
+
+test('place_block verifies placement and refuses occupied targets', async () => {
+  const h = harness()
+  h.bot.registry = { blocksByName: { cherry_sign: {} } }
+  const args = { position: { x: 1, y: 64, z: 0 }, item: 'cherry_sign' }
+  assert.equal((await h.registry.get('place_block')(args)).ok, true)
+  assert.equal((await h.registry.get('place_block')(args)).error, 'occupied_target')
+})

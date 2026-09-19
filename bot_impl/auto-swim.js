@@ -45,8 +45,10 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function setJump (v, reason = '') {
     try {
-      if (v && !jumping) { bot.setControlState('jump', true); jumping = true; if (cfg.debug) console.log('[SWIM] setJump -> ON reason=', reason) }
-      if (!v && jumping) { bot.setControlState('jump', false); jumping = false; if (cfg.debug) console.log('[SWIM] setJump -> OFF') }
+      // Navigation can clear controls between ticks; the bot's actual controls are authoritative.
+      if (v && !bot.controlState.jump) { bot.setControlState('jump', true); if (cfg.debug) console.log('[SWIM] setJump -> ON reason=', reason) }
+      if (!v && jumping && bot.controlState.jump) { bot.setControlState('jump', false); if (cfg.debug) console.log('[SWIM] setJump -> OFF') }
+      jumping = v
     } catch {}
   }
 

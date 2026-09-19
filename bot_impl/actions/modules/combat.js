@@ -2852,7 +2852,6 @@ module.exports = function registerCombat (ctx) {
     await wait(60)
 
     // Open container
-    const { Vec3 } = require('vec3')
     const blk = bot.blockAt(new Vec3(target.x, target.y, target.z))
     if (!blk) return fail('容器不可见')
     if (!isContainerName(blk.name)) return fail('目标不是可用容器')
@@ -3056,7 +3055,6 @@ module.exports = function registerCombat (ctx) {
 
     let kinds = 0
     let total = 0
-    const { Vec3 } = require('vec3')
 
     function fromContainerSlots (container) {
       const res = []

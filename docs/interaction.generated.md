@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T08:14:37.168Z`
+- GeneratedAt: `2026-09-19T08:35:23.334Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -71,6 +71,9 @@
 | --- | --- | --- | --- |
 | craft_preview | read_only | yes | Read real recipe ingredients and inventory shortages; does not craft. |
 | craft_item | validate_only | yes | Craft an explicit recipe; requires reachable table coordinates when applicable. |
+| dig_block | validate_only | yes | Dig exactly one visible reachable block matching expected, using an explicit inventory tool. Never moves or clears obstructions; pickup is separate. |
+| place_block | validate_only | yes | Place one registered block item at an empty reachable integer position on solid support; confirm block readback. Does not move. |
+| move_input | validate_only | yes | Bounded direct forward/jump input for local movement or swimming. No pathfinding, digging or placement. Stop/reset and reload cancel the pulse. |
 | place_sign | validate_only | yes | Place a new standing sign at an empty coordinate and confirm four lines by readback. Never overwrites existing blocks. |
 | controller_read | read_only | yes | Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts. |
 | controller_write | validate_only | yes | Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first. |
@@ -125,6 +128,6 @@
 
 ### Coverage Report
 
-- allowlistCount: 53
+- allowlistCount: 56
 - missingSchema: (none)
 - staleSchema: (none)

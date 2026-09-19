@@ -105,4 +105,13 @@ node scripts/botctl.js list
 - `craft_item` executes the selected `recipeIndex` and checks the inventory delta. Recipes requiring a table must provide explicit reachable `table: {x,y,z}`. It does not gather materials or infer a crafting location.
 - `place_sign` places one new standing sign at an explicit integer position. It requires air and solid support, refuses to overwrite any existing block, waits for the server's sign editor permission, and confirms text by observer readback. Partial failures return `data.stage` (`preparing`, `placed`, `write_sent`, `confirmed`), coordinates and intended lines; do not retry placement blindly after a partial failure. Recent receipts are bounded in `state.actionsRuntime.signPlacements`.
 
-Both mutation tools are validate-only in dry mode. Live execution uses the existing action control/hand lock boundaries. Neither tool is a controller behavior primitive; no cancellable multi-step crafting support is claimed.
+- `dig_block` requires integer `position`, an `expected` block name and an explicit inventory `tool`. It checks reach and line of sight, digs only that block and checks removal. It never navigates or clears obstructions; collecting drops is a separate action. Removal confirmation does not imply inventory collection.
+- `place_block` places one registered block item at an explicit reachable empty `position` with solid support below, then checks the block name. It does not navigate. Inspect the coordinate after an unconfirmed placement before retrying. Use `place_sign` when sign text and editor permission are required.
+
+Mutation tools are validate-only in dry mode. Live execution uses the existing action control/hand lock boundaries. These tools are not controller behavior primitives; no cancellable multi-step crafting support is claimed.
+
+## Bounded movement input
+
+`move_input` provides explicit yaw/pitch and forward/jump controls for 50–5000 ms, useful for short swimming or local maneuvers when navigation stalls. It stops the current pathfinder goal, does not plan a route or alter blocks, and returns its ending position. Duration completion does not imply arrival. Only one pulse may run; stop/reset and implementation reload cancel it and release its controls. Observe surrounding blocks before a pulse and position afterward. Dry validates arguments only.
+
+Auto-swim reads actual jump control state each tick because navigation can clear controls; an internal remembered key state is insufficient to maintain buoyancy.

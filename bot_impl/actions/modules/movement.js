@@ -174,6 +174,33 @@ module.exports = function registerMovement (ctx) {
   }
 
   register('goto', goto)
+  register('move_input', async args => {
+    // One bounded input pulse; cancellation is shared with reset and hot reload.
+    if (shared.inputPulse) return fail('Input already active', { error: 'input_busy' })
+    const pulse = { canceled: false }
+    shared.inputPulse = pulse
+    const cancel = () => { pulse.canceled = true; bot.clearControlStates() }
+    bot.on('agent:stop_all', cancel)
+    const cleanups = bot.state?.cleanups
+    if (Array.isArray(cleanups)) cleanups.push(cancel)
+    try {
+      bot.pathfinder?.setGoal(null)
+      await bot.look(args.yaw, args.pitch || 0, true)
+      if (pulse.canceled) return fail('Input canceled', { error: 'canceled' })
+      const until = Date.now() + args.durationMs
+      while (!pulse.canceled && Date.now() < until) {
+        bot.setControlState('forward', args.forward === true)
+        bot.setControlState('jump', args.jump === true)
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+      return pulse.canceled ? fail('Input canceled', { error: 'canceled' }) : ok('Input completed', { data: { position: bot.entity.position.clone() } })
+    } finally {
+      bot.off('agent:stop_all', cancel)
+      if (Array.isArray(cleanups)) { const i = cleanups.indexOf(cancel); if (i >= 0) cleanups.splice(i, 1) }
+      bot.clearControlStates()
+      if (shared.inputPulse === pulse) shared.inputPulse = null
+    }
+  })
   register('goto_block', goto_block)
   register('follow_player', follow_player)
   register('stop', stop)
