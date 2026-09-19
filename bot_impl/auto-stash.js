@@ -1,4 +1,4 @@
-// Auto-stash: periodically deposit inventory to nearest container when nearly full.
+// Optional inventory-pressure trigger for the shared durable stash goal.
 
 function install (bot, { on, dlog, state, registerCleanup, log }) {
   const L = log || { info: (...a) => console.log('[STASH]', ...a), debug: (...a) => dlog && dlog(...a), warn: (...a) => console.warn('[STASH]', ...a) }
@@ -18,25 +18,6 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
       for (let i = 9; i <= 44; i++) { if (!slots[i]) free++ }
       return free
     } catch { return 0 }
-  }
-
-  function listByName () {
-    try {
-      const inv = bot.inventory?.items() || []
-      const by = new Map()
-      for (const it of inv) { const n = String(it?.name || '').toLowerCase(); if (!n) continue; by.set(n, (by.get(n) || 0) + (it.count || 0)) }
-      return Array.from(by.keys())
-    } catch { return [] }
-  }
-
-  function isProtected (name) {
-    const n = String(name || '').toLowerCase()
-    if (!n) return false
-    if (require('./inventory-reservations').held(state, n)) return true
-    if (n.endsWith('_sapling')) return true
-    if (n.endsWith('_axe') || n.endsWith('_pickaxe') || n.endsWith('_shovel') || n.endsWith('_hoe') || n.endsWith('_sword')) return true
-    if (['fishing_rod','shears','shield','bow','crossbow','flint_and_steel','bucket','water_bucket','lava_bucket','milk_bucket'].includes(n)) return true
-    return false
   }
 
   function isBusySoft () {
@@ -60,21 +41,15 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (free > Math.max(0, cfg.minFree || 0)) return
     running = true
     try {
-      const names = listByName().filter(n => !isProtected(n))
-      if (!names.length) return
-      const actions = require('./actions').install(bot, { log })
-      if (cfg.debug) L.info('stash -> free=', free, 'items=', names.length)
-      const r = await actions.run('deposit', { names, radius: Math.max(8, cfg.radius || 18), includeBarrel: true })
-      if (!r || !r.ok) {
-        const msg = String(r && r.msg || '')
-        if (/没有箱子|箱子不可见|无法打开箱子/.test(msg)) S.nextAllowedAt = now + (S.backoffMs?.noChest || 90000)
-        else S.nextAllowedAt = now + (S.backoffMs?.fail || 45000)
-        L.warn('stash fail:', msg || '未知', 'backoff until', new Date(S.nextAllowedAt).toLocaleTimeString())
-      } else {
-        // small cooldown after success to avoid immediate re-trigger while inventory updates settle
-        S.nextAllowedAt = now + Math.max(4000, Math.min(15000, cfg.intervalMs))
-        if (cfg.debug) L.info('stash ok, cooldown until', new Date(S.nextAllowedAt).toLocaleTimeString())
-      }
+      const api = state.stashApi
+      if (!api) return
+      const status = api.status().data?.goal
+      // Partial/blocked runs need a route or capacity change, not repeated chest
+      // opening. Re-enable after changing configuration or run the goal directly.
+      if (status && ['partial','blocked','paused'].includes(status.status)) return
+      const r = api.configure('start', { radius: Math.max(4, Math.min(64, cfg.radius || 18)) })
+      S.nextAllowedAt = now + (r.ok ? Math.max(12000, cfg.intervalMs) : 45000)
+      if (!r.ok) L.warn('stash start:', r.error)
     } catch (e) { L.warn('stash error:', e?.message || e) }
     finally { running = false }
   }

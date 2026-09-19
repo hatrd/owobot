@@ -6,8 +6,7 @@ const vec=p=>new Vec3(p.x,p.y,p.z)
 const point=p=>({x:p.x,y:p.y,z:p.z})
 const delay=ms=>new Promise(r=>setTimeout(r,ms))
 function createDriver(bot,state){
-  const nav=require('../navigation/drive').createNavigator(bot,state)
-  const surface=require('../navigation/surface').createSurfaceDriver(bot,state)
+  const travel=require('../navigation/travel').createTravel(bot,state,{set journey(value){state.fishing.runtime.journey=value},get journey(){return state.fishing.runtime.journey}})
   const items=()=>bot.inventory.items()
   const count=name=>items().filter(i=>i.name===name).reduce((n,i)=>n+i.count,0)
   const fishCount=()=>edible.reduce((n,name)=>n+count(name),0)
@@ -19,23 +18,7 @@ function createDriver(bot,state){
     if(r.data?.plan?.status==='success')return true
     return !!doc && (await require('../navigation/journey').plan(bot,p,{range,radius:doc.radius,home:doc.home})).ok
   }
-  async function go(p,t,doc,range=1){
-    check(t)
-    if(distance(bot.entity.position,p)<=range)return
-    const dry=await require('../navigation/observe').observe(bot,{...p,range,liquidMode:'dry'})
-    const plan=dry.data?.plan?.status==='success'?{ok:true,actions:[{action:'goto',args:{...p,range}}]}:await require('../navigation/journey').plan(bot,p,{range,radius:doc.radius,home:doc.home})
-    if(!plan.ok)throw Object.assign(new Error(plan.error),{detail:plan})
-    state.fishing.runtime.journey={target:p,actions:plan.actions,index:0}
-    for(const [index,a] of plan.actions.entries()){
-      check(t);state.fishing.runtime.journey.index=index
-      const timer=setTimeout(()=>{nav.stop('travel_timeout');surface.stop('travel_timeout')},45000)
-      try{
-        const r=a.action==='surface_travel'?await surface.start(a.args,t):await nav.start(a.args,t,pos=>distance(pos,doc.home)<=doc.radius+2)
-        check(t);if(!r.ok)throw Object.assign(new Error(r.error),{detail:r.data})
-      }finally{clearTimeout(timer)}
-    }
-    if(distance(bot.entity.position,p)>range+Math.sqrt(3))throw new Error('journey_arrival_unconfirmed')
-  }
+  async function go(p,t,doc,range=1){return travel.go(p,t,doc,range)}
   function facts(){return {ready:!!state.hasSpawned&&!!bot.entity?.position,position:bot.entity?.position&&point(bot.entity.position),dimension:String(bot.game?.dimension),health:bot.health,food:bot.food,timeOfDay:bot.time?.timeOfDay,inWater:body(bot).inWater,eating:!!state.autoEat?.eating,hostiles:require('../agent/observer').snapshot(bot,{hostileRange:12}).nearby.hostiles.count,freeSlots:bot.inventory.emptySlotCount(),rod:items().some(i=>i.name==='fishing_rod' && (!i.maxDurability || i.maxDurability-(i.durabilityUsed||0)>8)),fish:fishCount()}}
   async function chooseSpot(doc,t){
     const candidates=new Map()
@@ -172,7 +155,7 @@ function createDriver(bot,state){
       if(t.canceled && bot.isSleeping)await bot.wake().catch(()=>{})
     }
   }
-  function stop(t){if(t){t.canceled=true;if(t.cast&&bot.heldItem?.name==='fishing_rod'){bot.activateItem();t.cast=false}}nav.stop();surface.stop();if(bot.currentWindow)bot.closeWindow(bot.currentWindow)}
+  function stop(t){if(t){t.canceled=true;if(t.cast&&bot.heldItem?.name==='fishing_rod'){bot.activateItem();t.cast=false}}travel.stop();if(bot.currentWindow)bot.closeWindow(bot.currentWindow)}
   return {facts,go,chooseSpot,prepare,cast,sleep,stop,wait,fishCount}
 }
 module.exports={createDriver}

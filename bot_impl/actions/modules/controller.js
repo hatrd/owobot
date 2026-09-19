@@ -1,4 +1,8 @@
 module.exports = function registerController (ctx) {
+  ctx.register('stash_goal', args => {
+    const r = ctx.bot.state?.stashApi?.configure(args.op, args.args || {}) || {ok:false,error:'stash_unavailable'}
+    return {...r,msg:r.ok?'Stash goal updated':r.error}
+  })
   ctx.register('fishing_goal', args => {
     const r = ctx.bot.state?.fishingApi?.configure(args.op, args.args || {}) || {ok:false,error:'fishing_unavailable'}
     return {...r,msg:r.ok?'Fishing goal updated':r.error}

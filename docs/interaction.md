@@ -261,3 +261,5 @@ Persistent exploration: read `observe_detail what=terrain|exploration_memory`; p
 采矿与统一单动作 CLI：见 [小脑接口](cerebellum.md)。`scripts/cerebellum.js` 等待任务终态；`what=excavation|knowledge` 提供只读准备状态和长期证据，控制器 schema 包含带租约的长期记忆写入和单次开掘/储物动作。
 
 完整生活目标入口见 [智能钓鱼](fishing.md)：先用 `observe_detail what=fishing` 读取状态/schema，再 dry 检查 `fishing_goal`，随后 start/resume/cancel。接受请求不代表钓获或返家完成，验收读取终态 receipt。
+
+整理战利品的单任务入口见 [整理入口](stash.md)。`stash_goal` 与只读 `observe_detail what=stash` 共享 CLI 使用的契约；成功以归仓双边回执和返程验收为准。

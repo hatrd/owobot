@@ -273,6 +273,7 @@ const ACTION_TOOL_SCHEMAS = [
           description: 'When what=containers: any|storage|chest|barrel|ender_chest|shulker_box|furnace|smoker|blast_furnace|hopper|dispenser|dropper|brewing_stand (Chinese aliases also accepted).'
         },
         itemMax: { type: 'number', description: 'When what=containers: max item kinds returned for each container.' },
+        preview: { type: 'boolean', description: 'When what=stash: read-only inventory policy and storage discovery; contents are dated cached evidence.' },
         full: { type: 'boolean', description: 'When what=containers: include all aggregated items via allItems.' }
       },
       additionalProperties: true
@@ -641,10 +642,12 @@ ACTION_TOOL_SCHEMAS.push(
   { name: 'people_commitments_clear', description: 'Delete matching commitments. mode=all/pending requires confirm=true.', parameters: object({ ...peopleFilter, mode: { type: 'string', enum: ['done', 'closed', 'pending', 'all', 'failed', 'ongoing'] }, confirm: boolean }) }
 )
 
+const stashContract = require('./stash/contract')
 const fishingContract = require('./fishing/contract')
 const lifeContract = require('./life/contract')
 const controllerContract = require('./controller/contract')
 ACTION_TOOL_SCHEMAS.push(
+  { name: 'stash_goal', description: 'Organize excess inventory, keep equipment/food/task holds, route by explicit rules, frames or existing contents, verify both transfer deltas and return to origin. Operations start/resume/cancel/configure; observe_detail what=stash preview=true discovers policy and destinations without moving. Unknown cargo requires a configured overflow container. Status and receipts: observe_detail what=stash.', parameters: stashContract.envelope },
   { name: 'fishing_goal', description: 'Start/resume/cancel a durable raw cod/salmon fishing goal. Automatically prepare supplies, choose dry shore, fish, retreat on damage, sleep, and return home. Query observe_detail what=fishing for schema/status/diagnostics.', parameters: fishingContract.envelope },
   { name: 'life_configure', description: 'Enable/disable autonomous life or set home. First enable uses the current location as home; later enables retain home. Query observe_detail what=life for status, preview and config schema.', parameters: lifeContract.envelope },
   { name: 'controller_read', description: 'Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts.', parameters: controllerContract.envelope(controllerContract.readOps) },
@@ -682,6 +685,7 @@ function validateToolArgs (name, args = {}) {
   const validate = validators.get(name)
   if (!validate) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
   if (validate(args)) {
+    if (name === 'stash_goal') return stashContract.validate(args.op, args.args || {})
     if (name === 'fishing_goal') return fishingContract.validate(args.op, args.args || {})
     if (name === 'life_configure') return lifeContract.validate(args.op, args.args || {})
     if (name === 'controller_read' || name === 'controller_write') return controllerContract.validate(args.op, args.args || {})

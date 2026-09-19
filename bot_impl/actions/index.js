@@ -194,9 +194,9 @@ function install (bot, options = {}) {
         const safeArgs = args === undefined ? {} : args
         const validation = validateToolArgs(tool, safeArgs)
         if (!validation.ok) return validation
-        if (!['controller_read', 'controller_write', 'life_configure', 'fishing_goal'].includes(tool) && getToolMetadata(tool)?.dryCapability !== 'read_only') bot.state?.lifeApi?.yield('player_action')
+        if (!['controller_read', 'controller_write', 'life_configure', 'fishing_goal', 'stash_goal'].includes(tool) && getToolMetadata(tool)?.dryCapability !== 'read_only') bot.state?.lifeApi?.yield('player_action')
         const lease = bot.state?.controller?.lease
-        const isController = tool === 'controller_read' || tool === 'controller_write' || tool === 'life_configure' || tool === 'fishing_goal'
+        const isController = tool === 'controller_read' || tool === 'controller_write' || tool === 'life_configure' || tool === 'fishing_goal' || tool === 'stash_goal'
         const isStop = ['stop', 'stop_all', 'reset'].includes(tool)
         if (lease && !isController && !isStop && getToolMetadata(tool)?.dryCapability !== 'read_only') return { ok: false, msg: 'External controller owns the bot', error: 'controller_busy' }
         return validation.ok ? fn(safeArgs) : validation

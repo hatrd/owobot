@@ -7,6 +7,7 @@ const TOOL_SPECS = Object.freeze([
   { name: 'place_sign' },
   { name: 'life_configure' },
   { name: 'fishing_goal' },
+  { name: 'stash_goal' },
   { name: 'controller_read', dryCapability: 'read_only' },
   { name: 'controller_write' },
   { name: 'goto' },

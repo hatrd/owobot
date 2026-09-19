@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T14:39:46.142Z`
+- GeneratedAt: `2026-09-19T15:22:03.702Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -31,6 +31,7 @@
 | surface_route | Read-only short surface travel corridor and dry landing validation at x/y/z. |
 | life | Autonomous life config/schema, current activity, recent outcomes and read-only decision preview. |
 | fishing | Durable raw-fish goal, contract, supply checks, safety decisions and verified catches. |
+| stash | Loot goal, reservations, durable storage routes and two-sided deposit receipts; preview=true for read-only discovery. |
 | journey | Read-only bounded dry/surface journey plan; requires x/y/z target coordinates. |
 | runtime | Bounded process memory, GC, event loop and collection size history; available before spawn. |
 | terrain | Conservative local traversable positions ranked by exploration memory; never moves. |
@@ -85,6 +86,7 @@
 | place_sign | validate_only | yes | Place a new standing sign at an empty coordinate and confirm four lines by readback. Never overwrites existing blocks. |
 | life_configure | validate_only | yes | Enable/disable autonomous life or set home. First enable uses the current location as home; later enables retain home. Query observe_detail what=life for status, preview and config schema. |
 | fishing_goal | validate_only | yes | Start/resume/cancel a durable raw cod/salmon fishing goal. Automatically prepare supplies, choose dry shore, fish, retreat on damage, sleep, and return home. Query observe_detail what=fishing for schema/status/diagnostics. |
+| stash_goal | validate_only | yes | Organize excess inventory, keep equipment/food/task holds, route by explicit rules, frames or existing contents, verify both transfer deltas and return to origin. Operations start/resume/cancel/configure; observe_detail what=stash preview=true discovers policy and destinations without moving. Unknown cargo requires a configured overflow container. Status and receipts: observe_detail what=stash. |
 | controller_read | read_only | yes | Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts. |
 | controller_write | validate_only | yes | Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first. |
 | goto | validate_only | yes | Pathfind to an absolute coordinate. |
@@ -137,6 +139,6 @@
 
 ### Coverage Report
 
-- allowlistCount: 57
+- allowlistCount: 58
 - missingSchema: (none)
 - staleSchema: (none)

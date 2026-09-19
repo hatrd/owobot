@@ -16,6 +16,7 @@ const MODULES = [
   { id: 'auto-gear', path: './auto-gear', logger: 'gear', kind: 'feature', description: 'Equip best armor and weapons' },
   { id: 'auto-totem', path: './auto-totem', logger: 'totem', kind: 'feature', description: 'Equip totem in off-hand when near death after damage' },
   { id: 'auto-armor-craft', path: './auto-armor-craft', logger: 'autoarmor', kind: 'feature', description: 'Craft iron armor when materials are available' },
+  { id: 'stash', path: './stash', logger: 'stash', kind: 'feature', description: 'Durable inventory sorting with reservations, storage evidence and verified transfers' },
   { id: 'fishing', path: './fishing', logger: 'fish', kind: 'feature', description: 'Durable fishing goal with supply, retreat, sleep and raw catch receipts' },
   { id: 'auto-swim', path: './auto-swim', logger: 'swim', kind: 'feature', description: 'Prevent drowning by surfacing when in water' },
   { id: 'tpa-here', path: './tpa-here', logger: 'tpa', kind: 'feature', description: 'Respond to chat command with /tpa <player>' },

@@ -1351,6 +1351,7 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
   'surface_route',
   'life',
   'fishing',
+  'stash',
   'journey',
   'runtime',
   'terrain',
@@ -1380,6 +1381,7 @@ const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
   excavation: 'Loaded diamond ores, excavation safety decisions, inventory space, durability and enchantments.',
   knowledge: 'Persistent world and player evidence; query filters through controller knowledge.query.',
   journey: 'Read-only bounded dry/surface journey plan; requires x/y/z target coordinates.',
+  stash: 'Loot goal, reservations, durable storage routes and two-sided deposit receipts; preview=true for read-only discovery.',
   fishing: 'Durable raw-fish goal, contract, supply checks, safety decisions and verified catches.',
   life: 'Autonomous life config/schema, current activity, recent outcomes and read-only decision preview.',
   controller: 'External controller state, task status and behavior versions.',
@@ -1438,6 +1440,7 @@ function getDetailSchema () {
       x: { type: 'number', description: 'navigation preview target or block_at coordinate; provide x/y/z together.' },
       y: { type: 'number' }, z: { type: 'number' },
       range: { type: 'number', minimum: 0.5, maximum: 8, default: 1.5 },
+      preview: { type: 'boolean', description: 'stash inventory policy and read-only discovery.' },
       namedOnly: { type: 'boolean', description: 'Applies to entities/animals/cats/cows.' }
     }
   }
@@ -1485,6 +1488,7 @@ function detail (bot, args = {}) {
     if (Math.hypot(args.x-p.x,args.y-p.y,args.z-p.z)>128) return {ok:false,error:'journey_range',msg:'Target must be within 128 blocks'}
     return require('../navigation/journey').plan(bot,args,{range:Math.min(3,Math.max(.5,Number(args.range)||1))}).then(data=>({ok:data.ok,error:data.error,msg:data.ok?'Journey preview':'No safe journey',data}))
   }
+  if (what === 'stash') return require('../stash').read(bot,args)
   if (what === 'fishing') return require('../fishing').read(bot,args)
   if (what === 'life') return require('../life').read(bot)
   if (what === 'controller') return require('../controller').read(bot, { op: 'status' })
