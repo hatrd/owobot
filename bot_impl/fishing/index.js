@@ -7,13 +7,13 @@ function install(bot,{state,on,registerCleanup,log}){
   if(!worldId)throw new Error('fishing_requires_world_identity')
   const store=require('./store').createStore(state,worldId,path.resolve('data',`fishing-${worldId}.json`))
   const driver=require('./driver').createDriver(bot,state)
-  const runtime=state.fishing.runtime={phase:'waiting',operation:null,auth:null,renewAt:0,damageAt:0,lastHealth:bot.health,nextAt:Date.now()+3000,disposed:false,failures:0}
+  const runtime=state.fishing.runtime={phase:'waiting',operation:null,auth:null,renewAt:0,damageAt:store.get().lastDamageAt||0,lastHealth:bot.health,nextAt:Date.now()+3000,disposed:false,failures:0}
   function event(type,data={}){store.save(d=>{d.events.push({at:Date.now(),type,...data})});log?.event?.('fishing', {type,...data})}
   function release(){if(runtime.auth)state.controllerApi?.write('session.release',runtime.auth);runtime.auth=null}
   function status(){const doc=store.get();return {ok:!store.error(),error:store.error(),data:{...doc,schemas,phase:runtime.phase,operation:runtime.operation?.kind||null,journey:runtime.journey||null,facts:driver.facts(),preview:doc.home?decide(doc,{...driver.facts(),damageAt:runtime.damageAt},Date.now()):null}}}
   function stop(reason='canceled',status='paused'){
     driver.stop(runtime.operation?.token)
-    if(store.get().status==='running')store.save(d=>{d.status=status;d.reason=reason;d.events.push({at:Date.now(),type:reason})})
+    if(store.get().status==='running'||(status==='canceled'&&['blocked','paused'].includes(store.get().status)))store.save(d=>{d.status=status;d.reason=reason;d.events.push({at:Date.now(),type:reason})})
     // Keep ownership until outstanding asynchronous operations have acknowledged cancellation.
     if(!runtime.operation)release()
     return {ok:true,data:{status:store.get().status,reason}}
@@ -33,7 +33,7 @@ function install(bot,{state,on,registerCleanup,log}){
     if(!acquired?.ok)return acquired||{ok:false,error:'controller_unavailable'}
     runtime.auth={leaseId:acquired.leaseId,epoch:acquired.epoch}
     try{
-      if(op==='start')store.save(d=>Object.assign(d,{id:randomUUID(),status:'running',reason:null,home:{...(args.home||f.position),dimension:f.dimension},radius:args.radius||128,count:args.count||8,caught:0,stats:{casts:0,sleeps:0,damage:0,storageChecks:0},failure:null,baseline:f.fish,spot:null,checkedStorage:[],startedAt:Date.now(),events:[],recoveredAt:0}))
+      if(op==='start')store.save(d=>Object.assign(d,{id:randomUUID(),status:'running',reason:null,home:{...(args.home||f.position),dimension:f.dimension},radius:args.radius||128,count:args.count||8,caught:0,stats:{casts:0,sleeps:0,damage:0,storageChecks:0},failure:null,receipt:null,finishedAt:null,lastDamageAt:runtime.damageAt,baseline:f.fish,spot:null,checkedStorage:[],startedAt:Date.now(),events:[],recoveredAt:0}))
       else store.save(d=>{d.status='running';d.reason=null;d.failure=null;if(args.radius)d.radius=args.radius})
       const saved=state.knowledgeApi.write('knowledge.put',{id:'task:fishing-inventory',kind:'task',subject:'fishing-goal',fact:'Keep raw cod and salmon for cats; reserve rod and ingredients during fishing.',source:'fishing_goal',confidence:'observed',inventoryHold:['cod','salmon','fishing_rod','string','stick']})
       if(!saved.ok)throw new Error(saved.error)
@@ -123,9 +123,15 @@ function install(bot,{state,on,registerCleanup,log}){
       else runtime.nextAt=Math.max(runtime.nextAt,Date.now()+500)
     })
   }
-  function damage(){const health=bot.health;if(Number.isFinite(runtime.lastHealth)&&health<runtime.lastHealth){runtime.damageAt=Date.now();if(store.get().status==='running'){event('damage',{before:runtime.lastHealth,after:health});driver.stop(runtime.operation?.token)}}runtime.lastHealth=health}
-  on('health',damage)
-  on('entityHurt',entity=>{if(entity?.id===bot.entity?.id&&store.get().status==='running'){runtime.damageAt=Date.now();driver.stop(runtime.operation?.token)}})
+  function markDamage(source,before,after){
+    const at=Date.now(),fresh=at-runtime.damageAt>250
+    runtime.damageAt=at
+    if(store.get().status!=='running')return
+    store.save(d=>{d.lastDamageAt=at;d.stats ||= {casts:0,sleeps:0,damage:0,storageChecks:0};if(fresh)d.stats.damage++;d.events.push({at,type:'damage',source,before:before??null,after:after??null})})
+    driver.stop(runtime.operation?.token)
+  }
+  on('health',()=>{const h=bot.health;if(Number.isFinite(runtime.lastHealth)&&h<runtime.lastHealth)markDamage('health',runtime.lastHealth,h);runtime.lastHealth=h})
+  on('entityHurt',entity=>{if(entity?.id===bot.entity?.id)markDamage('entityHurt',null,bot.health)})
   on('death',()=>stop('death','blocked'))
   on('end',()=>stop('connection_ended'))
   on('agent:stop_all',()=>stop('emergency_stop','canceled'))
@@ -135,5 +141,14 @@ function install(bot,{state,on,registerCleanup,log}){
   registerCleanup(()=>{clearInterval(timer);runtime.disposed=true;driver.stop(runtime.operation?.token);if(!runtime.operation)release();if(state.fishingApi===api)state.fishingApi=null})
   return api
 }
-function read(bot){const r=bot.state?.fishingApi?.status()||{ok:false,error:'fishing_unavailable'};return {...r,msg:r.ok?'Durable fishing goal, facts and decision preview':r.error}}
+function read(bot,args={}){
+  const r=bot.state?.fishingApi?.status()||{ok:false,error:'fishing_unavailable'}
+  if(r.data&&!args.full){
+    const d=r.data
+    d.checkedStorageCount=d.checkedStorage?.length||0;delete d.checkedStorage
+    d.events=d.events.slice(-12)
+    if(d.journey)d.journey={target:d.journey.target,index:d.journey.index,total:d.journey.actions.length,next:d.journey.actions[d.journey.index]||null}
+  }
+  return {...r,msg:r.ok?'Durable fishing goal, facts and decision preview':r.error}
+}
 module.exports={install,read}

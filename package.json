@@ -25,7 +25,7 @@
     "minecraft-protocol": "^1.62.0",
     "minecrafthawkeye": "^1.3.9",
     "mineflayer": "^4.33.0",
-    "mineflayer-pathfinder": "git+https://github.com/hatrd/mineflayer-pathfinder.git#3d2784b8df67578a3dd488bdeb3b72b9774fcbf5",
+    "mineflayer-pathfinder": "git+https://github.com/hatrd/mineflayer-pathfinder.git#7fa61b7f87d74c0e440ab9d23491abf322963462",
     "mineflayer-simplevoice": "^1.1.1",
     "prismarine-nbt": "^2.7.0",
     "prismarine-registry": "^1.11.0",

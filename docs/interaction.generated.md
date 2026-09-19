@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T14:31:18.442Z`
+- GeneratedAt: `2026-09-19T14:39:46.142Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -31,6 +31,7 @@
 | surface_route | Read-only short surface travel corridor and dry landing validation at x/y/z. |
 | life | Autonomous life config/schema, current activity, recent outcomes and read-only decision preview. |
 | fishing | Durable raw-fish goal, contract, supply checks, safety decisions and verified catches. |
+| journey | Read-only bounded dry/surface journey plan; requires x/y/z target coordinates. |
 | runtime | Bounded process memory, GC, event loop and collection size history; available before spawn. |
 | terrain | Conservative local traversable positions ranked by exploration memory; never moves. |
 | navigation | Read-only liquid state, navigation/recovery diagnostics and bounded A* preview with optional x/y/z target. |

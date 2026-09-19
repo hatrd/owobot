@@ -8,16 +8,16 @@ function fixture(liquid='water'){
     const b=Block.fromStateId(registry.blocksByName[name].defaultState,0);b.position=p;return b
   }}
 }
-test('journey plans dry approaches and a verified surface crossing ending on land',()=>{
-  const r=plan(fixture(),{x:8.5,y:64,z:.5},{range:.5})
+test('journey plans dry approaches and a verified surface crossing ending on land',async()=>{
+  const r=await plan(fixture(),{x:8.5,y:64,z:.5},{range:.5})
   assert.ok(r.ok,JSON.stringify(r));assert.ok(r.actions.some(a=>a.action==='surface_travel'))
   assert.equal(r.actions.at(-1).args.x,8.5)
 })
-test('journey never crosses lava or an unloaded void',()=>{
-  assert.equal(plan(fixture('lava'),{x:8.5,y:64,z:.5}).ok,false)
+test('journey never crosses lava or an unloaded void',async()=>{
+  assert.equal((await plan(fixture('lava'),{x:8.5,y:64,z:.5})).ok,false)
   const bot=fixture(),original=bot.blockAt;bot.blockAt=p=>p.x>=4&&p.x<5?null:original(p)
-  assert.equal(plan(bot,{x:8.5,y:64,z:.5}).ok,false)
+  assert.equal((await plan(bot,{x:8.5,y:64,z:.5})).ok,false)
 })
-test('journey bounds traversal to the requested home radius',()=>{
-  assert.equal(plan(fixture(),{x:8.5,y:64,z:.5},{radius:3}).ok,false)
+test('journey bounds traversal to the requested home radius',async()=>{
+  assert.equal((await plan(fixture(),{x:8.5,y:64,z:.5},{radius:3})).ok,false)
 })

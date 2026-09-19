@@ -17,13 +17,13 @@ function createDriver(bot,state){
   async function preview(p,range=1,doc){
     const r=await require('../navigation/observe').observe(bot,{...p,range,liquidMode:'dry'})
     if(r.data?.plan?.status==='success')return true
-    return !!doc && require('../navigation/journey').plan(bot,p,{range,radius:doc.radius,home:doc.home}).ok
+    return !!doc && (await require('../navigation/journey').plan(bot,p,{range,radius:doc.radius,home:doc.home})).ok
   }
   async function go(p,t,doc,range=1){
     check(t)
     if(distance(bot.entity.position,p)<=range)return
     const dry=await require('../navigation/observe').observe(bot,{...p,range,liquidMode:'dry'})
-    const plan=dry.data?.plan?.status==='success'?{ok:true,actions:[{action:'goto',args:{...p,range}}]}:require('../navigation/journey').plan(bot,p,{range,radius:doc.radius,home:doc.home})
+    const plan=dry.data?.plan?.status==='success'?{ok:true,actions:[{action:'goto',args:{...p,range}}]}:await require('../navigation/journey').plan(bot,p,{range,radius:doc.radius,home:doc.home})
     if(!plan.ok)throw Object.assign(new Error(plan.error),{detail:plan})
     state.fishing.runtime.journey={target:p,actions:plan.actions,index:0}
     for(const [index,a] of plan.actions.entries()){
@@ -61,7 +61,10 @@ function createDriver(bot,state){
     const ready=()=>rod()&&bot.inventory.emptySlotCount()>=4
     if(ready())return {ready:true}
     const containers=find(bot.registry.blocksArray.filter(b=>['chest','trapped_chest','barrel','shulker_box'].includes(b.name)||b.name.endsWith('_shulker_box')).map(b=>b.name),doc,256)
-    const visited=new Set([...(doc.checkedStorage||[]),...(doc.events||[]).filter(e=>e.type==='result'&&e.kind==='prepare'&&e.result?.checked).map(e=>e.result.checked)].map(p=>`${p.x},${p.y},${p.z}`))
+    const events=doc.events||[]
+    const lastCast=events.findLastIndex(e=>e.kind==='cast')
+    const recent=rod()?events.slice(lastCast+1):events
+    const visited=new Set([...(rod()?[]:(doc.checkedStorage||[])),...recent.filter(e=>e.type==='result'&&e.kind==='prepare'&&e.result?.checked).flatMap(e=>[e.result.checked,...(e.result.paired||[])])].map(p=>`${p.x},${p.y},${p.z}`))
     let errors=[]
     for(const p of (count('string')>=2 && (count('stick')>=3 || bot.recipesFor(bot.registry.itemsByName.stick.id,null,1,false).length) ? [] : containers).sort((a,b)=>distance(a,bot.entity.position)-distance(b,bot.entity.position))){
       const key=`${p.x},${p.y},${p.z}`

@@ -4,7 +4,8 @@
 
 ```sh
 node scripts/fish.js start --count=8 --radius=128
-node scripts/fish.js status
+node scripts/fish.js status                  # 紧凑事实与进度
+node scripts/fish.js status --detail         # schema、路径与最近事件
 node scripts/fish.js cancel
 node scripts/fish.js resume
 ```
@@ -15,7 +16,7 @@ node scripts/fish.js resume
 
 补给优先检查已加载、可达的储物箱；只存入明确列出的普通挖矿杂物，并遵守长期物品保留记录；取现成鱼竿、线和木棍，材料齐全时在可达工作台合成。不会拆玩家建筑取得木材。缺少可达补给会返回 `fishing_supplies_unavailable`、缺料和路径诊断；不假装能凭空造竿。
 
-导航复用标准无挖掘陆路动作；跨水时，`navigation/journey.js` 用现有 Movements 生成楼梯/半砖路线，水面边经过完整通道验证，始终落到干燥实心地面，排除岩浆、未知方块、急流和潜水。不硬编码服务器坐标。
+导航复用标准无挖掘陆路动作；跨水时，`navigation/journey.js` 用现有 Movements 生成楼梯/半砖路线，搜索分片让出事件循环以便及时处理受伤；水面边经过完整通道验证，始终落到干燥实心地面，排除岩浆、未知方块、急流和潜水。不硬编码服务器坐标。通用只读路线查询：`node scripts/botctl.js dry observe_detail what=journey x=... y=... z=...`。
 
 持久化在 `data/fishing-<worldId>.json`，原子写入、损坏拒绝启动，事件有界。热重载停止旧操作并从持久目标继续；断线暂停，重新连接后可 resume。未确认的中断渔获不会计数。背包中原始鱼、竿和材料通过 `task:fishing-inventory` 保留，完成后仍保留生鱼，自动进食/整理不能消费它们。
 

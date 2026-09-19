@@ -4,7 +4,7 @@ const {corridor}=require('./surface')
 const key=p=>`${p.x},${p.y},${p.z}`
 // Bounded local route graph. Dry stairs and verified straight surface crossings are
 // separate edges; water edges always end on solid land and never request diving.
-function plan(bot,target,{range=1,radius=96,home=bot.entity.position,maxNodes=12000}={}){
+async function plan(bot,target,{range=1,radius=128,home=bot.entity.position,maxNodes=20000}={}){
   let start=bot.entity.position.floored()
   if(bot.entity.onGround && bot.entity.position.y-start.y>.001 && bot.blockAt(start,false)?.boundingBox==='block')start=start.offset(0,1,0)
   const goal=new Vec3(target.x,target.y,target.z)
@@ -23,11 +23,13 @@ function plan(bot,target,{range=1,radius=96,home=bot.entity.position,maxNodes=12
   }
   const h=p=>Math.hypot(p.x+.5-goal.x,p.z+.5-goal.z)+Math.abs(p.y-goal.y)
   const nodes=new Map([[key(start),{p:start,g:0,f:h(start),parent:null}]])
-  const open=[nodes.get(key(start))],closed=new Set()
+  const open=new (require('mineflayer-pathfinder/lib/heap'))(),closed=new Set()
+  open.push(nodes.get(key(start)))
+  const started=Date.now()
   let visited=0
-  while(open.length && visited++<maxNodes){
-    let best=0;for(let i=1;i<open.length;i++)if(open[i].f<open[best].f)best=i
-    const n=open.splice(best,1)[0],nk=key(n.p)
+  while(!open.isEmpty() && visited++<maxNodes && Date.now()-started<3000){
+    if(visited%32===0)await new Promise(resolve=>setImmediate(resolve))
+    const n=open.pop(),nk=key(n.p)
     if(closed.has(nk))continue
     closed.add(nk)
     if(n.p.offset(.5,0,.5).distanceTo(goal)<=range){
