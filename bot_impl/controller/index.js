@@ -5,6 +5,9 @@ function install (bot, { state, on, registerCleanup, log }) {
   let navigation = false
   let goal = null
   const driver = {
+    memoryRead: args => state.explorationApi?.recall(args),
+    memoryWrite: (op, args) => state.explorationApi?.write(op, args),
+    canStartMission: (id, behavior) => state.explorationApi?.canStart(id, behavior),
     busy (value) {
       if (Boolean(state.controllerBusy) === value) return
       state.controllerBusy = value
@@ -45,6 +48,9 @@ function install (bot, { state, on, registerCleanup, log }) {
       if (!bot.pathfinder) bot.loadPlugin(pathfinder)
       const movements = new Movements(bot)
       movements.canDig = false
+      movements.maxDropDown = 1
+      movements.infiniteLiquidDropdownDistance = false
+      movements.allowSprinting = false
       movements.allow1by1towers = false
       movements.allowParkour = false
       movements.scafoldingBlocks = []
@@ -59,6 +65,11 @@ function install (bot, { state, on, registerCleanup, log }) {
         const timer = setInterval(() => {
           if (cancellation.canceled) { clearInterval(timer); return resolve({ ok: false, error: 'canceled' }) }
           const pos = bot.entity?.position
+          const task = state.controller?.tasks.find(t => t.id === cancellation.taskId)
+          const mission = state.explorationMemory?.document.missions.find(m => m.id === task?.missionId)
+          if (pos && mission && Math.hypot(pos.x - mission.home.x, pos.y - mission.home.y, pos.z - mission.home.z) > mission.maxRadius) {
+            clearInterval(timer); driver.stop(); return resolve({ ok: false, error: 'mission_radius_exceeded' })
+          }
           if (pos && target.isEnd(pos.floored())) {
             clearInterval(timer)
             driver.stop()
@@ -74,7 +85,7 @@ function install (bot, { state, on, registerCleanup, log }) {
       })
     }
   }
-  const runtime = createRuntime({ state, driver, log: event => log?.event?.('controller.event', event) })
+  const runtime = createRuntime({ state, driver, log: event => { log?.event?.('controller.event', event); state.explorationApi?.record(event) } })
   state.controllerApi = runtime
   const timer = setInterval(() => {
     try { runtime.tick() } catch (err) { log?.error?.('controller tick failed', err.message); runtime.stop() }

@@ -53,7 +53,7 @@ node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json
 
 ## 状态、抢占与恢复
 
-事实来源是 `state.controller`（版本、租约、任务、节点、结果、事件序号）。`state.controllerApi` 仅是可替换驱动入口。任务迁移、行为安装和租约事件写入正常结构化日志 `controller.event`。进程重启清空内存，不自动从日志恢复并执行动作。
+事实来源是 `state.controller`（版本、租约、任务、节点、结果、事件序号）。`state.controllerApi` 仅是可替换驱动入口。任务迁移、行为安装和租约事件写入正常结构化日志 `controller.event`。进程重启清空控制运行时，不自动从日志恢复并执行动作；空间记忆和探索任务检查点单独持久化，见 [exploration-memory.md](exploration-memory.md)。
 
 首版采用**整机独占**：租约期间其他 AI/CLI 的修改类 action 返回 controller_busy，stop/reset 与只读观察仍可用。申请租约前检查现有寻路、窗口、挖掘、钓鱼和旧技能任务，忙时拒绝；旧技能执行器不会被静默迁移到新状态机。已有自动行为通过 externalBusy 协作让出控制。
 
@@ -82,4 +82,6 @@ node scripts/botctl.js dry observe_detail what=view radius=12
 node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry
 ```
 
-真人服内验收：导览示例、短距离 goto 到达、Ctrl-C 取消、控制器退出后租约过期、危险状态下暂停与恢复。本次 AI 不执行这些实跑验收。
+真人服内验收：导览示例、短距离 goto 到达、Ctrl-C 取消、控制器退出后租约过期、危险状态下暂停与恢复。默认开发验证只走 dry/mock；用户明确授权的实操按当次任务范围执行。
+
+探索扩展：`memory.recall/begin/resume/pause/checkpoint`、`task.start missionId` 和 `behavior.remove` 已加入机器 schema。查看 [探索记忆](exploration-memory.md) 获取持续探索与恢复流程。

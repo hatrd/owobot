@@ -63,3 +63,7 @@
 ## 上下文卫生
 - 新增字段前先问：能否放进已存在结构（`state.ai.context` / `state.aiMemory` / `state.aiDialogues`）？
 - 默认给 LLM 的上下文必须可裁剪；任何“全量注入”都要有开关和上限。
+
+## 探索记忆
+- 空间/任务事实来自 `state.explorationMemory`，由 `../exploration` 持久化。
+- `executor` 只注入有界摘要并沿用记忆 token 预算；详细地图按需调用观察工具，不重复写入聊天记忆。

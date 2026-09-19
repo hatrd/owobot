@@ -42,6 +42,7 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     const checked = contract.validate(op, args)
     if (!checked.ok) return checked
     if (!contract.readOps.includes(op)) return { ok: false, error: 'read_only_operation_required' }
+    if (op === 'memory.recall') return driver.memoryRead?.(args) || { ok: false, error: 'memory_unavailable' }
     if (op === 'schema') return { ok: true, protocolVersion: 1, schemas: copy(contract.schemas), behaviorSchema: copy(contract.behaviorSchema), limits: { tasks: 100, behaviors: 64, events: 256, resultBytes: 16384 }, view: { what: 'view', format: 'image/png', renderer: 'voxel', textured: false } }
     if (op === 'behavior.validate') return { ok: true, hash: hash(args.behavior), nodes: Object.keys(args.behavior.nodes).length }
     if (op === 'events.read') {
@@ -69,8 +70,18 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
       return { ok: true, leaseId: s.lease.id, epoch: s.epoch, expiresAt: s.lease.expiresAt }
     }
     if (!authenticate(args)) return { ok: false, error: 'stale_or_invalid_lease' }
+    if (op === 'memory.pause' && active()?.missionId === args.missionId) finish(active(), 'canceled', 'mission_paused')
+    if (['memory.begin', 'memory.resume', 'memory.pause', 'memory.checkpoint'].includes(op)) return driver.memoryWrite?.(op, args) || { ok: false, error: 'memory_unavailable' }
     if (op === 'session.renew') { s.lease.expiresAt = now() + args.ttlMs; emit('session.renewed', { epoch: s.epoch, expiresAt: s.lease.expiresAt }); return { ok: true, expiresAt: s.lease.expiresAt } }
     if (op === 'session.release') { revoke('released'); return { ok: true } }
+    if (op === 'behavior.remove') {
+      const index = s.behaviors.findIndex(b => b.id === args.behaviorId && b.revision === args.revision)
+      if (index < 0) return { ok: false, error: 'behavior_not_found' }
+      if (active()?.hash === s.behaviors[index].hash) return { ok: false, error: 'behavior_in_use' }
+      s.behaviors.splice(index, 1)
+      emit('behavior.removed', { id: args.behaviorId, revision: args.revision })
+      return { ok: true }
+    }
     if (op === 'behavior.install') {
       const b = args.behavior
       const digest = hash(b)
@@ -88,16 +99,17 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
       finish(task, 'canceled', 'requested')
       return { ok: true, task: copy(task) }
     }
-    const requestHash = hash({ behaviorId: args.behaviorId, revision: args.revision, timeoutMs: args.timeoutMs })
+    const requestHash = hash({ behaviorId: args.behaviorId, revision: args.revision, timeoutMs: args.timeoutMs, missionId: args.missionId || null })
     const previous = s.tasks.find(t => t.epoch === args.epoch && t.requestId === args.requestId)
     if (previous) return previous.requestHash === requestHash ? { ok: true, taskId: previous.id, duplicate: true } : { ok: false, error: 'request_id_conflict' }
     if (active()) return { ok: false, error: 'task_busy' }
     const behavior = s.behaviors.find(b => b.id === args.behaviorId && b.revision === args.revision)
     if (!behavior) return { ok: false, error: 'behavior_not_found' }
+    if (args.missionId && !driver.canStartMission?.(args.missionId, behavior)) return { ok: false, error: 'invalid_mission_or_target' }
     // Refuse once full rather than evicting request IDs and accidentally executing a retry twice.
     if (s.tasks.filter(t => t.epoch === args.epoch).length >= 100) return { ok: false, error: 'session_task_limit' }
     while (s.tasks.length >= 100) s.tasks.splice(s.tasks.findIndex(t => t.epoch !== args.epoch), 1)
-    const t = { id: randomUUID(), epoch: args.epoch, requestId: args.requestId, requestHash, behaviorId: behavior.id, revision: behavior.revision, hash: behavior.hash, node: behavior.entry, status: 'running', createdAt: now(), deadline: now() + args.timeoutMs, nodeStartedAt: null, steps: 0, lastResult: null }
+    const t = { id: randomUUID(), epoch: args.epoch, requestId: args.requestId, requestHash, missionId: args.missionId || null, behaviorId: behavior.id, revision: behavior.revision, hash: behavior.hash, node: behavior.entry, status: 'running', createdAt: now(), deadline: now() + args.timeoutMs, nodeStartedAt: null, steps: 0, lastResult: null }
     s.tasks.push(t)
     s.activeTaskId = t.id
     emit('task.started', { task: t })
@@ -182,6 +194,6 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
   function dispose (reason = 'reload') { revoke(reason); disposed = true }
   // A driver reload or reconnect must never replay an uncertain in-flight action.
   if (s.lease || active()) revoke('runtime_replaced')
-  return { read, write, tick, dispose, stop: () => revoke('emergency_stop'), event: (event, data) => emit('world.event', { event, data }) }
+  return { read, write, tick, dispose, stop: (reason = 'emergency_stop') => revoke(reason), event: (event, data) => emit('world.event', { event, data }) }
 }
 module.exports = { createRuntime }

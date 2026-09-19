@@ -104,3 +104,5 @@ node scripts/botctl.js dry observe_detail what=environment radius=12
 Entity observation rows include `position: {x,y,z}` (or null when unavailable). `what=controller` reads the leased behavior runtime without acquiring control. `what=view` returns a bounded voxel PNG with capture time, pose, dimension, runtimeId, palette and explicit rendering limitations; errors retain an `error` code. It does not move the bot or call an LLM. See `docs/external-controller.md`.
 
 `what=online_players` reads the server TAB list (including self), independent of nearby entity loading. Output contains `source`, `total`, `truncated`, and `players` with name/self/pingMs. Entries explicitly marked listed=false are omitted; this does not reveal hidden players or prove that every listed account is a human.
+
+`what=terrain` performs bounded read-only local block connectivity inspection and ranks candidate positions with actual exploration visits. `what=exploration_memory` recalls world/dimension-scoped persisted checkpoints, discoveries and route outcomes, with save errors and stale evidence flags. See `docs/exploration-memory.md`.

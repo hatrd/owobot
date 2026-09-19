@@ -52,3 +52,5 @@ Keeping these snapshots up to date helps both humans and AI contributors underst
 ## External behavior runtime
 
 `controller/contract.js` owns protocol and behavior schemas; `controller/runtime.js` owns lease/task transitions in `state.controller`; `controller/index.js` supplies cancellable game drivers. `controller/view.js` captures loaded geometry, `view-worker.js` renders off-thread. The action bridge is `actions/modules/controller.js`; the external SDK is `scripts/controller-client.js`.
+
+`exploration/store.js` serializes durable spatial-memory commits; `exploration/index.js` derives evidence from observations and controller terminal events; `exploration/terrain.js` provides read-only candidate terrain. State lives in `state.explorationMemory`; its service is `state.explorationApi`. The finite resumable driver is `scripts/explore-survival.js`.

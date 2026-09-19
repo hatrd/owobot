@@ -22,6 +22,11 @@ const nodeSchema = { oneOf: [
 const behaviorSchema = object({ id: text, revision: text, entry: text, nodes: { type: 'object', minProperties: 1, maxProperties: 64, propertyNames: text, additionalProperties: nodeSchema } })
 const credentials = { leaseId: text, epoch: { type: 'integer', minimum: 1 } }
 const schemas = {
+  'memory.recall': object({ radius: { type: 'integer', minimum: 1, maximum: 512 }, max: { type: 'integer', minimum: 1, maximum: 20 } }, []),
+  'memory.begin': object({ ...credentials, objective: { type: 'string', minLength: 1, maxLength: 240 }, maxRadius: { type: 'integer', minimum: 8, maximum: 256 } }),
+  'memory.resume': object({ ...credentials, missionId: text }),
+  'memory.pause': object({ ...credentials, missionId: text, reason: text }),
+  'memory.checkpoint': object({ ...credentials, missionId: text }),
   'schema': object({}),
   'status': object({ taskId: text }, []),
   'events.read': object({ cursor: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, []),
@@ -29,11 +34,12 @@ const schemas = {
   'session.acquire': object({ controllerId: text, ttlMs: { type: 'integer', minimum: 1000, maximum: 60000 } }),
   'session.renew': object({ ...credentials, ttlMs: { type: 'integer', minimum: 1000, maximum: 60000 } }),
   'session.release': object(credentials),
+  'behavior.remove': object({ ...credentials, behaviorId: text, revision: text }),
   'behavior.install': object({ ...credentials, behavior: behaviorSchema }),
-  'task.start': object({ ...credentials, requestId: text, behaviorId: text, revision: text, timeoutMs: duration }),
+  'task.start': object({ ...credentials, requestId: text, behaviorId: text, revision: text, timeoutMs: duration, missionId: text }, ['leaseId', 'epoch', 'requestId', 'behaviorId', 'revision', 'timeoutMs']),
   'task.cancel': object({ ...credentials, taskId: text })
 }
-const readOps = ['schema', 'status', 'events.read', 'behavior.validate']
+const readOps = ['memory.recall', 'schema', 'status', 'events.read', 'behavior.validate']
 const writeOps = Object.keys(schemas).filter(op => !readOps.includes(op))
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validators = Object.fromEntries(Object.entries(schemas).map(([key, schema]) => [key, ajv.compile(schema)]))

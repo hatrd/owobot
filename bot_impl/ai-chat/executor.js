@@ -688,7 +688,7 @@ function createChatExecutor ({
     const memoryCtxResult = profile.includeMemory === false
       ? { text: '', refs: [] }
       : await memory.longTerm.buildContext({ query: memoryQuery, actor: username, withRefs: true })
-    const memoryCtx = typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || '')
+    const memoryCtx = [typeof memoryCtxResult === 'string' ? memoryCtxResult : (memoryCtxResult?.text || ''), profile.includeMemory === false ? '' : require('../exploration').context(state)].filter(Boolean).join('\n')
     const memoryRefs = Array.isArray(memoryCtxResult?.refs) ? memoryCtxResult.refs : []
     const peopleProfilesCtx = (() => {
       if (profile.includePeople === false) return ''

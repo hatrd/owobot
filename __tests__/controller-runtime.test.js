@@ -125,3 +125,22 @@ test('worker creates a bounded valid PNG without accessing the bot', () => {
   assert.equal(png.readUInt32BE(20), 100)
   assert.ok(png.length < 100000)
 })
+
+test('mission-associated tasks enforce mission validation and never reuse a request across missions', () => {
+  const h = harness()
+  assert.equal(h.start({ missionId: 'missing' }).error, 'invalid_mission_or_target')
+  h.driver.canStartMission = (id, behavior) => id === 'known' && behavior.id === 'tour'
+  const started = h.start({ missionId: 'known' })
+  assert.equal(started.ok, true)
+  assert.equal(h.state.controller.tasks[0].missionId, 'known')
+  assert.equal(h.start().error, 'request_id_conflict')
+})
+
+test('behavior removal refuses active revisions and permits retirement after cancellation', () => {
+  const h = harness(); const { taskId } = h.start()
+  const args = { ...h.credentials, behaviorId: 'tour', revision: '1' }
+  assert.equal(h.runtime.write('behavior.remove', args).error, 'behavior_in_use')
+  h.runtime.write('task.cancel', { ...h.credentials, taskId })
+  assert.equal(h.runtime.write('behavior.remove', args).ok, true)
+  assert.equal(h.state.controller.behaviors.length, 0)
+})

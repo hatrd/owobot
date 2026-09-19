@@ -238,6 +238,13 @@ async function main () {
     checks.push({ check: `controller.${op}`, ok: true, durationMs: checked.durationMs })
   }
 
+  for (const what of ['terrain', 'exploration_memory']) {
+    const observed = await call(sockPath, token, 'tool.dry', { tool: 'observe_detail', args: { what, radius: 6, max: 4 } }, timeoutMs)
+    ensureCtlOk(`observe.${what}`, observed.res)
+    if (observed.res.result?.ok !== true) throw new Error(`observe.${what} failed: ${JSON.stringify(observed.res.result)}`)
+    checks.push({ check: `observe.${what}`, ok: true, durationMs: observed.durationMs })
+  }
+
   const summary = {
     ok: true,
     generatedAt: new Date().toISOString(),

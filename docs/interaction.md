@@ -174,6 +174,8 @@ It verifies the following paths (including explicit schema coverage):
 9) `controller.schema` (behavior and request contracts)
 10) `controller.status` (runtime installed and queryable)
 11) `controller.behavior.validate` (example graph validation without installation)
+12) `observe.terrain` (read-only bounded terrain candidates)
+13) `observe.exploration_memory` (persistent spatial-memory availability)
 
 By default, it dry-runs `pickup` with `radius=12`. Override if needed:
 
@@ -249,3 +251,5 @@ Runtime diagnostics: `node scripts/botctl.js dry observe_detail what=runtime max
 ## External controller and hot-loaded behaviors
 
 `controller_read` exposes status/events/schema and pure behavior validation through dry; `controller_write` handles leased control and asynchronous tasks. `scripts/controller-client.js` provides a model-neutral SDK/NDJSON bridge; `scripts/run-behavior.js --dry` validates example behaviors. `observe_detail what=view` returns an on-demand voxel PNG and capture metadata; `what=controller` reads task state. See [external-controller.md](external-controller.md) for schemas, limits and human-only execution examples.
+
+Persistent exploration: read `observe_detail what=terrain|exploration_memory`; preview `node scripts/explore-survival.js --dry`. See [exploration-memory.md](exploration-memory.md) for durable checkpoints, controller memory operations and explicit resume workflow.

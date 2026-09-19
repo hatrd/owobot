@@ -51,3 +51,5 @@
 ## 外部控制观察
 - `what=controller` 委托 `../controller` 读取状态；`what=view` 委托 `../controller/view` 生成只读简化画面。
 - 实体观察的 `position` 提供世界坐标，不能只用距离替代导航所需证据。
+
+- `what=terrain` / `what=exploration_memory` 委托 `../exploration/`，只读查询不能写检查点或启动任务。

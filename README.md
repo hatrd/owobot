@@ -38,3 +38,5 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 ### External model controller
 
 Versioned JSON behaviors can now be installed without code reload. Read status with `node scripts/controller-client.js status`; validate the example with `node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry`. Includes leased task control and on-demand voxel images. See [controller protocol and limitations](docs/external-controller.md).
+
+Persistent exploration memory and bounded resumable walks: see [exploration memory](docs/exploration-memory.md). Preview with `node scripts/explore-survival.js --dry`; `--resume <missionId>` continues a saved mission.

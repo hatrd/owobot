@@ -1345,6 +1345,8 @@ const DETAIL_WHAT_ALIASES = Object.freeze({
 
 const DETAIL_WHAT_CANONICAL = Object.freeze([
   'runtime',
+  'terrain',
+  'exploration_memory',
   'controller',
   'view',
   'containers',
@@ -1364,6 +1366,8 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
 const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
   controller: 'External controller state, task status and behavior versions.',
   view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
+  terrain: 'Conservative local traversable positions ranked by exploration memory; never moves.',
+  exploration_memory: 'Durable world-scoped mission checkpoints, nearby discoveries and route outcomes.',
   runtime: 'Bounded process memory, GC, event loop and collection size history; available before spawn.',
   containers: 'Inspect nearby containers in read-only mode with diagnostic fields on failures.',
   online_players: 'Server-listed TAB players, including self; does not imply nearby or reveal hidden players.',
@@ -1425,6 +1429,8 @@ function detail (bot, args = {}) {
     })).sort((a, b) => a.name.localeCompare(b.name))
     return { ok: true, msg: `TAB 在线列表 ${rows.length} 人: ${rows.slice(0, max).map(p => p.name).join(', ')}`, data: { source: 'server_tablist', total: rows.length, truncated: rows.length > max, players: rows.slice(0, max) } }
   }
+  if (what === 'terrain') return require('../exploration/terrain').survey(bot, args)
+  if (what === 'exploration_memory') return require('../exploration').read(bot, args)
   if (what === 'controller') return require('../controller').read(bot, { op: 'status' })
   if (what === 'view') return require('../controller/view').capture(bot, args)
   if (what === 'runtime') return require('../runtime-diagnostics').read(bot, args)
