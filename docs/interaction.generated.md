@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T07:43:23.281Z`
+- GeneratedAt: `2026-09-19T07:46:42.444Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -30,6 +30,7 @@
 | view | On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI. |
 | containers | Inspect nearby containers in read-only mode with diagnostic fields on failures. |
 | players | Nearby players from mineflayer runtime state. |
+| online_players | Server-listed TAB players, including self; does not imply nearby or reveal hidden players. |
 | hostiles | Nearby hostile mobs. |
 | entities | Nearby entities with optional species/match filters. |
 | animals | Nearby passive animals. |

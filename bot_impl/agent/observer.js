@@ -1349,6 +1349,7 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
   'view',
   'containers',
   'players',
+  'online_players',
   'hostiles',
   'entities',
   'animals',
@@ -1365,6 +1366,7 @@ const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
   view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
   runtime: 'Bounded process memory, GC, event loop and collection size history; available before spawn.',
   containers: 'Inspect nearby containers in read-only mode with diagnostic fields on failures.',
+  online_players: 'Server-listed TAB players, including self; does not imply nearby or reveal hidden players.',
   players: 'Nearby players from mineflayer runtime state.',
   hostiles: 'Nearby hostile mobs.',
   entities: 'Nearby entities with optional species/match filters.',
@@ -1414,6 +1416,15 @@ function getDetailSchema () {
 
 function detail (bot, args = {}) {
   const what = normalizeDetailWhat(args.what)
+  if (what === 'online_players') {
+    const max = Math.min(200, parsePositiveInt(args.max, 40, 1))
+    const rows = require('../tablist-utils').getListedPlayerEntries(bot).map(([name, rec]) => ({
+      name: String(rec?.username || name),
+      self: String(rec?.username || name) === bot.username,
+      pingMs: Number.isFinite(rec?.ping) && rec.ping >= 0 ? rec.ping : null
+    })).sort((a, b) => a.name.localeCompare(b.name))
+    return { ok: true, msg: `TAB 在线列表 ${rows.length} 人: ${rows.slice(0, max).map(p => p.name).join(', ')}`, data: { source: 'server_tablist', total: rows.length, truncated: rows.length > max, players: rows.slice(0, max) } }
+  }
   if (what === 'controller') return require('../controller').read(bot, { op: 'status' })
   if (what === 'view') return require('../controller/view').capture(bot, args)
   if (what === 'runtime') return require('../runtime-diagnostics').read(bot, args)
