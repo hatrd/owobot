@@ -238,12 +238,17 @@ async function main () {
     checks.push({ check: `controller.${op}`, ok: true, durationMs: checked.durationMs })
   }
 
-  for (const what of ['terrain', 'exploration_memory']) {
+  for (const what of ['terrain', 'exploration_memory', 'life']) {
     const observed = await call(sockPath, token, 'tool.dry', { tool: 'observe_detail', args: { what, radius: 6, max: 4 } }, timeoutMs)
     ensureCtlOk(`observe.${what}`, observed.res)
     if (observed.res.result?.ok !== true) throw new Error(`observe.${what} failed: ${JSON.stringify(observed.res.result)}`)
     checks.push({ check: `observe.${what}`, ok: true, durationMs: observed.durationMs })
   }
+
+  const lifeConfig = await call(sockPath, token, 'tool.dry', { tool: 'life_configure', args: { op: 'enable', args: { maxRadius: 32 } } }, timeoutMs)
+  ensureCtlOk('life.configure.dry', lifeConfig.res)
+  if (lifeConfig.res.result?.ok !== true || lifeConfig.res.result?.capability?.level !== 'validate_only') throw new Error(`life.configure.dry failed: ${JSON.stringify(lifeConfig.res.result)}`)
+  checks.push({ check: 'life.configure.dry', ok: true, durationMs: lifeConfig.durationMs })
 
   const summary = {
     ok: true,

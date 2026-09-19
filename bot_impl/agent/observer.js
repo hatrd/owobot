@@ -1345,6 +1345,9 @@ const DETAIL_WHAT_ALIASES = Object.freeze({
 })
 
 const DETAIL_WHAT_CANONICAL = Object.freeze([
+  'knowledge',
+  'excavation',
+  'life',
   'runtime',
   'terrain',
   'navigation',
@@ -1368,6 +1371,9 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
 ])
 
 const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
+  excavation: 'Loaded diamond ores, excavation safety decisions, inventory space, durability and enchantments.',
+  knowledge: 'Persistent world and player evidence; query filters through controller knowledge.query.',
+  life: 'Autonomous life config/schema, current activity, recent outcomes and read-only decision preview.',
   controller: 'External controller state, task status and behavior versions.',
   view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
   block_search: 'Find exact registered block names in loaded chunks; requires names array.',
@@ -1456,6 +1462,9 @@ function detail (bot, args = {}) {
   if (what === 'navigation') return require('../navigation/observe').observe(bot, args)
   if (what === 'terrain') return require('../exploration/terrain').survey(bot, args)
   if (what === 'exploration_memory') return require('../exploration').read(bot, args)
+  if (what === 'excavation') return require('../safety/observe').read(bot, args)
+  if (what === 'knowledge') return require('../memory').read(bot, { max: args.max })
+  if (what === 'life') return require('../life').read(bot)
   if (what === 'controller') return require('../controller').read(bot, { op: 'status' })
   if (what === 'view') return require('../controller/view').capture(bot, args)
   if (what === 'runtime') return require('../runtime-diagnostics').read(bot, args)

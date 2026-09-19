@@ -7,6 +7,9 @@ const { oxygen } = require('../navigation/oxygen')
 function install (bot, { state, on, registerCleanup, log }) {
   const navigator = createNavigator(bot, state)
   const driver = {
+    beforeAcquire (args) { if (args.controllerId !== require('../life/runtime').OWNER) state.lifeApi?.yield('external_controller') },
+    knowledgeRead: args => state.knowledgeApi?.query(args),
+    knowledgeWrite: (op, args) => state.knowledgeApi?.write(op, args),
     memoryRead: args => state.explorationApi?.recall(args),
     memoryWrite: (op, args) => state.explorationApi?.write(op, args),
     canStartMission: (id, behavior) => state.explorationApi?.canStart(id, behavior),
@@ -22,7 +25,7 @@ function install (bot, { state, on, registerCleanup, log }) {
     isBusy () {
       return Boolean((state.externalBusyCount > (state.controllerBusy ? 1 : 0) || (state.externalBusy && !state.controllerBusy)) || state.holdItemLock || state.isFishing || state.autoEat?.eating || bot.pathfinder?.goal || bot.currentWindow || bot.targetDigBlock || bot._skillRunner?.listTasks().some(t => t.status === 'running'))
     },
-    stop () { navigator.stop() },
+    stop () { navigator.stop(); if (bot.targetDigBlock) bot.stopDigging(); if (state.storageTransfer?.phase === 'opening' || state.storageTransfer?.phase === 'transferring') { if (bot.currentWindow) bot.closeWindow(bot.currentWindow) } },
     facts: () => ({ health: bot.health, food: bot.food, oxygenLevel: oxygen(bot).level }),
     hazard () {
       if (!state.hasSpawned || !bot.entity?.position) return 'not_spawned'
@@ -35,6 +38,10 @@ function install (bot, { state, on, registerCleanup, log }) {
     },
     async action (action, args, cancellation) {
       if (cancellation.canceled) return { ok: false, error: 'canceled' }
+      if (action === 'storage_transfer') return require('./storage').transfer(bot, state, args, cancellation)
+      if (action === 'excavate') return require('./excavate').excavate(bot, state, args, cancellation)
+      if (action === 'discard') return require('./excavate').discard(bot, args, cancellation)
+      if (action === 'feed_cat') return require('./feed-cat').feedCat(bot, state, args, cancellation)
       if (action === 'observe') return observer.detail(bot, args)
       if (action === 'say') { bot.chat(args.text); return { ok: true } }
       if (action === 'look') { await bot.look(args.yaw, args.pitch, true); return { ok: true } }
@@ -42,6 +49,7 @@ function install (bot, { state, on, registerCleanup, log }) {
       return navigator.start(args, cancellation, pos => {
         const task = state.controller?.tasks.find(t => t.id === cancellation.taskId)
         const mission = state.explorationMemory?.document.missions.find(m => m.id === task?.missionId)
+        if (state.life?.runtime?.session?.taskId === cancellation.taskId && !state.lifeApi?.boundary(pos)) return false
         return !mission || Math.hypot(pos.x - mission.home.x, pos.y - mission.home.y, pos.z - mission.home.z) <= mission.maxRadius
       })
     }

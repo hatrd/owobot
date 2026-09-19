@@ -2,7 +2,10 @@
 
 const MODULES = [
   { id: 'exploration', path: './exploration', logger: 'exploration', kind: 'infrastructure', description: 'Durable spatial and exploration mission memory' },
+  { id: 'knowledge', path: './memory', logger: 'knowledge', kind: 'infrastructure', description: 'Durable world and player evidence' },
+  { id: 'excavation-safety', path: './safety', logger: 'safety', kind: 'infrastructure', description: 'Fail-closed shared excavation guard' },
   { id: 'controller', path: './controller', logger: 'controller', kind: 'infrastructure', description: 'Leased external control and versioned behavior runtime' },
+  { id: 'life', path: './life', logger: 'life', kind: 'feature', description: 'Persistent daytime wandering, night return and cat care' },
   { id: 'runtime-diagnostics', path: './runtime-diagnostics', logger: 'runtime', kind: 'infrastructure', description: 'Bounded memory, GC and event loop telemetry' },
   { id: 'bed-sleep', path: './bed-sleep', logger: 'sleep', kind: 'feature', description: 'Sleep when items land on a bed at night' },
   { id: 'follow-iron-nugget', path: './follow-iron-nugget', logger: 'follow', kind: 'feature', description: 'Follow players holding iron nuggets' },

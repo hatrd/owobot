@@ -197,9 +197,9 @@ Done when:
 
 - Bot can explain location context with structure-level evidence rather than raw block lists.
 
-## Dry Verification Protocol (AI-Only)
+## Read-Only Observation Verification
 
-AI must verify by dry path only:
+Observation evidence uses the read-only dry path below. For behavior changes, AI may proceed to real execution after dry checks under the standing project authorization:
 
 1. `npm run interaction:dry`
 2. targeted checks:

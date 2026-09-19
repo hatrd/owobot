@@ -6,6 +6,10 @@ const duration = { type: 'integer', minimum: 100, maximum: 300000 }
 const coordinate = { type: 'number', minimum: -30000000, maximum: 30000000 }
 const next = text
 const actionSchemas = {
+  storage_transfer: object({ x: { ...coordinate, type: 'integer' }, y: { ...coordinate, type: 'integer' }, z: { ...coordinate, type: 'integer' }, direction: { enum: ['deposit', 'withdraw'] }, item: text, count: { type: 'integer', minimum: 1, maximum: 2304 } }),
+  excavate: object({ x: { ...coordinate, type: 'integer' }, y: { ...coordinate, type: 'integer' }, z: { ...coordinate, type: 'integer' }, expected: text }),
+  discard: object({ item: { enum: ['cobblestone', 'cobbled_deepslate', 'dirt', 'granite', 'diorite', 'andesite', 'tuff', 'netherrack'] }, keep: { type: 'integer', minimum: 0, maximum: 256 } }),
+  feed_cat: object({ uuid: { type: 'string', minLength: 1, maxLength: 64 } }),
   goto: object({ x: coordinate, y: coordinate, z: coordinate, range: { type: 'number', minimum: 0.5, maximum: 8 } }, ['x', 'y', 'z']),
   look: object({ yaw: { type: 'number', minimum: -6.284, maximum: 6.284 }, pitch: { type: 'number', minimum: -1.571, maximum: 1.571 } }),
   say: object({ text: { ...text, pattern: '^[^\\s/]', description: 'Plain chat; no leading whitespace or server commands.' } }),
@@ -21,7 +25,9 @@ const nodeSchema = { oneOf: [
 ] }
 const behaviorSchema = object({ id: text, revision: text, entry: text, nodes: { type: 'object', minProperties: 1, maxProperties: 64, propertyNames: text, additionalProperties: nodeSchema } })
 const credentials = { leaseId: text, epoch: { type: 'integer', minimum: 1 } }
+const knowledge = require('../memory/contract').schemas
 const schemas = {
+  ...Object.fromEntries(Object.entries(knowledge).map(([op, schema]) => [op, op === 'knowledge.query' ? schema : { ...schema, properties: { ...schema.properties, ...credentials }, required: [...schema.required, 'leaseId', 'epoch'] }])),
   'memory.recall': object({ radius: { type: 'integer', minimum: 1, maximum: 512 }, max: { type: 'integer', minimum: 1, maximum: 20 } }, []),
   'memory.begin': object({ ...credentials, objective: { type: 'string', minLength: 1, maxLength: 240 }, maxRadius: { type: 'integer', minimum: 8, maximum: 256 } }),
   'memory.resume': object({ ...credentials, missionId: text }),
@@ -39,7 +45,7 @@ const schemas = {
   'task.start': object({ ...credentials, requestId: text, behaviorId: text, revision: text, timeoutMs: duration, missionId: text }, ['leaseId', 'epoch', 'requestId', 'behaviorId', 'revision', 'timeoutMs']),
   'task.cancel': object({ ...credentials, taskId: text })
 }
-const readOps = ['memory.recall', 'schema', 'status', 'events.read', 'behavior.validate']
+const readOps = ['knowledge.query', 'memory.recall', 'schema', 'status', 'events.read', 'behavior.validate']
 const writeOps = Object.keys(schemas).filter(op => !readOps.includes(op))
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validators = Object.fromEntries(Object.entries(schemas).map(([key, schema]) => [key, ajv.compile(schema)]))

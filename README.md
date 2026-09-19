@@ -12,7 +12,7 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 
 - Runtime behavior changes should be validated through the interaction contract first.
 - Hot reload is gate-controlled by `open_fire` in default workflow.
-- AI-side verification is dry-run only; real in-world execution is manual.
+- AI has standing authorization to operate this project, including real in-world execution. Verify through dry checks first, then confirm actual outcomes through structured state.
 
 ## Documentation Index
 
@@ -40,3 +40,9 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 Versioned JSON behaviors can now be installed without code reload. Read status with `node scripts/controller-client.js status`; validate the example with `node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry`. Includes leased task control and on-demand voxel images. See [controller protocol and limitations](docs/external-controller.md).
 
 Persistent exploration memory and bounded resumable walks: see [exploration memory](docs/exploration-memory.md). Preview with `node scripts/explore-survival.js --dry`; `--resume <missionId>` continues a saved mission.
+
+### Autonomous life
+
+Optional persistent daytime wandering, night return to a configured home, and cooldown-based cat feeding. Read `node scripts/botctl.js dry observe_detail what=life`; AI may enable it after dry checks under the standing project authorization. See [autonomous life](docs/autonomous-life.md).
+
+External agent survival primitives and durable world/player evidence: [Cerebellum guide](docs/cerebellum.md). Run one leased action with a terminal receipt using `node scripts/cerebellum.js <action> '<json>'`; use `--dry` to validate first.

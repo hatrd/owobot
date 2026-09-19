@@ -2812,7 +2812,7 @@ module.exports = function registerCombat (ctx) {
   async function deposit (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '18', 10))
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
-    const containerType = normalizeContainerType(args.containerType ?? args.container)
+    const containerType = normalizeContainerType(args.containerType ?? args.container, { fallback: 'storage' })
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg
     const mcData = bot.mcData || require('minecraft-data')(bot.version)
@@ -3015,7 +3015,7 @@ module.exports = function registerCombat (ctx) {
   async function withdraw (args = {}) {
     const radius = Math.max(2, parseInt(args.radius || '18', 10))
     const includeBarrel = !(String(args.includeBarrel || 'true').toLowerCase() === 'false')
-    const containerType = normalizeContainerType(args.containerType ?? args.container)
+    const containerType = normalizeContainerType(args.containerType ?? args.container, { fallback: 'storage' })
     const multi = (String(args.multi || args.searchAll || 'true').toLowerCase() !== 'false')
     if (!ensurePathfinder()) return fail('无寻路')
     const { Movements, goals } = pathfinderPkg

@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## AI 自主权限
+- 本项目由 AI 全权操作。用户已持续授权 AI 自主决定并执行项目开发、重构、测试、热重载、启动/停止/重启、配置修改、控制面写操作和服内真实操作。
+- `tool.run`、自主生活启用、探索、移动、喂食、采集和建造等项目操作均在授权范围内，无需逐项或重复请求用户确认。
+- AI 应主动完成任务所需的实现、部署、实跑验证和问题修复；仅在确实缺少无法从代码、状态或观察中取得的必要信息时向用户提问。
+- 授权覆盖项目操作，不替代工程验证：先查询 schema、完成 dry 检查，再按目标实跑并读取状态确认结果。用户后续明确的停止、范围或偏好指令优先。
+
 ## 核心信条
 - 内部实现无需顾虑向后兼容；我们只在意最快速交付可以上线的行为。
 - 禁止“补丁式”小修小补掩盖架构问题；一旦方向错了，直接按最优设计重构到位。
@@ -13,8 +19,8 @@
 
 ## 交互优先验证（强制）
 - `docs/interaction.md` 是交互流程说明；具体 ops/what/tool 列表以 schema 接口与生成文档为准，不再手工维护清单。
-- AI 仅允许执行 dry interaction 验证：先跑 `npm run interaction:dry`，并用 `node scripts/botctl.js dry ...` 做定向验证。
-- 实跑（`tool.run`、服内真实操作）永远只能由真人手动执行；AI 不得代替执行。
+- 交互验证先走 dry：先跑 `npm run interaction:dry`，并用 `node scripts/botctl.js dry ...` 做定向验证。
+- dry 检查通过后，AI 可自主执行 `tool.run` 和服内真实操作，并用结构化状态、事件和观察验证实际结果。
 - 验证脚本优先走控制面（`scripts/botctl.js` / `scripts/interaction-dry-run.js` / `scripts/generate-interaction-doc.js`），避免只靠人工终端观察。
 - 若 `interaction:dry` 失败，不得宣称改动已验证通过；先修复契约不一致再继续。
 
@@ -34,10 +40,10 @@
   - `node scripts/botctl.js schema tool`
 - 涉及交互契约变更时，执行 `npm run interaction:docgen` 更新 `docs/interaction.generated.md`。
 
-4) **AI 仅 dry，不可实跑**
+4) **先 dry，再自主实跑**
 - 先执行 `npm run interaction:dry`。
 - 再用 `node scripts/botctl.js dry ...` 针对新功能做定向验证。
-- `tool.run` 与服内实操由真人自行执行，AI 不参与。
+- 需要验证实际行为时，由 AI 自主执行 `tool.run` 与服内实操；检查完成状态、取消行为和失败诊断，不把启动成功当成任务完成。
 
 5) **观察类能力必须走 read-only dry 取证**
 - 统一通过 `node scripts/botctl.js dry observe_detail ...` 验证。

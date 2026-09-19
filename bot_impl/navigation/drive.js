@@ -1,6 +1,12 @@
 const { randomUUID } = require('crypto')
 const { Vec3 } = require('vec3')
 const { pathfinder, Movements, goals } = require('./pathfinder')
+function reached (bot, target, p) {
+  if (target.isEnd(p.floored())) return true
+  const block = bot.blockAt?.(p.floored(), false)
+  const top = Math.max(0, ...(block?.shapes || []).map(shape => shape[4]))
+  return top > 0 && top < 1 && Math.abs(p.y - Math.floor(p.y) - top) < 0.08 && target.isEnd(p.floored().offset(0, 1, 0))
+}
 function createNavigator (bot, state, { now = Date.now } = {}) {
   let operation = null
   function stop (reason = 'canceled') { operation?.finish(false, reason) }
@@ -45,7 +51,7 @@ function createNavigator (bot, state, { now = Date.now } = {}) {
           const p = bot.entity?.position
           if (!p) return finish(false, 'not_spawned')
           if (!boundary(p)) return finish(false, 'mission_radius_exceeded')
-          if (target.isEnd(p.floored())) return finish(true, 'arrived')
+          if (reached(bot, target, p)) return finish(true, 'arrived')
           if (bot.pathfinder.goal !== target) return finish(false, 'navigation_interrupted')
           if (p.distanceTo(new Vec3(s.lastPosition.x, s.lastPosition.y, s.lastPosition.z)) >= 0.4) {
             s.lastProgressAt = now(); s.lastPosition = { x: p.x, y: p.y, z: p.z }
@@ -62,4 +68,4 @@ function createNavigator (bot, state, { now = Date.now } = {}) {
   }
   return { start, stop }
 }
-module.exports = { createNavigator }
+module.exports = { createNavigator, reached }

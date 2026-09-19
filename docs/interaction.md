@@ -176,6 +176,8 @@ It verifies the following paths (including explicit schema coverage):
 11) `controller.behavior.validate` (example graph validation without installation)
 12) `observe.terrain` (read-only bounded terrain candidates)
 13) `observe.exploration_memory` (persistent spatial-memory availability)
+14) `observe.life` (read-only autonomous-life status and preview)
+15) `life.configure.dry` (validate-only configuration; never enables autonomy)
 
 By default, it dry-runs `pickup` with `radius=12`. Override if needed:
 
@@ -250,6 +252,10 @@ Runtime diagnostics: `node scripts/botctl.js dry observe_detail what=runtime max
 
 ## External controller and hot-loaded behaviors
 
-`controller_read` exposes status/events/schema and pure behavior validation through dry; `controller_write` handles leased control and asynchronous tasks. `scripts/controller-client.js` provides a model-neutral SDK/NDJSON bridge; `scripts/run-behavior.js --dry` validates example behaviors. `observe_detail what=view` returns an on-demand voxel PNG and capture metadata; `what=controller` reads task state. See [external-controller.md](external-controller.md) for schemas, limits and human-only execution examples.
+`controller_read` exposes status/events/schema and pure behavior validation through dry; `controller_write` handles leased control and asynchronous tasks. `scripts/controller-client.js` provides a model-neutral SDK/NDJSON bridge; `scripts/run-behavior.js --dry` validates example behaviors. `observe_detail what=view` returns an on-demand voxel PNG and capture metadata; `what=controller` reads task state. See [external-controller.md](external-controller.md) for schemas, limits and execution examples available to AI under the standing project authorization.
 
 Persistent exploration: read `observe_detail what=terrain|exploration_memory`; preview `node scripts/explore-survival.js --dry`. See [exploration-memory.md](exploration-memory.md) for durable checkpoints, controller memory operations and explicit resume workflow.
+
+自主生活通过 `life_configure` 配置；`dry observe_detail what=life` 返回状态、参数 schema 与只读决策预览。启用/关闭等修改操作的 dry 只校验参数，dry 检查通过后 AI 可自主启用并验证实际状态。详见 [自主生活](autonomous-life.md)。
+
+采矿与统一单动作 CLI：见 [小脑接口](cerebellum.md)。`scripts/cerebellum.js` 等待任务终态；`what=excavation|knowledge` 提供只读准备状态和长期证据，控制器 schema 包含带租约的长期记忆写入和单次开掘/储物动作。

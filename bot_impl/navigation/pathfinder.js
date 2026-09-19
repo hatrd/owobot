@@ -27,7 +27,7 @@ class Movements extends upstream.Movements {
     return block
   }
   safeToBreak (block) {
-    if (fluid(this.bot, block).kind !== 'dry') return false
+    if (!require('../safety').checkDig(this.bot, block).ok) return false
     return super.safeToBreak(block)
   }
   getNeighbors (node) {

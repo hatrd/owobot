@@ -5,6 +5,7 @@ const TOOL_SPECS = Object.freeze([
   { name: 'place_block' },
   { name: 'move_input' },
   { name: 'place_sign' },
+  { name: 'life_configure' },
   { name: 'controller_read', dryCapability: 'read_only' },
   { name: 'controller_write' },
   { name: 'goto' },

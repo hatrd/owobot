@@ -42,6 +42,7 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     const checked = contract.validate(op, args)
     if (!checked.ok) return checked
     if (!contract.readOps.includes(op)) return { ok: false, error: 'read_only_operation_required' }
+    if (op === 'knowledge.query') return driver.knowledgeRead?.(args) || { ok: false, error: 'knowledge_unavailable' }
     if (op === 'memory.recall') return driver.memoryRead?.(args) || { ok: false, error: 'memory_unavailable' }
     if (op === 'schema') return { ok: true, protocolVersion: 1, schemas: copy(contract.schemas), behaviorSchema: copy(contract.behaviorSchema), limits: { tasks: 100, behaviors: 64, events: 256, resultBytes: 16384 }, view: { what: 'view', format: 'image/png', renderer: 'voxel', textured: false } }
     if (op === 'behavior.validate') return { ok: true, hash: hash(args.behavior), nodes: Object.keys(args.behavior.nodes).length }
@@ -62,6 +63,7 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     if (!contract.writeOps.includes(op)) return { ok: false, error: 'write_operation_required' }
     expire()
     if (op === 'session.acquire') {
+      driver.beforeAcquire?.(args)
       if (s.lease) return { ok: false, error: 'controller_busy', expiresAt: s.lease.expiresAt }
       if (driver.isBusy()) return { ok: false, error: 'bot_busy' }
       s.lease = { id: randomUUID(), epoch: ++s.epoch, controllerId: args.controllerId, expiresAt: now() + args.ttlMs }
@@ -70,6 +72,10 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
       return { ok: true, leaseId: s.lease.id, epoch: s.epoch, expiresAt: s.lease.expiresAt }
     }
     if (!authenticate(args)) return { ok: false, error: 'stale_or_invalid_lease' }
+    if (['knowledge.put', 'knowledge.remove'].includes(op)) {
+      const { leaseId, epoch, ...record } = args
+      return driver.knowledgeWrite?.(op, record) || { ok: false, error: 'knowledge_unavailable' }
+    }
     if (op === 'memory.pause' && active()?.missionId === args.missionId) finish(active(), 'canceled', 'mission_paused')
     if (['memory.begin', 'memory.resume', 'memory.pause', 'memory.checkpoint'].includes(op)) return driver.memoryWrite?.(op, args) || { ok: false, error: 'memory_unavailable' }
     if (op === 'session.renew') { s.lease.expiresAt = now() + args.ttlMs; emit('session.renewed', { epoch: s.epoch, expiresAt: s.lease.expiresAt }); return { ok: true, expiresAt: s.lease.expiresAt } }
@@ -135,6 +141,9 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     if (now() >= t.deadline) return finish(t, 'failed', 'deadline_exceeded')
     const hazard = driver.hazard()
     if (hazard) {
+      const node = s.behaviors.find(b => b.hash === t.hash)?.nodes[t.node]
+      // Feeding is not idempotent: never resume an uncertain interaction after suspension.
+      if (['feed_cat', 'excavate', 'discard', 'storage_transfer'].includes(node?.action) && pending) return finish(t, 'canceled', 'mutation_interrupted_by_hazard')
       if (t.status !== 'suspended') {
         if (pending) { pending.cancel(); pending = null }
         driver.stop()

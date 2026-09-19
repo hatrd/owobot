@@ -161,3 +161,7 @@
 持续探索已接入持久化空间记忆：保存出发点、访问区域、发现、失败路线和检查点，支持跨重载/重启续探。使用 `node scripts/explore-survival.js --dry` 预览，详见[探索记忆](docs/exploration-memory.md)。
 
 液体寻路、只读路径预览与支持边界见 [docs/navigation.md](docs/navigation.md)。
+
+自主生活已接入：白天在家附近闲逛、傍晚回家、定期尝试喂猫，保存家位置与喂食冷却。默认关闭，AI 可在 dry 检查通过后自主启用；`node scripts/botctl.js dry observe_detail what=life` 查看状态和决策预览，详见[自主生活](docs/autonomous-life.md)。
+
+外部 LLM/Codex 生存动作与世界、玩家长期证据见 [小脑接口](docs/cerebellum.md)。`node scripts/cerebellum.js <action> '<json>'` 等待真实完成回执，`--dry` 先校验。

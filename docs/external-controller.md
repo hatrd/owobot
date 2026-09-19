@@ -29,7 +29,7 @@ node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry
 | task.start | leaseId、epoch、requestId、behaviorId、revision、timeoutMs | 立即返回 taskId |
 | task.cancel | leaseId、epoch、taskId | 保留取消后的终态 |
 
-写操作的 `--dry` 只校验输入，不获取租约、不安装行为、不启动或取消任务。AI 开发验证只能用 dry/mock；真人可运行：
+写操作的 `--dry` 只校验输入，不获取租约、不安装行为、不启动或取消任务。AI 先完成 dry/mock 验证，通过后可自主运行：
 
 ```bash
 node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json
@@ -41,7 +41,7 @@ node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json
 
 行为定义为 `{id,revision,entry,nodes}`，详见示例与 schema。支持：
 
-- `action`：`goto`（不挖掘、不搭柱，抵达目标范围才完成）、`look`（yaw/pitch，弧度）、`say`（纯聊天，不接受服务器斜杠命令）、`observe`（明确的只读 what 列表）。每个动作必须有 timeoutMs 和 next。
+- `action`：`goto`（不挖掘、不搭柱，抵达目标范围才完成）、`look`（yaw/pitch，弧度）、`say`（纯聊天，不接受服务器斜杠命令）、`observe`（明确的只读 what 列表）、`feed_cat`（uuid 指定当前猫，原地单次喂食并确认消耗；危险中断取消而不重放）。每个动作必须有 timeoutMs 和 next。
 - `wait`：明确毫秒数与 next。
 - `wait_event`：等待进入节点后的 health/entityHurt/rain/day/night 结构化事件，必须有 timeoutMs。
 - `branch`：health/food/oxygenLevel 数值字段与 lt/lte/eq/gte/gt 比较，显式 yes/no。
@@ -49,7 +49,7 @@ node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json
 
 所有跳转都先校验。最多 64 个节点，任务最长五分钟，最多 1000 次节点进入。全局最多 64 个行为版本、100 个任务记录、256 条事件。每个任务仅保留最后一次动作结果（最多 16 KiB），历史结果走有界事件与结构化日志；超过保留范围会返回 historyLost。单租约超过 100 个任务直接拒绝，不通过淘汰 requestId 让旧重试意外重跑。
 
-同一 id/revision 内容不能变；新 revision 不影响当前任务。requestId 在同一租约内幂等，复用 requestId 却改变任务参数会拒绝。新动作需要实现明确的完成/取消驱动并扩展 schema；不能直接把会后台运行的旧 action 包成一个“成功”节点。首版尚不支持挖矿、容器写入或任意 Lua/JS 执行。
+同一 id/revision 内容不能变；新 revision 不影响当前任务。requestId 在同一租约内幂等，复用 requestId 却改变任务参数会拒绝。新动作需要实现明确的完成/取消驱动并扩展 schema；不能直接把会后台运行的旧 action 包成一个“成功”节点。当前扩展支持有保护检查的单次开掘与明确容器转移，不支持任意 Lua/JS 执行。
 
 ## 状态、抢占与恢复
 
@@ -82,8 +82,12 @@ node scripts/botctl.js dry observe_detail what=view radius=12
 node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry
 ```
 
-真人服内验收：导览示例、短距离 goto 到达、Ctrl-C 取消、控制器退出后租约过期、危险状态下暂停与恢复。默认开发验证只走 dry/mock；用户明确授权的实操按当次任务范围执行。
+服内实跑验收：导览示例、短距离 goto 到达、Ctrl-C 取消、控制器退出后租约过期、危险状态下暂停与恢复。AI 已获项目持续授权，可自主完成这些实跑验收；先通过 dry/mock，再读取结构化结果确认。
 
 探索扩展：`memory.recall/begin/resume/pause/checkpoint`、`task.start missionId` 和 `behavior.remove` 已加入机器 schema。查看 [探索记忆](exploration-memory.md) 获取持续探索与恢复流程。
 
 液体判定、卡住重规划和脱困交接详见 [液体与导航](navigation.md)。goto 失败保留结构化 lastResult，不自动无限重试。
+
+自主生活调度器复用该控制器执行短途任务；玩家修改类动作或外部控制器申请租约会使自主任务让路。家、活动状态和喂食冷却见 [自主生活](autonomous-life.md)。
+
+开掘与储物扩展：现已支持 `excavate`、`discard`、`storage_transfer`，单次修改均有明确完成回执；这些修改在危险中断后取消而不自动重放。当前能力及长期证据接口见 [cerebellum.md](cerebellum.md) 与实时 schema。

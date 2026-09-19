@@ -260,7 +260,7 @@ const ACTION_TOOL_SCHEMAS = [
       properties: {
         what: {
           type: 'string',
-          description: 'Inspection target: block_at|block_search|navigation|terrain|exploration_memory|controller|view|runtime|online_players|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
+          description: 'Inspection target: life|block_at|block_search|navigation|terrain|exploration_memory|controller|view|runtime|online_players|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
         },
         namedOnly: {
           type: 'boolean',
@@ -653,8 +653,10 @@ ACTION_TOOL_SCHEMAS.push(
   { name: 'people_commitments_clear', description: 'Delete matching commitments. mode=all/pending requires confirm=true.', parameters: object({ ...peopleFilter, mode: { type: 'string', enum: ['done', 'closed', 'pending', 'all', 'failed', 'ongoing'] }, confirm: boolean }) }
 )
 
+const lifeContract = require('./life/contract')
 const controllerContract = require('./controller/contract')
 ACTION_TOOL_SCHEMAS.push(
+  { name: 'life_configure', description: 'Enable/disable autonomous life or set home. First enable uses the current location as home; later enables retain home. Query observe_detail what=life for status, preview and config schema.', parameters: lifeContract.envelope },
   { name: 'controller_read', description: 'Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts.', parameters: controllerContract.envelope(controllerContract.readOps) },
   { name: 'controller_write', description: 'Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first.', parameters: controllerContract.envelope(controllerContract.writeOps) }
 )
@@ -690,6 +692,7 @@ function validateToolArgs (name, args = {}) {
   const validate = validators.get(name)
   if (!validate) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
   if (validate(args)) {
+    if (name === 'life_configure') return lifeContract.validate(args.op, args.args || {})
     if (name === 'controller_read' || name === 'controller_write') return controllerContract.validate(args.op, args.args || {})
     return { ok: true }
   }

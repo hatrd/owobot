@@ -12,7 +12,7 @@
 2. 找 prompt 合同、schema 合同、executor/action 边界三处真相。
 3. 先复现生产症状，优先用日志里的真实 LLM 返回或 control-plane dry 输入。
 4. 写失败测试，再改实现。
-5. 只做 dry 验证；真实 `tool.run` 和服内操作留给真人。
+5. 先做 dry 验证；通过后 AI 可自主执行真实 `tool.run` 和服内操作，并读取状态确认结果。
 6. 改完执行 `node --check`、`npm run bot:reload`、schema 查询、`npm run interaction:dry`、定向 `botctl dry/chatdry/observe_detail`。
 
 ## llm-output-replay-testing
