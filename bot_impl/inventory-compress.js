@@ -69,6 +69,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     const mcData = ensureMcData()
     const table = findCraftingTableNearby(6)
     for (const rule of COMPRESS) {
+      if (require('./inventory-reservations').held(state, rule.need)) continue
       // Skip 3x3 rules if no table
       if (rule.table && !table) continue
       // At least enough to craft once?

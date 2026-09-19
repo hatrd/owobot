@@ -8,6 +8,7 @@ const record = object({
   minY: { type: 'integer', minimum: -30000000, maximum: 30000000 }, maxY: { type: 'integer', minimum: -30000000, maximum: 30000000 },
   fact: { type: 'string', minLength: 1, maxLength: 4000 }, source: text,
   confidence: { enum: ['observed', 'reported', 'inferred'] },
+  inventoryHold: { type: 'array', maxItems: 32, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 120 } },
   expiresAt: { type: 'integer', minimum: 0 }
 }, ['id', 'kind', 'subject', 'fact', 'source', 'confidence'])
 const query = object({ kind: record.properties.kind, subject: text, dimension: text, max: { type: 'integer', minimum: 1, maximum: 50 }, offset: { type: 'integer', minimum: 0 }, id: text }, [])

@@ -98,6 +98,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
     if (state.externalBusy) { if (cfg.debug) L.debug('skip: externalBusy'); return }
     if (bot.currentWindow) { if (cfg.debug) L.debug('skip: in window'); return }
 
+    if (require('./inventory-reservations').held(state, 'iron_ingot')) return
     const iron = invCount('iron_ingot')
     if (iron <= 0) { if (cfg.debug) L.debug('skip: no iron'); return }
     const lacking = needArmorSlots()

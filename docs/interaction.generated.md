@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T13:11:26.993Z`
+- GeneratedAt: `2026-09-19T13:34:04.326Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops

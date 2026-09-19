@@ -4,8 +4,10 @@ const fs = require('fs')
 const path = require('path')
 const { runNode } = require('./lib/run-node')
 const { randomUUID } = require('crypto')
-const { call } = require('./controller-client')
+const { call, request } = require('./controller-client')
+const { performTravel } = require('./lib/return-waypoint')
 const { session, checked, makeBehavior, wait } = require('./cerebellum')
+const summarize = d => d && ({ phase: d.phase, status: d.status, target: d.target, diamonds: d.diamonds, homeId: d.homeId, position: d.position, vitals: d.vitals, actions: d.actions, homeIndex: d.homeIndex, updatedAt: d.updatedAt, ...(d.error ? { error: d.error.message } : {}) })
 async function main () {
   const flags = Object.fromEntries(process.argv.slice(2).map(v => v.replace(/^--/, '').split('=')))
   const target = Number(flags.target || 64)
@@ -16,7 +18,7 @@ async function main () {
   const file = path.resolve('data', `diamond-goal-${world}.json`)
   if (Object.hasOwn(flags, 'status')) {
     const observation = checked(await call('observe', { what: 'excavation', radius: 4, max: 1 })).data
-    console.log(JSON.stringify({ ok: true, goal: fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null, current: { position: observation.position, vitals: observation.vitals, diamonds: observation.inventory.filter(i => i.name === 'diamond').reduce((n, i) => n + i.count, 0) } }))
+    console.log(JSON.stringify({ ok: true, goal: fs.existsSync(file) ? (Object.hasOwn(flags, 'detail') ? JSON.parse(fs.readFileSync(file, 'utf8')) : summarize(JSON.parse(fs.readFileSync(file, 'utf8')))) : null, current: { position: observation.position, vitals: observation.vitals, diamonds: observation.inventory.filter(i => i.name === 'diamond').reduce((n, i) => n + i.count, 0) } }))
     return
   }
   if (!flags['return-route']) throw Error('recorded_return_route_required')
@@ -52,7 +54,22 @@ async function main () {
   process.once('SIGINT', stop); process.once('SIGTERM', stop)
   try {
     if (doc.error) doc.lastFailure = doc.error
-    delete doc.error; doc.status = 'running'; save()
+    delete doc.error; delete doc.lastResult; delete doc.lastPlanning; doc.status = 'running'; save()
+    const reservation = await session('diamond-goal-reservation')
+    try { await reservation.write('knowledge.put', { id: 'task:diamond-goal-inventory', kind: 'task', subject: 'diamond-goal', fact: 'Keep mission diamond output in item form until explicitly released.', source: 'mine-diamonds goal executor', confidence: 'observed', inventoryHold: ['diamond', 'diamond_block'] }) }
+    finally { await reservation.close() }
+    const initial = await observe()
+    const blocks = initial.inventory.filter(i => i.name === 'diamond_block').reduce((n, i) => n + i.count, 0)
+    if (count(initial) < target && blocks) {
+      const needed = Math.min(blocks, Math.ceil((target - count(initial)) / 9)) * 9
+      const crafting = checked(await request({ op: 'tool.dry', tool: 'craft_preview', args: { item: 'diamond', count: Math.min(64, needed) } }))
+      const recipe = crafting.data.recipes.find(r => r.materialsReady && !r.requiresTable && r.ingredients.every(i => i.item === 'diamond_block'))
+      if (!recipe) throw Error('diamond_unpack_recipe_unavailable')
+      const craftArgs = { item: 'diamond', count: Math.min(64, needed), recipeIndex: recipe.index }
+      checked(await request({ op: 'tool.dry', tool: 'craft_item', args: craftArgs }))
+      checked(await request({ op: 'tool.run', tool: 'craft_item', args: craftArgs }))
+      const restored = await observe(); doc.diamonds = count(restored); save()
+    }
     let unchanged = 0, previous = null
     while (doc.phase === 'mining') {
       if (canceled) throw Error('canceled')
@@ -89,17 +106,19 @@ async function main () {
       try {
         for (; doc.homeIndex < homeRoute.length; doc.homeIndex++) {
           if (canceled) throw Error('canceled')
-          const a = homeRoute[doc.homeIndex]; doc.intent = a; save()
-          const result = await s.action(a.action, a.args, 60000)
-          doc.lastResult = result; save()
-          if (!result.ok) throw Object.assign(Error('home_route_failed'), { detail: result })
-          console.log(JSON.stringify({ phase: doc.phase, homeIndex: doc.homeIndex, action: a.action }))
+          const travel = await performTravel(homeRoute, doc.homeIndex,
+            target => call('observe', { what: 'navigation', ...target }),
+            async a => { if (canceled) throw Error('canceled'); doc.intent = a; save(); return s.action(a.action, a.args, 60000) })
+          doc.lastTravel = travel; save()
+          if (!travel.ok) throw Object.assign(Error(travel.error), { detail: travel })
+          doc.homeIndex = travel.selected.index
+          console.log(JSON.stringify({ phase: doc.phase, homeIndex: doc.homeIndex, action: travel.selected.action.action, executions: travel.executions }))
         }
       } finally { await s.close(); activeSession = null }
       const d = await observe(), p = d.position, h = home.position
       if (count(d) < target || d.vitals.health <= 0 || d.dimension !== home.dimension || Math.hypot(p.x - h.x - 0.5, p.z - h.z - 0.5) > 2 || Math.abs(p.y - h.y) > 1) throw Error('completion_not_verified')
       doc.phase = 'complete'; doc.status = 'succeeded'; doc.diamonds = count(d); doc.position = p; doc.vitals = d.vitals; save()
-      console.log(JSON.stringify(doc))
+      console.log(JSON.stringify({ ok: true, ...summarize(doc) }))
     }
   } catch (e) { doc.status = e.message === 'canceled' ? 'canceled' : 'needs_attention'; doc.error = { message: e.message, detail: e.detail }; save(); throw e }
   finally { process.off('SIGINT', stop); process.off('SIGTERM', stop) }

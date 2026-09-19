@@ -57,3 +57,7 @@ node scripts/mine-diamonds.js --target=64 --home=home:diamond-expedition --retur
 返家路线是 observed 的 route 记录，fact 为 `{"actions":[{"action":"goto","args":{...}},{"action":"surface_travel","args":{...}}]}`；所有动作在开始前按控制器 schema 验证。配置与阶段存入 `data/diamond-goal-<worldId>.json`，相同命令恢复原目标；SIGINT/SIGTERM 会转发给当前段并释放当前返家租约。结束必须同时实测钻石数量、存活、维度和家坐标，单独达到数量不算完成。
 
 返程不会盲信历史航点：每段先通过只读导航搜索，优先连接前方最多8个历史节点内更早的可达节点；只有 `success` 路径证据才允许跳过中间节点，`partial`/超时不算可达。这样旧矿道的局部变动可由本地重规划消化。当前位置必须仍在当前路线段附近；段中取消后可以重新观察再恢复。`node scripts/mine-diamonds.js --status` 返回保存的目标状态和实时位置、生命及钻石数。
+
+任务记录可显式携带 `inventoryHold: ["diamond", "diamond_block"]`。后台物品压缩与自动铁甲制作读取该结构化保留策略，避免在目标段之间改变或消耗被保留的物品；内存损坏时拒绝后台转换。采钻目标自动建立此保留记录，并通过真实配方查询将已有钻石块还原为钻石后验收。保留记录持久化到目标完成之后，需明确删除或设置 expiresAt 才释放，防止刚验收完又被后台压缩。
+
+地表返程也会对连续的 goto 航点做只读可达性重规划，但绝不会跨过 `surface_travel` 水路切换点。此能力只绕行已有通路，不靠破坏玩家建筑“修路”。
