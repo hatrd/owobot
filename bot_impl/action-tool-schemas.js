@@ -260,7 +260,7 @@ const ACTION_TOOL_SCHEMAS = [
       properties: {
         what: {
           type: 'string',
-          description: 'Inspection target: runtime|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
+          description: 'Inspection target: controller|view|runtime|players|hostiles|entities|animals|cats|cows|inventory|blocks|containers|signs|space_snapshot|environment|room_probe.'
         },
         namedOnly: {
           type: 'boolean',
@@ -653,6 +653,12 @@ ACTION_TOOL_SCHEMAS.push(
   { name: 'people_commitments_clear', description: 'Delete matching commitments. mode=all/pending requires confirm=true.', parameters: object({ ...peopleFilter, mode: { type: 'string', enum: ['done', 'closed', 'pending', 'all', 'failed', 'ongoing'] }, confirm: boolean }) }
 )
 
+const controllerContract = require('./controller/contract')
+ACTION_TOOL_SCHEMAS.push(
+  { name: 'controller_read', description: 'Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts.', parameters: controllerContract.envelope(controllerContract.readOps) },
+  { name: 'controller_write', description: 'Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first.', parameters: controllerContract.envelope(controllerContract.writeOps) }
+)
+
 const definitions = new Map()
 for (const def of ACTION_TOOL_SCHEMAS) {
   if (definitions.has(def.name)) throw new Error(`Duplicate action schema: ${def.name}`)
@@ -673,7 +679,10 @@ const validators = new Map(ACTION_TOOL_DEFINITIONS.map(def => [def.name, ajv.com
 function validateToolArgs (name, args = {}) {
   const validate = validators.get(name)
   if (!validate) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
-  if (validate(args)) return { ok: true }
+  if (validate(args)) {
+    if (name === 'controller_read' || name === 'controller_write') return controllerContract.validate(args.op, args.args || {})
+    return { ok: true }
+  }
   return { ok: false, msg: '工具参数不符合 schema', blocks: ['bad_args'], errors: cloneObject(validate.errors) }
 }
 

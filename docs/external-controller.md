@@ -1,74 +1,85 @@
-# 外接 LLM 与行为热加载：可行性及实施边界
+# 外部 LLM 控制与行为热加载
 
-状态：设计提案，尚未实现行为上传、外部控制会话或画面采集。本次实现的基础是统一动作 schema、参数校验、模型选工具和运行时内存诊断。
+状态：首版已实现。外部 Astra 或其他模型通过本地 NDJSON 控制面读取观察、申请租约、安装 JSON 行为、启动和查询异步任务。无需调用内置聊天模型，也无需为每个新行为修改 JS 或触发 `open_fire`。模型供应商的 API 和密钥留在外部控制器；这里提供模型无关的 JS SDK 与 stdin/stdout 桥，不内嵌新的计费模型请求。
 
-## 结论
+## 入口与机器真相
 
-可行。Astra 或其他 LLM 作为独立控制器，通过稳定协议读取证据、提交任务；Mineflayer 负责连接、物理执行和基础反应。更换模型、任务或行为版本不应要求重新加载 bot_impl。核心驱动升级仍需要代码部署，热加载行为不能替代底层驱动维护。
-
-当前已有 Unix socket 的 observe、tool schema、dry/run 接口。外部程序已经可以通过控制面驱动已实现的动作，无须改代码或 touch open_fire；但这还不是一个具有完整生命周期、抢占和恢复能力的行为运行时。
-
-## 分层
-
-```mermaid
-flowchart TD
-  L[外部 LLM 控制器：目标、规划、语义判断] --> G[控制网关：会话、控制权、schema、任务]
-  G --> B[行为运行时：版本、状态机、取消、事件]
-  B --> A[动作执行器：寻路、交互、装备]
-  R[基础反应：进食、防溺水、保命] --> A
-  A --> M[Mineflayer 与 Minecraft]
-  M --> O[结构化观察与事件]
-  M --> V[独立画面采集进程]
-  O --> G
-  V --> G
-  G --> L
+```bash
+node scripts/controller-client.js schema
+node scripts/controller-client.js status
+node scripts/controller-client.js observe '{"what":"cats","radius":24,"max":5}'
+node scripts/controller-client.js observe '{"what":"view","radius":12}' --image=/tmp/mcbot-view.png
+node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry
 ```
 
-“小脑”是确定性状态机：由血量、饥饿、氧气、伤害事件触发；绝不每个物理 tick 调 LLM。LLM 负责目标分解、观察选择、路径失败后的策略调整、工具组合和新行为定义。
+`controller-client.js` 导出 `call(op, args, {sock, token, timeoutMs, dry})`，也支持 `stdio` 模式：每行输入 `{id,op,args}`，每行输出 `{id,result}` 或 `{id,error}`。模型可自行选择文本观察或图片观察。图片结果带 `image/png` base64，外部模型适配器按其供应商格式构建 image 输入。SDK 默认使用 `.mcbot.sock`，支持 `MCBOT_SOCK` 和 `MCBOT_CTL_TOKEN`；沿用原有 socket 的 0600 权限与 token 校验。
 
-现有 auto-eat、auto-swim、auto-totem 等可复用，但必须统一动作资源仲裁。externalBusy 只有粗粒度忙碌状态，hand-lock 只覆盖部分手部冲突，不能同时解决寻路、视角、双手、窗口、载具等资源竞争。基础反应应能显式抢占任务，并发出 suspended/resumed 事件；不能各模块偷偷改 pathfinder。
+没有新增远程端口。桥接关系是显式契约：读操作经 `tool.dry controller_read`，写操作经 `tool.run controller_write`，世界观察经 `tool.dry observe_detail`。`schema tool` 可查询入口，`controller_read op=schema` 返回各操作与行为语言的完整 JSON Schema。使用既有可热加载动作入口，因此部署这一版也无需重启 loader。不要将下表操作名称误当成顶层 ctl op。
 
-## 建议的控制协议（以下均为提案，不是现有 ops）
-
-| 能力 | 请求重点 | 返回重点 |
+| 操作 | 参数重点 | 结果 |
 | --- | --- | --- |
-| session.acquire/renew/release | controllerId、TTL | leaseId、expiresAt、epoch |
-| observe.snapshot/detail | 所需字段、范围、上限 | snapshotId、timestamp、dimension、结构化数据 |
-| events.read | cursor、limit、等待上限 | 事件、nextCursor、是否丢失历史 |
-| view.capture | snapshotId、视角、尺寸上限 | frameId、时间、姿态、维度、图像引用或明确 unavailable |
-| behavior.validate/install | id、revision、定义、依赖 schema 版本 | 校验结果、版本 hash |
-| task.start/status/cancel | leaseId、requestId、行为版本、参数、deadline | taskId、结构化状态、结果与错误 |
+| schema | 无 | 请求 schema、行为 schema、容量限制 |
+| status | 可选 taskId | 租约摘要、任务状态、已安装版本、runtimeId |
+| events.read | cursor、limit | 有界事件、nextCursor、historyLost |
+| behavior.validate | behavior | 纯校验、hash、节点数 |
+| session.acquire | controllerId、ttlMs | leaseId、epoch、expiresAt |
+| session.renew | leaseId、epoch、ttlMs | expiresAt |
+| session.release | leaseId、epoch | 取消当前任务并释放控制 |
+| behavior.install | leaseId、epoch、behavior | 不可变版本 hash |
+| task.start | leaseId、epoch、requestId、behaviorId、revision、timeoutMs | 立即返回 taskId |
+| task.cancel | leaseId、epoch、taskId | 保留取消后的终态 |
 
-任务提交必须快速返回 taskId；长动作不能占住控制请求直到完成。requestId 幂等去重，epoch 隔离重连前的陈旧请求。一个动作资源同一时刻只有一个所有者；内置聊天控制器也必须获取控制权，避免外部 LLM 与聊天 AI 同时移动机器人。
+写操作的 `--dry` 只校验输入，不获取租约、不安装行为、不启动或取消任务。AI 开发验证只能用 dry/mock；真人可运行：
 
-断开模型连接时，租约过期应停止占用资源的动作并释放控制权。进食等基础反应继续工作。取消必须传递到底层寻路/窗口/控制键，并能查询终态；“已取消”不能只代表删掉任务记录。状态与事件存入统一 state，持久日志记录请求、版本、观察引用和迁移；历史必须有数量/时间上限。
+```bash
+node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json
+```
 
-## 行为热加载，先实现什么
+示例控制器自动申请/续租/释放租约、读取增量事件，Ctrl-C 取消任务。当前导览示例读取附近告示牌和猫，通过血量条件分支决定是否继续，不写死世界坐标。不自动走向某个曾经观察到的位置：外部模型应读取最新实体 `position` 后生成一个新行为版本。
 
-第一阶段采用有限、可校验的 JSON 状态机，支持 action、wait_event、结构化条件、显式跳转、超时、取消。不要执行模型生成的 eval/require，也不要从步骤说明文本推断下一状态。
+## 行为语言与完成语义
 
-行为版本不可变。install 注册新版本，新任务绑定新版本；正在运行的任务继续原版本，或明确取消后重启。共享状态保存 taskId、revision、node、locals、资源占用和迁移序号，不保存作为事实来源的闭包。等待必须有 deadline，所有循环必须可取消。
+行为定义为 `{id,revision,entry,nodes}`，详见示例与 schema。支持：
 
-例如“观察背包 → 移动到坐标 → 存入指定物品 → 完成”可以作为一次行为提交，在游戏侧推进。未知坐标、障碍策略、下一步目标仍交回 LLM；基础动作不等待 LLM 每秒重复发指令。
+- `action`：`goto`（不挖掘、不搭柱，抵达目标范围才完成）、`look`（yaw/pitch，弧度）、`say`（纯聊天，不接受服务器斜杠命令）、`observe`（明确的只读 what 列表）。每个动作必须有 timeoutMs 和 next。
+- `wait`：明确毫秒数与 next。
+- `wait_event`：等待进入节点后的 health/entityHurt/rain/day/night 结构化事件，必须有 timeoutMs。
+- `branch`：health/food/oxygenLevel 数值字段与 lt/lte/eq/gte/gt 比较，显式 yes/no。
+- `end`：任务成功。
 
-Lua 可以作为后续可编程层，但不是第一阶段必需。若确有脚本需求，将解释器放在独立进程，通过受限动作协议访问 bot；设置执行时间、内存和指令预算，超时可终止进程。直接把 Lua/JS 放到主事件循环，会让死循环或大对象拖垮 Minecraft keepalive，重演当前要排查的卡顿问题。
+所有跳转都先校验。最多 64 个节点，任务最长五分钟，最多 1000 次节点进入。全局最多 64 个行为版本、100 个任务记录、256 条事件。每个任务仅保留最后一次动作结果（最多 16 KiB），历史结果走有界事件与结构化日志；超过保留范围会返回 historyLost。单租约超过 100 个任务直接拒绝，不通过淘汰 requestId 让旧重试意外重跑。
 
-当前 agent/runner.js 的技能工厂注册可参考，但它把控制器与定时器挂在 bot._skillRunnerState，包含闭包、轮询和文本 expected 条件；不能直接宣称已具备可回放行为热更新。新运行时应替换这些职责，而非另加一套并行任务真相。
+同一 id/revision 内容不能变；新 revision 不影响当前任务。requestId 在同一租约内幂等，复用 requestId 却改变任务参数会拒绝。新动作需要实现明确的完成/取消驱动并扩展 schema；不能直接把会后台运行的旧 action 包成一个“成功”节点。首版尚不支持挖矿、容器写入或任意 Lua/JS 执行。
 
-## 文本与画面
+## 状态、抢占与恢复
 
-默认返回紧凑结构化快照和增量事件。模型按需请求局部实体、背包、容器或画面；无需每轮把所有世界数据和图像灌入上下文。首版先开放结构化证据，等任务闭环可靠后再加入画面。
+事实来源是 `state.controller`（版本、租约、任务、节点、结果、事件序号）。`state.controllerApi` 仅是可替换驱动入口。任务迁移、行为安装和租约事件写入正常结构化日志 `controller.event`。进程重启清空内存，不自动从日志恢复并执行动作。
 
-Mineflayer 本身没有游戏 framebuffer。可以独立渲染已加载区块和实体，提供机器人视角截图；这种图像不等于真实客户端画面，对自定义材质、模组 UI、光照和服务端插件需明确能力限制。需要真实 UI 时，应接一个实际游戏客户端采集端。渲染进程与 bot 进程隔离，避免 GPU/图片编码影响 keepalive。
+首版采用**整机独占**：租约期间其他 AI/CLI 的修改类 action 返回 controller_busy，stop/reset 与只读观察仍可用。申请租约前检查现有寻路、窗口、挖掘、钓鱼和旧技能任务，忙时拒绝；旧技能执行器不会被静默迁移到新状态机。已有自动行为通过 externalBusy 协作让出控制。
 
-每帧必须携带采集时间、连接 epoch、维度、位置、yaw/pitch 与关联 snapshotId；动作执行前检查状态是否过期。图像短期缓存并限制大小与数量，返回引用，按模型适配器要求加载。模型自行决定何时看图，但不能把旧图当实时世界事实。
+低血量（<=6）、饥饿（<=6）、缺氧（<=10）或正在自动进食会暂停任务、取消当前寻路并让出 externalBusy，给现有进食、游泳、不死图腾等确定性反应工作。危险解除且资源空闲后从当前节点恢复；任务总 deadline 不暂停。取消、租约过期、死亡、掉线会停止本运行时持有的寻路并保留终态。取消后的迟到结果不能推进任务。
 
-## 实施顺序与验收
+这是对现有自动行为的协作式抢占，尚不是所有 Mineflayer 调用的底层资源隔离；新增自动模块必须遵守 busy/取消约定。外部控制首版只开放有限驱动，避免宣称所有旧动作已经具备可靠取消。
 
-1. 控制会话、资源仲裁和 task 生命周期：用离线假时钟覆盖取消、租约过期、重复请求、重连、抢占、任务终态。
-2. JSON 行为定义及版本化安装：dry 编译、缺失参数、非法跳转、超时、版本替换与有界历史回放。
-3. 外部模型适配器：统一工具协议，结构化观察 → 决策 → 提交任务 → 事件反馈；模型专有 API 留在 bot 之外。
-4. 独立画面 sidecar：先做单帧按需采集，验证时间关联、不可用诊断、缓存上限，再评估连续视频的收益与成本。
-5. 真人按顺序执行服内验收：单动作、取消、多步行为、模型断线、基础反应抢占。AI 开发验证仍严格只用 dry/mock，不执行 tool.run。
+行为安装不重载代码。**代码热重载**保留定义和历史，取消运行中的任务并撤销租约，不重放执行结果不确定的动作。外部控制器重新申请租约再发任务。runtimeId 标识驱动实例；epoch 标识租约世代，均不是服务器世界版本号。轮询状态及租约到期时间，不能把 socket 连通当成仍持有控制权。
 
-这次不安装控制器、不开放新远程服务，也不执行真人验收。当前控制面是本地 socket；若需要跨机器，应通过明确配置的认证网关转接，不能直接裸露现有 socket 操作到公网。
+## 按需画面
+
+`observe_detail what=view` 返回当前机器人视角的 160×100 PNG、frameId、runtimeId、租约 epoch、采集起止时间、维度、眼睛位置、yaw/pitch、方块调色板和 unknownBlocks。半径限制为 4–16，默认 12。颜色按方块名稳定分配，不等同于 Minecraft 材质；实体、流体、光照、UI 不绘制，形状近似整方块。实体位置应读结构化观察。
+
+世界数据分批采集，每层让出事件循环；光线投射与 PNG 压缩在独立 worker 中执行。单次并发、有界尺寸与时间、64 MiB worker 堆限制，无常驻图片缓存。断线、维度切换或驱动替换会使采集失败并返回明确 error。采集不是原子世界快照，应检查时间与 runtimeId，动作前重新确认目标。
+
+需要真实材质、实体模型和 UI 时，后续可接独立实际客户端采集端。当前简化图片已经能给外部模型提供局部几何证据，但不能用它识别未绘制的实体或阅读告示牌文字。
+
+## 验证
+
+离线测试覆盖租约、幂等性、不可变版本、取消迟到结果、超时、基础反应暂停恢复、热重载、事件缺口、dry 无执行副作用与 PNG 生成。在线按仓库流程执行：
+
+```bash
+npm run interaction:dry
+node scripts/botctl.js dry observe_detail what=controller
+node scripts/botctl.js dry observe_detail what=view radius=12
+node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry
+```
+
+真人服内验收：导览示例、短距离 goto 到达、Ctrl-C 取消、控制器退出后租约过期、危险状态下暂停与恢复。本次 AI 不执行这些实跑验收。

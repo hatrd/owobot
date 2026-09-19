@@ -47,3 +47,7 @@
 
 ## 变更提示
 - 若你改了 `detail(... what=containers ...)` 输出字段，请同步 `docs/observer-contract.md`（语义约束）并重新生成 `docs/interaction.generated.md`（接口快照）。
+
+## 外部控制观察
+- `what=controller` 委托 `../controller` 读取状态；`what=view` 委托 `../controller/view` 生成只读简化画面。
+- 实体观察的 `position` 提供世界坐标，不能只用距离替代导航所需证据。

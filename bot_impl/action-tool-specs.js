@@ -1,4 +1,6 @@
 const TOOL_SPECS = Object.freeze([
+  { name: 'controller_read', dryCapability: 'read_only' },
+  { name: 'controller_write' },
   { name: 'goto' },
   { name: 'goto_block' },
   { name: 'follow_player' },

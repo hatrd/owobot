@@ -1,0 +1,12 @@
+{
+  "id": "neighborhood-tour",
+  "revision": "1",
+  "entry": "signs",
+  "nodes": {
+    "signs": { "type": "action", "action": "observe", "args": { "what": "signs", "radius": 16, "max": 8 }, "timeoutMs": 5000, "next": "health" },
+    "health": { "type": "branch", "condition": { "field": "health", "operator": "gte", "value": 16 }, "yes": "cats", "no": "end" },
+    "cats": { "type": "action", "action": "observe", "args": { "what": "cats", "radius": 24, "max": 5 }, "timeoutMs": 5000, "next": "pause" },
+    "pause": { "type": "wait", "ms": 1000, "next": "end" },
+    "end": { "type": "end" }
+  }
+}

@@ -47,6 +47,7 @@ function buildToolRegistryReport (registeredNames = []) {
 }
 
 const MODULES = [
+  require('./modules/controller'),
   require('./modules/movement'),
   require('./modules/voice'),
   require('./modules/skills'),
@@ -191,6 +192,10 @@ function install (bot, options = {}) {
       .then(() => {
         const safeArgs = args === undefined ? {} : args
         const validation = validateToolArgs(tool, safeArgs)
+        const lease = bot.state?.controller?.lease
+        const isController = tool === 'controller_read' || tool === 'controller_write'
+        const isStop = ['stop', 'stop_all', 'reset'].includes(tool)
+        if (lease && !isController && !isStop && getToolMetadata(tool)?.dryCapability !== 'read_only') return { ok: false, msg: 'External controller owns the bot', error: 'controller_busy' }
         return validation.ok ? fn(safeArgs) : validation
       })
       .catch((e) => {

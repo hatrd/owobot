@@ -171,6 +171,9 @@ It verifies the following paths (including explicit schema coverage):
 6) `observe.detail` (focused read path; default `containers`)
 7) `tool.dry` (dry-run execution path)
 8) `tool.dry observe_detail` (read-only dry output, includes nearby container contents)
+9) `controller.schema` (behavior and request contracts)
+10) `controller.status` (runtime installed and queryable)
+11) `controller.behavior.validate` (example graph validation without installation)
 
 By default, it dry-runs `pickup` with `radius=12`. Override if needed:
 
@@ -242,3 +245,7 @@ Recommended resilient mode (auto-restart + inherited stdin/stdout):
   - The process started but the Mineflayer bot is not created yet, or crashed early. Check stdout/logfile.
 
 Runtime diagnostics: `node scripts/botctl.js dry observe_detail what=runtime max=20` (read-only; see `docs/runtime-diagnostics.md`). Natural-language chatdry returns unknown intent and does not call a model.
+
+## External controller and hot-loaded behaviors
+
+`controller_read` exposes status/events/schema and pure behavior validation through dry; `controller_write` handles leased control and asynchronous tasks. `scripts/controller-client.js` provides a model-neutral SDK/NDJSON bridge; `scripts/run-behavior.js --dry` validates example behaviors. `observe_detail what=view` returns an on-demand voxel PNG and capture metadata; `what=controller` reads task state. See [external-controller.md](external-controller.md) for schemas, limits and human-only execution examples.

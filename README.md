@@ -21,7 +21,7 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 - Interaction schema snapshot (generated): `docs/interaction.generated.md`
 - Hot reload manual: `docs/hot-reload.md`
 - Memory/GC/event-loop diagnostics: `docs/runtime-diagnostics.md`
-- External LLM and hot-loaded behavior proposal: `docs/external-controller.md`
+- External LLM control and hot-loaded behaviors: `docs/external-controller.md`
 - Runtime shared-state map: `docs/runtime-map.md`
 - Actions contract (tool register/dry/run): `docs/actions-contract.md`
 - Observer contract (snapshot/prompt/detail): `docs/observer-contract.md`
@@ -34,3 +34,7 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 ## Archive / Pitfalls
 
 - Deprecated Minimal Self implementation and notes: `trash/minimal-self/README.md`
+
+### External model controller
+
+Versioned JSON behaviors can now be installed without code reload. Read status with `node scripts/controller-client.js status`; validate the example with `node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry`. Includes leased task control and on-demand voxel images. See [controller protocol and limitations](docs/external-controller.md).

@@ -98,3 +98,7 @@ node scripts/botctl.js dry observe_detail what=environment radius=12
 ## 运行时诊断
 
 `what=runtime` 返回有界内存/GC/事件循环采样，在尚未 spawn 时也可查询。样本缺失返回 `error=diagnostics_unavailable`；详见 `docs/runtime-diagnostics.md`。动作层必须透传 observer 的 error/openErrors 等诊断字段。
+
+## External controller observations
+
+Entity observation rows include `position: {x,y,z}` (or null when unavailable). `what=controller` reads the leased behavior runtime without acquiring control. `what=view` returns a bounded voxel PNG with capture time, pose, dimension, runtimeId, palette and explicit rendering limitations; errors retain an `error` code. It does not move the bot or call an LLM. See `docs/external-controller.md`.

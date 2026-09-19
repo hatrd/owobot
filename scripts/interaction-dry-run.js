@@ -190,6 +190,7 @@ async function main () {
     args: { radius }
   }, timeoutMs)
   ensureCtlOk('tool.dry', dry.res)
+  if (dry.res.result?.ok !== true) throw new Error(`tool.dry failed: ${JSON.stringify(dry.res.result)}`)
   checks.push({
     check: 'tool.dry',
     ok: true,
@@ -214,6 +215,7 @@ async function main () {
     }
   }, detailTimeoutMs)
   ensureCtlOk('tool.dry observe_detail', dryObserveDetail.res)
+  if (dryObserveDetail.res.result?.ok !== true) throw new Error(`tool.dry observe_detail failed: ${JSON.stringify(dryObserveDetail.res.result)}`)
   checks.push({
     check: 'tool.dry.observe_detail',
     ok: true,
@@ -224,6 +226,17 @@ async function main () {
       msg: dryObserveDetail.res?.result?.msg || ''
     }
   })
+
+  for (const [op, args] of [
+    ['schema', {}],
+    ['status', {}],
+    ['behavior.validate', { behavior: require('../examples/behaviors/neighborhood-tour.json') }]
+  ]) {
+    const checked = await call(sockPath, token, 'tool.dry', { tool: 'controller_read', args: { op, args } }, timeoutMs)
+    ensureCtlOk(`controller.${op}`, checked.res)
+    if (checked.res.result?.ok !== true) throw new Error(`controller.${op} failed: ${JSON.stringify(checked.res.result)}`)
+    checks.push({ check: `controller.${op}`, ok: true, durationMs: checked.durationMs })
+  }
 
   const summary = {
     ok: true,

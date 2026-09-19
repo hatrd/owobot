@@ -152,4 +152,8 @@
 
 运行时内存排查：`node scripts/botctl.js dry observe_detail what=runtime max=20`，见 `docs/runtime-diagnostics.md`。
 
-外接 LLM / 行为热加载 / 画面观察的设计提案：`docs/external-controller.md`（尚未实现）。
+外接 LLM / 行为热加载 / 简化画面观察已提供首版接口，使用方式与限制见 `docs/external-controller.md`。
+
+### 外部模型控制与行为热加载
+
+支持独立模型通过租约控制、异步任务和版本化 JSON 行为驱动机器人；安装行为无需代码热重载。`node scripts/controller-client.js status` 查看状态，`node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry` 校验导览示例。支持按需简化画面，详见[接口与限制](docs/external-controller.md)。

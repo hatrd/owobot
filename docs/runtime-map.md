@@ -48,3 +48,7 @@ Single source of truth lives in `bot_impl/action-tool-specs.js` (`TOOL_SPECS`).
 Run `node scripts/list-tools.js` to output the current allowlist as JSON.
 
 Keeping these snapshots up to date helps both humans and AI contributors understand the current surface area without reading every module manually.
+
+## External behavior runtime
+
+`controller/contract.js` owns protocol and behavior schemas; `controller/runtime.js` owns lease/task transitions in `state.controller`; `controller/index.js` supplies cancellable game drivers. `controller/view.js` captures loaded geometry, `view-worker.js` renders off-thread. The action bridge is `actions/modules/controller.js`; the external SDK is `scripts/controller-client.js`.

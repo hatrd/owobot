@@ -198,6 +198,7 @@ function activate (botInstance, options = {}) {
 
   // Track current external task for AI context (source: chat/cli -> player/auto)
   on('external:begin', (info) => {
+    if (info?.tool === 'controller_write' || info?.tool === 'controller_read') return
     try {
       const src = String(info?.source || '').toLowerCase()
       const source = (src === 'chat' || src === 'cli') ? 'player' : 'auto'
@@ -208,6 +209,7 @@ function activate (botInstance, options = {}) {
     } catch {}
   })
   on('external:end', (info) => {
+    if (info?.tool === 'controller_write' || info?.tool === 'controller_read') return
     try {
       const count = Number.isFinite(state.externalBusyCount) ? state.externalBusyCount : 0
       state.externalBusyCount = count > 0 ? count - 1 : 0

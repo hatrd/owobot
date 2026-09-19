@@ -1,6 +1,7 @@
 // Central registry describing hot-reloadable modules installed by index.js
 
 const MODULES = [
+  { id: 'controller', path: './controller', logger: 'controller', kind: 'infrastructure', description: 'Leased external control and versioned behavior runtime' },
   { id: 'runtime-diagnostics', path: './runtime-diagnostics', logger: 'runtime', kind: 'infrastructure', description: 'Bounded memory, GC and event loop telemetry' },
   { id: 'bed-sleep', path: './bed-sleep', logger: 'sleep', kind: 'feature', description: 'Sleep when items land on a bed at night' },
   { id: 'follow-iron-nugget', path: './follow-iron-nugget', logger: 'follow', kind: 'feature', description: 'Follow players holding iron nuggets' },

@@ -297,6 +297,7 @@ function buildEntityObserveRow (e, d, info = null) {
 
   return {
     id: e?.id,
+    position: e?.position ? { x: e.position.x, y: e.position.y, z: e.position.z } : null,
     type: e?.type,
     kind: e?.kind || null,
     name: resolvedName,
@@ -1344,6 +1345,8 @@ const DETAIL_WHAT_ALIASES = Object.freeze({
 
 const DETAIL_WHAT_CANONICAL = Object.freeze([
   'runtime',
+  'controller',
+  'view',
   'containers',
   'players',
   'hostiles',
@@ -1358,6 +1361,8 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
 ])
 
 const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
+  controller: 'External controller state, task status and behavior versions.',
+  view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
   runtime: 'Bounded process memory, GC, event loop and collection size history; available before spawn.',
   containers: 'Inspect nearby containers in read-only mode with diagnostic fields on failures.',
   players: 'Nearby players from mineflayer runtime state.',
@@ -1409,6 +1414,8 @@ function getDetailSchema () {
 
 function detail (bot, args = {}) {
   const what = normalizeDetailWhat(args.what)
+  if (what === 'controller') return require('../controller').read(bot, { op: 'status' })
+  if (what === 'view') return require('../controller/view').capture(bot, args)
   if (what === 'runtime') return require('../runtime-diagnostics').read(bot, args)
   const radius = parsePositiveInt(args.radius, 16, 1)
   const max = parsePositiveInt(args.max, 24, 1)

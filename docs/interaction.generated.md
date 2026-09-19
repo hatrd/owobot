@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T05:36:31.856Z`
+- GeneratedAt: `2026-09-19T07:43:23.281Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -26,6 +26,8 @@
 | what | description |
 | --- | --- |
 | runtime | Bounded process memory, GC, event loop and collection size history; available before spawn. |
+| controller | External controller state, task status and behavior versions. |
+| view | On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI. |
 | containers | Inspect nearby containers in read-only mode with diagnostic fields on failures. |
 | players | Nearby players from mineflayer runtime state. |
 | hostiles | Nearby hostile mobs. |
@@ -62,6 +64,8 @@
 
 | tool | dryCapability | hasSchema | description |
 | --- | --- | --- | --- |
+| controller_read | read_only | yes | Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts. |
+| controller_write | validate_only | yes | Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first. |
 | goto | validate_only | yes | Pathfind to an absolute coordinate. |
 | goto_block | validate_only | yes | Find and walk to a block that matches names or substring filters. |
 | follow_player | validate_only | yes | Follow a specific player while keeping some distance. |
@@ -113,6 +117,6 @@
 
 ### Coverage Report
 
-- allowlistCount: 48
+- allowlistCount: 50
 - missingSchema: (none)
 - staleSchema: (none)
