@@ -37,7 +37,7 @@ async function main(){
    doc.position=snapshot.position;doc.lastResult=result;doc.phase=result.ok?'checkpoint':'needs_plan'
    if(result.ok){doc.route.push({from,target});await s.write('knowledge.put',{id:`route:diamond:${doc.route.length}`,kind:'route',subject:'diamond-expedition',dimension:snapshot.dimension,position:target,radius:0,fact:JSON.stringify({from,target,status:'arrived',diamonds:doc.diamonds}),source:'controller.tunnel_step+observe.excavation',confidence:'observed'})}
    save();console.log(JSON.stringify({step:i+1,position:snapshot.position,ok:result.ok,reason:result.task.reason,diamonds:doc.diamonds,ores:snapshot.ores,...(!result.ok?{detail:result.task.lastResult}:{})}))
-   if(!result.ok)break
+   if(!result.ok){process.exitCode=1;break}
   }
  }finally{await s.close();process.off('SIGINT',stop);process.off('SIGTERM',stop)}
 }
