@@ -9,6 +9,7 @@ function install (bot, { state, on, registerCleanup, log }) {
   const surface = require('../navigation/surface').createSurfaceDriver(bot, state)
   const driver = {
     beforeAcquire (args) { if (args.controllerId !== require('../life/runtime').OWNER) state.lifeApi?.yield('external_controller') },
+    miningPlan: args => require('./mining-plan').plan(bot, args),
     knowledgeRead: args => state.knowledgeApi?.query(args),
     knowledgeWrite: (op, args) => state.knowledgeApi?.write(op, args),
     memoryRead: args => state.explorationApi?.recall(args),

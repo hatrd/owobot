@@ -1,0 +1,15 @@
+const test = require('node:test'), assert = require('node:assert/strict')
+const { selectReturnWaypoint } = require('../scripts/lib/return-waypoint')
+const route = Array.from({ length: 12 }, (_, x) => ({ from: { x, y: 10, z: 0 } }))
+test('return connects to an earlier reachable waypoint without visiting damaged intermediate floors', async () => {
+  const result = await selectReturnWaypoint(route, 11, async p => ({ ok: true, data: { plan: { status: p.x === 5.5 ? 'success' : 'noPath' } } }))
+  assert.equal(result.index, 5)
+  assert.equal(result.attempts[0].index, 3)
+  assert.equal(result.target.x, 5.5)
+})
+test('partial or timed-out navigation evidence never authorizes skipping waypoints', async () => {
+  const result = await selectReturnWaypoint(route, 2, async () => ({ ok: true, data: { plan: { status: 'partial' } } }))
+  assert.equal(result.ok, false)
+  assert.equal(result.error, 'return_route_unreachable')
+  assert.equal(result.attempts.length, 3)
+})

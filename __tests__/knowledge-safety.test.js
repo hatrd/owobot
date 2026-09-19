@@ -75,3 +75,19 @@ test('mining height bounds never weaken a protected column',()=>{
   bot.state.knowledge.document.records.push({...record,minY:100,maxY:110})
   assert.equal(checkDig(bot,target).error,'protected_region')
 })
+test('recorded route floors stay protected when an excavation doubles back below a stair', async () => {
+  const { bot, target, block } = fixture()
+  const route = { ...record, id: 'route:stair', kind: 'route', position: { x: 2, y: 11, z: 1 }, radius: 0 }
+  bot.state.knowledge.document.records.push(route)
+  assert.equal(checkDig(bot, target).error, 'recorded_route_support')
+  assert.equal(checkDig(bot, target).evidence, route.id)
+  assert.equal(checkDig(bot, block(new Vec3(2, 9, 1))).ok, true)
+  route.dimension = 'the_nether'
+  assert.equal(checkDig(bot, target).ok, true)
+  route.dimension = 'overworld'
+  let cleanup
+  install(bot, { state: bot.state, registerCleanup: fn => { cleanup = fn } })
+  await assert.rejects(bot.dig(target), /recorded_route_support/)
+  assert.equal(bot.dug, undefined)
+  cleanup()
+})

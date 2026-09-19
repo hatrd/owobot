@@ -42,6 +42,7 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     const checked = contract.validate(op, args)
     if (!checked.ok) return checked
     if (!contract.readOps.includes(op)) return { ok: false, error: 'read_only_operation_required' }
+    if (op === 'mining.plan') return driver.miningPlan?.(args) || { ok: false, error: 'mining_unavailable' }
     if (op === 'knowledge.query') return driver.knowledgeRead?.(args) || { ok: false, error: 'knowledge_unavailable' }
     if (op === 'memory.recall') return driver.memoryRead?.(args) || { ok: false, error: 'memory_unavailable' }
     if (op === 'schema') return { ok: true, protocolVersion: 1, schemas: copy(contract.schemas), behaviorSchema: copy(contract.behaviorSchema), limits: { tasks: 100, behaviors: 64, events: 256, resultBytes: 16384 }, view: { what: 'view', format: 'image/png', renderer: 'voxel', textured: false } }

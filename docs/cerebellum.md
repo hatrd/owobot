@@ -40,3 +40,20 @@ mining 记录可附 minY/maxY，限制开掘高度；home/protected 始终保护
 
 远征脚本在空位少于4格时，只为数量最多的一种普通开掘材料保留最多32块搭路储备，其余普通石料清空；食物、工具、矿物和其他物品不在丢弃名单中。每次清理后重新观察背包，失败以非零退出码停止，保留检查点。
 丢弃动作临时转向当前朝向的背面水平投掷，再恢复视角，减少沿原方向前进时的重新拾取；回执只证明当次背包变化，后续行走仍需观察空位。
+
+已观测 route 记录的落脚点下方一格也是禁挖支撑。开掘若会破坏旧阶梯，返回 `recorded_route_support` 和对应记忆 id；不能因为机器人当前站在别处就挖掉返程所需的地板。路线损坏时先按实际方块检查修复，修复旧段后可将被替代的路线保存在远征检查点的 `supersededRoutes` 中，活动 `route` 只保留当前可用路线。
+
+`scripts/expedition-return.js --steps=40 --dry` 验证最近的返程航点；去掉 `--dry` 后按活动远征路线倒序行走，最多80步，拒绝不匹配的世界、路线摘要或当前位置。独立原子检查点 `data/diamond-return-<worldId>.json` 保存下一索引、任务回执和真实钻石数。失败停止且非零退出；路线改变后必须重新检查旧返程记录，不能继续沿旧摘要执行。到达 `mine_route_returned` 只证明回到已录制矿道的起点，地表水路、家坐标和最终钻石数仍需独立验证。
+
+## 目标级采钻执行
+
+```bash
+node scripts/mine-diamonds.js --target=64 --home=home:diamond-expedition --return-route=route:diamond-expedition-home --dry
+node scripts/mine-diamonds.js --target=64 --home=home:diamond-expedition --return-route=route:diamond-expedition-home
+```
+
+这是准备好工具、采矿区和已观测返家路线之后的目标执行器。`target` 是背包 diamond 总数；本轮初始数量为0，因此64也代表新增64颗。外部 agent 不再选择逐格坐标：只读 `controller_read op=mining.plan` 在本地已加载方块上进行有界路径搜索，绕过液体、保护区和旧路线支撑，同时避免新路线挖掉自己的支撑。当前开掘搜索支持水平和逐格下降，未找到安全矿脉路线时返回结构化诊断，不猜测未加载地形。脚本自动观察、选矿脉、清理普通石料、执行、确认真实入包数，然后倒序走矿道和返家路线；危险或未知失败停止并保存诊断。它不自动制造缺失的镐子，也不会把失败称为完成。
+
+返家路线是 observed 的 route 记录，fact 为 `{"actions":[{"action":"goto","args":{...}},{"action":"surface_travel","args":{...}}]}`；所有动作在开始前按控制器 schema 验证。配置与阶段存入 `data/diamond-goal-<worldId>.json`，相同命令恢复原目标；SIGINT/SIGTERM 会转发给当前段并释放当前返家租约。结束必须同时实测钻石数量、存活、维度和家坐标，单独达到数量不算完成。
+
+返程不会盲信历史航点：每段先通过只读导航搜索，优先连接前方最多8个历史节点内更早的可达节点；只有 `success` 路径证据才允许跳过中间节点，`partial`/超时不算可达。这样旧矿道的局部变动可由本地重规划消化。当前位置必须仍在当前路线段附近；段中取消后可以重新观察再恢复。`node scripts/mine-diamonds.js --status` 返回保存的目标状态和实时位置、生命及钻石数。

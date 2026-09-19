@@ -31,6 +31,7 @@ const credentials = { leaseId: text, epoch: { type: 'integer', minimum: 1 } }
 const knowledge = require('../memory/contract').schemas
 const schemas = {
   ...Object.fromEntries(Object.entries(knowledge).map(([op, schema]) => [op, op === 'knowledge.query' ? schema : { ...schema, properties: { ...schema.properties, ...credentials }, required: [...schema.required, 'leaseId', 'epoch'] }])),
+  'mining.plan': object({ radius: { type: 'integer', minimum: 8, maximum: 64 }, maxNodes: { type: 'integer', minimum: 100, maximum: 10000 } }, []),
   'memory.recall': object({ radius: { type: 'integer', minimum: 1, maximum: 512 }, max: { type: 'integer', minimum: 1, maximum: 20 } }, []),
   'memory.begin': object({ ...credentials, objective: { type: 'string', minLength: 1, maxLength: 240 }, maxRadius: { type: 'integer', minimum: 8, maximum: 256 } }),
   'memory.resume': object({ ...credentials, missionId: text }),
@@ -48,7 +49,7 @@ const schemas = {
   'task.start': object({ ...credentials, requestId: text, behaviorId: text, revision: text, timeoutMs: duration, missionId: text }, ['leaseId', 'epoch', 'requestId', 'behaviorId', 'revision', 'timeoutMs']),
   'task.cancel': object({ ...credentials, taskId: text })
 }
-const readOps = ['knowledge.query', 'memory.recall', 'schema', 'status', 'events.read', 'behavior.validate']
+const readOps = ['mining.plan', 'knowledge.query', 'memory.recall', 'schema', 'status', 'events.read', 'behavior.validate']
 const writeOps = Object.keys(schemas).filter(op => !readOps.includes(op))
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validators = Object.fromEntries(Object.entries(schemas).map(([key, schema]) => [key, ajv.compile(schema)]))

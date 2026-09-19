@@ -15,6 +15,8 @@ function checkDig (bot, block) {
   const protectedArea = areas.find(r => ['home', 'protected'].includes(r.kind))
   if (protectedArea) return { ok: false, error: 'protected_region', evidence: protectedArea.id }
   if (!areas.some(r => r.kind === 'mining' && (r.minY === undefined || p.y >= r.minY) && (r.maxY === undefined || p.y <= r.maxY) && r.confidence === 'observed' && (!r.expiresAt || r.expiresAt > Date.now()))) return { ok: false, error: 'outside_mining_region' }
+  const route = bot.state.knowledge.document.records.find(r => r.kind === 'route' && r.confidence === 'observed' && r.dimension === bot.game?.dimension && r.position && p.x === Math.floor(r.position.x) && p.z === Math.floor(r.position.z) && p.y === Math.floor(r.position.y) - 1)
+  if (route) return { ok: false, error: 'recorded_route_support', evidence: route.id }
   if (!NATURAL.has(block.name)) return { ok: false, error: 'block_not_in_excavation_policy', block: block.name }
   const feet = bot.entity?.position?.floored()
   if (!feet || (p.x === feet.x && p.z === feet.z && p.y < feet.y)) return { ok: false, error: 'underfoot_excavation' }
