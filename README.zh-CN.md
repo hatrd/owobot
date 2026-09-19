@@ -103,7 +103,7 @@
 - `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
 - `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
 - `.autofish on|off|status|interval ms|radius N|now|debug on|off`
-- `.swim on|off|status|interval ms|surface ms|scanup N|hold ms|debug on|off`
+- `.swim on|off|status`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.voice status|play <path>|play path=<path>` — 查看语音插件状态或通过 Simple Voice Chat 发送音频文件
 - `.ai ...`（配置 AI key/model/base/path，查看工具）

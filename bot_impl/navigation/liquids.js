@@ -1,3 +1,4 @@
+const { oxygen } = require('./oxygen')
 // Minecraft mechanics from registry IDs and block properties, shared by planning and recovery.
 const WATER = ['water', 'flowing_water', 'bubble_column', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass']
 function fluid (bot, block) {
@@ -35,6 +36,6 @@ function body (bot) {
   if (!p) return { feet: 'unknown', head: 'unknown', inWater: false }
   const feet = fluid(bot, bot.blockAt(p.floored(), false))
   const head = fluid(bot, bot.blockAt(p.offset(0, bot.entity.eyeHeight || 1.62, 0).floored(), false))
-  return { feet: feet.kind, head: head.kind, inWater: feet.kind === 'water' || head.kind === 'water', oxygenLevel: bot.oxygenLevel ?? null }
+  return { feet: feet.kind, head: head.kind, inWater: feet.kind === 'water' || head.kind === 'water', oxygenLevel: oxygen(bot).level, oxygen: oxygen(bot) }
 }
 module.exports = { fluid, fullSupport, cell, body }

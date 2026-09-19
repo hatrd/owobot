@@ -1,9 +1,11 @@
 const { createRuntime } = require('./runtime')
 const observer = require('../agent/observer')
+const { createNavigator } = require('../navigation/drive')
+const { body } = require('../navigation/liquids')
+const { oxygen } = require('../navigation/oxygen')
 
 function install (bot, { state, on, registerCleanup, log }) {
-  let navigation = false
-  let goal = null
+  const navigator = createNavigator(bot, state)
   const driver = {
     memoryRead: args => state.explorationApi?.recall(args),
     memoryWrite: (op, args) => state.explorationApi?.write(op, args),
@@ -20,21 +22,14 @@ function install (bot, { state, on, registerCleanup, log }) {
     isBusy () {
       return Boolean((state.externalBusyCount > (state.controllerBusy ? 1 : 0) || (state.externalBusy && !state.controllerBusy)) || state.holdItemLock || state.isFishing || state.autoEat?.eating || bot.pathfinder?.goal || bot.currentWindow || bot.targetDigBlock || bot._skillRunner?.listTasks().some(t => t.status === 'running'))
     },
-    stop () {
-      if (navigation) {
-        navigation = false
-        if (bot.pathfinder?.goal === goal) {
-          bot.pathfinder.setGoal(null)
-          bot.clearControlStates?.()
-        }
-      }
-      goal = null
-    },
-    facts: () => ({ health: bot.health, food: bot.food, oxygenLevel: bot.oxygenLevel }),
+    stop () { navigator.stop() },
+    facts: () => ({ health: bot.health, food: bot.food, oxygenLevel: oxygen(bot).level }),
     hazard () {
       if (!state.hasSpawned || !bot.entity?.position) return 'not_spawned'
+      if (state.autoSwim?.runtime?.active) return 'water_recovery'
+      if (typeof bot.blockAt === 'function' && body(bot).head === 'water') return 'water_recovery'
       if (bot.health <= 6) return 'low_health'
-      if (Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel <= 10) return 'low_oxygen'
+      if (oxygen(bot).level !== null && oxygen(bot).level <= 10) return 'low_oxygen'
       if (bot.food <= 6 || state.autoEat?.eating) return 'needs_food'
       return null
     },
@@ -44,44 +39,10 @@ function install (bot, { state, on, registerCleanup, log }) {
       if (action === 'say') { bot.chat(args.text); return { ok: true } }
       if (action === 'look') { await bot.look(args.yaw, args.pitch, true); return { ok: true } }
       if (action !== 'goto') return { ok: false, error: 'unsupported_action' }
-      const { pathfinder, Movements, goals } = require('../navigation/pathfinder')
-      if (!bot.pathfinder) bot.loadPlugin(pathfinder)
-      const movements = new Movements(bot)
-      movements.canDig = false
-      movements.maxDropDown = 1
-      movements.infiniteLiquidDropdownDistance = false
-      movements.allowSprinting = false
-      movements.allow1by1towers = false
-      movements.allowParkour = false
-      movements.scafoldingBlocks = []
-      movements.scaffoldingBlocks = []
-      bot.pathfinder.setMovements(movements)
-      const target = new goals.GoalNear(args.x, args.y, args.z, args.range ?? 1.5)
-      goal = target
-      navigation = true
-      bot.pathfinder.setGoal(target)
-      return new Promise(resolve => {
-        const started = Date.now()
-        const timer = setInterval(() => {
-          if (cancellation.canceled) { clearInterval(timer); return resolve({ ok: false, error: 'canceled' }) }
-          const pos = bot.entity?.position
-          const task = state.controller?.tasks.find(t => t.id === cancellation.taskId)
-          const mission = state.explorationMemory?.document.missions.find(m => m.id === task?.missionId)
-          if (pos && mission && Math.hypot(pos.x - mission.home.x, pos.y - mission.home.y, pos.z - mission.home.z) > mission.maxRadius) {
-            clearInterval(timer); driver.stop(); return resolve({ ok: false, error: 'mission_radius_exceeded' })
-          }
-          if (pos && target.isEnd(pos.floored())) {
-            clearInterval(timer)
-            driver.stop()
-            return resolve({ ok: true, position: { x: pos.x, y: pos.y, z: pos.z } })
-          }
-          if (bot.pathfinder.goal !== target || Date.now() - started > 300000) {
-            clearInterval(timer)
-            driver.stop()
-            resolve({ ok: false, error: 'navigation_interrupted' })
-          }
-        }, 100)
-        timer.unref?.()
+      return navigator.start(args, cancellation, pos => {
+        const task = state.controller?.tasks.find(t => t.id === cancellation.taskId)
+        const mission = state.explorationMemory?.document.missions.find(m => m.id === task?.missionId)
+        return !mission || Math.hypot(pos.x - mission.home.x, pos.y - mission.home.y, pos.z - mission.home.z) <= mission.maxRadius
       })
     }
   }

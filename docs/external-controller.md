@@ -57,7 +57,7 @@ node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json
 
 首版采用**整机独占**：租约期间其他 AI/CLI 的修改类 action 返回 controller_busy，stop/reset 与只读观察仍可用。申请租约前检查现有寻路、窗口、挖掘、钓鱼和旧技能任务，忙时拒绝；旧技能执行器不会被静默迁移到新状态机。已有自动行为通过 externalBusy 协作让出控制。
 
-低血量（<=6）、饥饿（<=6）、缺氧（<=10）或正在自动进食会暂停任务、取消当前寻路并让出 externalBusy，给现有进食、游泳、不死图腾等确定性反应工作。危险解除且资源空闲后从当前节点恢复；任务总 deadline 不暂停。取消、租约过期、死亡、掉线会停止本运行时持有的寻路并保留终态。取消后的迟到结果不能推进任务。
+头部入水/正在脱困、低血量（<=6）、饥饿（<=6）、缺氧（<=10）或正在自动进食会暂停任务、取消当前寻路并让出 externalBusy，给现有进食、游泳、不死图腾等确定性反应工作。危险解除且资源空闲后从当前节点恢复；任务总 deadline 不暂停。取消、租约过期、死亡、掉线会停止本运行时持有的寻路并保留终态。取消后的迟到结果不能推进任务。
 
 这是对现有自动行为的协作式抢占，尚不是所有 Mineflayer 调用的底层资源隔离；新增自动模块必须遵守 busy/取消约定。外部控制首版只开放有限驱动，避免宣称所有旧动作已经具备可靠取消。
 
@@ -85,3 +85,5 @@ node scripts/run-behavior.js examples/behaviors/neighborhood-tour.json --dry
 真人服内验收：导览示例、短距离 goto 到达、Ctrl-C 取消、控制器退出后租约过期、危险状态下暂停与恢复。默认开发验证只走 dry/mock；用户明确授权的实操按当次任务范围执行。
 
 探索扩展：`memory.recall/begin/resume/pause/checkpoint`、`task.start missionId` 和 `behavior.remove` 已加入机器 schema。查看 [探索记忆](exploration-memory.md) 获取持续探索与恢复流程。
+
+液体判定、卡住重规划和脱困交接详见 [液体与导航](navigation.md)。goto 失败保留结构化 lastResult，不自动无限重试。

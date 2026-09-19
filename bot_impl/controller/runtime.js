@@ -142,6 +142,10 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
         t.nodeStartedAt = null
         driver.busy(false)
         emit('task.suspended', { taskId: t.id, reason: hazard })
+        if (hazard === 'water_recovery') {
+          t.waterRecoveries = (t.waterRecoveries || 0) + 1
+          if (t.waterRecoveries > 2) return finish(t, 'failed', 'navigation_repeated_water_entry')
+        }
       }
       return
     }
@@ -183,7 +187,11 @@ function createRuntime ({ state, driver, now = Date.now, log = () => {} }) {
     }).then(result => {
       if (operation.canceled || disposed || pending !== operation) return
       pending = null
-      if (result?.ok !== true) return finish(t, 'failed', result?.error || 'action_failed')
+      if (result?.ok !== true) {
+        const encoded = JSON.stringify(result || {})
+        t.lastResult = { node: t.node, data: encoded.length > 16384 ? { truncated: true, bytes: encoded.length } : copy(result || {}) }
+        return finish(t, 'failed', result?.error || 'action_failed')
+      }
       advance(t, node.next, result)
     }).catch(error => {
       if (operation.canceled || disposed || pending !== operation) return

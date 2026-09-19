@@ -144,3 +144,20 @@ test('behavior removal refuses active revisions and permits retirement after can
   assert.equal(h.runtime.write('behavior.remove', args).ok, true)
   assert.equal(h.state.controller.behaviors.length, 0)
 })
+
+test('repeated water recovery terminates instead of replaying the same unsafe node indefinitely', async () => {
+  const h = harness(); const task = h.start()
+  for (let i = 0; i < 3; i++) {
+    h.hazard('water_recovery'); h.runtime.tick()
+    if (i < 2) { h.hazard(null); h.runtime.tick(); await flush() }
+  }
+  const row = h.runtime.read('status', { taskId: task.taskId }).tasks[0]
+  assert.equal(row.status, 'failed')
+  assert.equal(row.reason, 'navigation_repeated_water_entry')
+})
+test('failed navigation preserves structured diagnostics in the task record', async () => {
+  const h = harness(); const task = h.start(); h.runtime.tick(); await flush()
+  h.resolve({ ok: false, error: 'navigation_no_path', data: { visitedNodes: 10 } }); await flush()
+  const row = h.runtime.read('status', { taskId: task.taskId }).tasks[0]
+  assert.equal(row.lastResult.data.data.visitedNodes, 10)
+})

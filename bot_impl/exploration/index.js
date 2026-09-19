@@ -1,11 +1,12 @@
 const path = require('path')
+const { oxygen } = require('../navigation/oxygen')
 const { createHash } = require('crypto')
 const { createStore } = require('./store')
 const { distance } = require('./terrain')
 function pose (bot) {
   const p = bot.entity?.position
   if (!p || !bot.state?.hasSpawned) return null
-  return { at: Date.now(), dimension: String(bot.game?.dimension || 'unknown'), position: { x: p.x, y: p.y, z: p.z }, vitals: { health: bot.health, food: bot.food, oxygenLevel: bot.oxygenLevel ?? null } }
+  return { at: Date.now(), dimension: String(bot.game?.dimension || 'unknown'), position: { x: p.x, y: p.y, z: p.z }, vitals: { health: bot.health, food: bot.food, oxygenLevel: oxygen(bot).level } }
 }
 function install (bot, { state, on, registerCleanup, log }) {
   const server = process.env.MCBOT_WORLD_ID || `${process.env.MC_HOST || bot._client?.socketServerHost || bot._client?.host || 'unknown'}:${process.env.MC_PORT || bot._client?.port || 25565}:${bot.username}`

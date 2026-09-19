@@ -910,7 +910,7 @@ function collectVitals (bot) {
     const hp = bot.health ?? null
     const food = bot.food ?? null
     const sat = bot.foodSaturation ?? null
-    return { hp, food, saturation: sat }
+    return { hp, food, saturation: sat, oxygenLevel: require('../navigation/oxygen').oxygen(bot).level }
   } catch { return { hp: null, food: null, saturation: null } }
 }
 

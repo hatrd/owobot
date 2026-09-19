@@ -6,9 +6,11 @@ const { install } = require('../bot_impl/auto-swim')
 test('swimming reasserts jump after another module clears controls', async t => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const cleanup = []
+  const registry = require('minecraft-data')('1.21.4')
   const bot = {
+    registry,
     controlState: { jump: false }, entity: { position: new Vec3(0, 48, 0), velocity: { y: 0 } },
-    blockAt: () => ({ name: 'water' }),
+    blockAt: p => ({ name: 'water', type: registry.blocksByName.water.id, position: p, boundingBox: 'empty', shapes: [], getProperties: () => ({}) }),
     setControlState (name, value) { this.controlState[name] = value },
     lookAt: async () => {}
   }
