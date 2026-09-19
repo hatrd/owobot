@@ -1,6 +1,6 @@
 # Interaction Schema (Generated)
 
-- GeneratedAt: `2026-09-19T13:34:04.326Z`
+- GeneratedAt: `2026-09-19T14:31:18.442Z`
 - Source: `socket:/home/oyxy/src/mcbot/.mcbot.sock`
 
 ## Control Ops
@@ -30,6 +30,7 @@
 | layer_map | Read-only bounded horizontal block layer, with physical support/fluid legend, at explicit y. |
 | surface_route | Read-only short surface travel corridor and dry landing validation at x/y/z. |
 | life | Autonomous life config/schema, current activity, recent outcomes and read-only decision preview. |
+| fishing | Durable raw-fish goal, contract, supply checks, safety decisions and verified catches. |
 | runtime | Bounded process memory, GC, event loop and collection size history; available before spawn. |
 | terrain | Conservative local traversable positions ranked by exploration memory; never moves. |
 | navigation | Read-only liquid state, navigation/recovery diagnostics and bounded A* preview with optional x/y/z target. |
@@ -82,6 +83,7 @@
 | move_input | validate_only | yes | Bounded direct forward/jump input for local movement or swimming. No pathfinding, digging or placement. Stop/reset and reload cancel the pulse. |
 | place_sign | validate_only | yes | Place a new standing sign at an empty coordinate and confirm four lines by readback. Never overwrites existing blocks. |
 | life_configure | validate_only | yes | Enable/disable autonomous life or set home. First enable uses the current location as home; later enables retain home. Query observe_detail what=life for status, preview and config schema. |
+| fishing_goal | validate_only | yes | Start/resume/cancel a durable raw cod/salmon fishing goal. Automatically prepare supplies, choose dry shore, fish, retreat on damage, sleep, and return home. Query observe_detail what=fishing for schema/status/diagnostics. |
 | controller_read | read_only | yes | Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts. |
 | controller_write | validate_only | yes | Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first. |
 | goto | validate_only | yes | Pathfind to an absolute coordinate. |
@@ -118,7 +120,6 @@
 | deposit_all | validate_only | yes | Deposit items into the nearest reachable container (storage blocks, hoppers, and furnace-like blocks). (deposit_all: all=true). |
 | withdraw | validate_only | yes | Withdraw items from the nearest reachable container (supports furnace-like output slot). |
 | withdraw_all | validate_only | yes | Withdraw items from the nearest reachable container (supports furnace-like output slot). (withdraw_all: all=true). |
-| autofish | validate_only | yes | Walk to nearby water and start the auto-fishing module. |
 | mine_ore | validate_only | yes | Start the built-in ore mining skill; returns taskId. |
 | range_attack | validate_only | yes | Use a bow/crossbow (HawkEye) to attack the target. |
 | attack_armor_stand | validate_only | yes | Stay put and repeatedly attack armor stands; optionally path to a provided absolute coordinate before swinging. |

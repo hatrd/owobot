@@ -217,6 +217,7 @@ function startBot() {
   try {
     // Create new bot instance
     bot = mineflayer.createBot(options)
+    bot.connectionIdentity = Object.freeze({ host: options.host, port: options.port || 25565, username: options.username })
     try { console.log(`[${ts()}] Starting (re)connection...`) } catch {}
     createReconnectReadinessGuard(bot, {
       onReconnectReady (reason) {

@@ -1350,6 +1350,7 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
   'layer_map',
   'surface_route',
   'life',
+  'fishing',
   'runtime',
   'terrain',
   'navigation',
@@ -1377,6 +1378,7 @@ const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
   layer_map: 'Read-only bounded horizontal block layer, with physical support/fluid legend, at explicit y.',
   excavation: 'Loaded diamond ores, excavation safety decisions, inventory space, durability and enchantments.',
   knowledge: 'Persistent world and player evidence; query filters through controller knowledge.query.',
+  fishing: 'Durable raw-fish goal, contract, supply checks, safety decisions and verified catches.',
   life: 'Autonomous life config/schema, current activity, recent outcomes and read-only decision preview.',
   controller: 'External controller state, task status and behavior versions.',
   view: 'On-demand low-resolution voxel PNG from loaded blocks; no textures, entities or game UI.',
@@ -1474,6 +1476,7 @@ function detail (bot, args = {}) {
   if (what === 'layer_map') return require('../safety/layer-map').read(bot, args)
   if (what === 'excavation') return require('../safety/observe').read(bot, args)
   if (what === 'knowledge') return require('../memory').read(bot, { max: args.max })
+  if (what === 'fishing') return require('../fishing').read(bot)
   if (what === 'life') return require('../life').read(bot)
   if (what === 'controller') return require('../controller').read(bot, { op: 'status' })
   if (what === 'view') return require('../controller/view').capture(bot, args)

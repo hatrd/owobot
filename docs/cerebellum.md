@@ -61,3 +61,5 @@ node scripts/mine-diamonds.js --target=64 --home=home:diamond-expedition --retur
 任务记录可显式携带 `inventoryHold: ["diamond", "diamond_block"]`。后台物品压缩与自动铁甲制作读取该结构化保留策略，避免在目标段之间改变或消耗被保留的物品；内存损坏时拒绝后台转换。采钻目标自动建立此保留记录，并通过真实配方查询将已有钻石块还原为钻石后验收。保留记录持久化到目标完成之后，需明确删除或设置 expiresAt 才释放，防止刚验收完又被后台压缩。
 
 地表返程也会对连续的 goto 航点做只读可达性重规划，但绝不会跨过 `surface_travel` 水路切换点。此能力只绕行已有通路，不靠破坏玩家建筑“修路”。
+
+钓鱼目标：[`scripts/fish.js` / `fishing_goal`](fishing.md) 在本地持久执行补给、选岸、钓获、受伤撤退、夜间睡觉和返家；无需外部模型逐次抛竿或指定航点。生鳕鱼/鲑鱼保留给猫，烹饪不属于该目标。

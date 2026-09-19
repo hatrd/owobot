@@ -21,7 +21,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
 
   function isEdibleItem (item) {
     if (!ensureMcData()) return false
-    if (!item) return false
+    if (!item || require('./inventory-reservations').held(state, item.name)) return false
     const banned = ['golden_apple', 'enchanted_golden_apple']
     const it = mcData.items[item.type] || mcData.itemsByName?.[item.name]
     if (!it) return false

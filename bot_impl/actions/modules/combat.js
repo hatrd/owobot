@@ -2670,68 +2670,6 @@ module.exports = function registerCombat (ctx) {
     }
   }
 
-  // --- Start or move to auto fishing ---
-  async function autofish (args = {}) {
-    const radius = Math.max(3, parseInt(args.radius || '10', 10))
-    const debug = String(args.debug || '').toLowerCase() === 'true'
-    const S = bot.state?.autoFish || (bot.state ? (bot.state.autoFish = {}) : {})
-    S.cfg = Object.assign({ enabled: true, tickMs: 8000, radius }, S.cfg || {})
-    S.cfg.radius = radius
-    if (debug) S.cfg.debug = true
-
-    function isNearbyWaterPos (p) {
-      try {
-        const n = String(bot.blockAt(p)?.name || '').toLowerCase()
-        if (n.includes('water')) return true
-        const props = bot.blockAt(p)?.getProperties?.()
-        return props && props.waterlogged === true
-      } catch { return false }
-    }
-    function canStandOn (p) {
-      try {
-        const ground = bot.blockAt(p)
-        if (!ground) return false
-        const gname = String(ground.name || '').toLowerCase()
-        if (!gname || gname === 'air' || gname.includes('water') || gname.includes('lava')) return false
-        const feet = bot.blockAt(p.offset(0, 1, 0))
-        const head = bot.blockAt(p.offset(0, 2, 0))
-        const feetEmpty = (!feet || String(feet.name || '') === 'air')
-        const headEmpty = (!head || String(head.name || '') === 'air')
-        return feetEmpty && headEmpty
-      } catch { return false }
-    }
-    function findFishingSpot (r) {
-      try {
-        const me = bot.entity?.position; if (!me) return null
-        const waterBlocks = bot.findBlocks({ matching: (b) => b && (String(b.name||'').toLowerCase().includes('water') || (b.getProperties && b.getProperties()?.waterlogged === true)), maxDistance: Math.max(3, r), count: 100 }) || []
-        if (!waterBlocks.length) return null
-        const { Vec3 } = require('vec3')
-        let best = null; let bestD = Infinity
-        for (const wb of waterBlocks) {
-          const adj = [new Vec3(1,0,0), new Vec3(-1,0,0), new Vec3(0,0,1), new Vec3(0,0,-1)].map(d => wb.offset(d.x, 0, d.z))
-          for (const p of adj) {
-            if (!canStandOn(p)) continue
-            const d = p.offset(0,1,0).distanceTo(me)
-            if (d < bestD) { best = p; bestD = d }
-          }
-        }
-        return best
-      } catch { return null }
-    }
-
-    const spot = findFishingSpot(radius)
-    if (!spot) return fail('附近没有可垂钓的水域')
-    if (!ensurePathfinder()) return fail('无寻路')
-    const { goals } = pathfinderPkg
-    bot.pathfinder.setGoal(new goals.GoalNear(spot.x, spot.y + 1, spot.z, 0), true)
-    const until = Date.now() + 8000
-    while (Date.now() < until) { await wait(80); const me = bot.entity?.position; if (!me) break; if (me.distanceTo(spot.offset(0,1,0)) <= 1.5) break }
-    try { bot.pathfinder.setGoal(null) } catch {}
-
-    try { bot.emit('autofish:now') } catch {}
-    return ok('开始自动钓鱼')
-  }
-
   function normalizeContainerType (raw) {
     return containerLib.normalizeContainerType(raw, { fallback: null })
   }
@@ -3276,7 +3214,6 @@ module.exports = function registerCombat (ctx) {
   register('pickup', pickup)
   register('place_blocks', place_blocks)
   register('light_area', light_area)
-  register('autofish', autofish)
   register('deposit', deposit)
   register('deposit_all', deposit_all)
   register('withdraw', withdraw)

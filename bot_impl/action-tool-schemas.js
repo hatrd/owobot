@@ -476,18 +476,6 @@ const ACTION_TOOL_SCHEMAS = [
     }
   },
   {
-    name: 'autofish',
-    description: 'Walk to nearby water and start the auto-fishing module.',
-    parameters: {
-      type: 'object',
-      properties: {
-        radius: { type: 'number', description: 'Radius in which to search for water.' },
-        debug: { type: 'boolean', description: 'Enable verbose logging.' }
-      },
-      additionalProperties: true
-    }
-  },
-  {
     name: 'mount_near',
     description: 'Mount the nearest rideable entity (boats, minecarts, etc.).',
     parameters: {
@@ -653,9 +641,11 @@ ACTION_TOOL_SCHEMAS.push(
   { name: 'people_commitments_clear', description: 'Delete matching commitments. mode=all/pending requires confirm=true.', parameters: object({ ...peopleFilter, mode: { type: 'string', enum: ['done', 'closed', 'pending', 'all', 'failed', 'ongoing'] }, confirm: boolean }) }
 )
 
+const fishingContract = require('./fishing/contract')
 const lifeContract = require('./life/contract')
 const controllerContract = require('./controller/contract')
 ACTION_TOOL_SCHEMAS.push(
+  { name: 'fishing_goal', description: 'Start/resume/cancel a durable raw cod/salmon fishing goal. Automatically prepare supplies, choose dry shore, fish, retreat on damage, sleep, and return home. Query observe_detail what=fishing for schema/status/diagnostics.', parameters: fishingContract.envelope },
   { name: 'life_configure', description: 'Enable/disable autonomous life or set home. First enable uses the current location as home; later enables retain home. Query observe_detail what=life for status, preview and config schema.', parameters: lifeContract.envelope },
   { name: 'controller_read', description: 'Read external controller status/events/schema or validate a behavior. Query schema for detailed operation contracts.', parameters: controllerContract.envelope(controllerContract.readOps) },
   { name: 'controller_write', description: 'Acquire/renew/release control, install immutable behaviors, start/cancel asynchronous tasks. Query controller_read op=schema first.', parameters: controllerContract.envelope(controllerContract.writeOps) }
@@ -692,6 +682,7 @@ function validateToolArgs (name, args = {}) {
   const validate = validators.get(name)
   if (!validate) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
   if (validate(args)) {
+    if (name === 'fishing_goal') return fishingContract.validate(args.op, args.args || {})
     if (name === 'life_configure') return lifeContract.validate(args.op, args.args || {})
     if (name === 'controller_read' || name === 'controller_write') return controllerContract.validate(args.op, args.args || {})
     return { ok: true }

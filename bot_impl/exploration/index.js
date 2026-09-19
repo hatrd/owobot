@@ -1,6 +1,6 @@
 const path = require('path')
 const { oxygen } = require('../navigation/oxygen')
-const { createHash } = require('crypto')
+const { worldIdentity } = require('./identity')
 const { createStore } = require('./store')
 const { distance } = require('./terrain')
 function pose (bot) {
@@ -9,8 +9,7 @@ function pose (bot) {
   return { at: Date.now(), dimension: String(bot.game?.dimension || 'unknown'), position: { x: p.x, y: p.y, z: p.z }, vitals: { health: bot.health, food: bot.food, oxygenLevel: oxygen(bot).level } }
 }
 function install (bot, { state, on, registerCleanup, log }) {
-  const server = process.env.MCBOT_WORLD_ID || `${process.env.MC_HOST || bot._client?.socketServerHost || bot._client?.host || 'unknown'}:${process.env.MC_PORT || bot._client?.port || 25565}:${bot.username}`
-  const worldId = createHash('sha256').update(server).digest('hex').slice(0, 24)
+  const worldId = worldIdentity(bot, process.env)
   const store = createStore({ state, worldId, file: path.resolve('data', `exploration-${worldId}.json`) })
   const report = result => { if (!result.ok) log?.error?.('exploration memory', result); return result }
   const validMission = id => store.document().missions.find(m => m.id === id && m.status === 'active')

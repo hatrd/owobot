@@ -102,7 +102,7 @@
 - `.spawnproof [radius=N] [item=name] [on=solid|block,...] [max=N] [spacing=N] [collect=true|false]` — 默认使用磨制黑石按钮并针对任意实体方块铺设，便于快速做防刷怪地毯；纯数字参数会视为半径，单独写 `collect` 会开启回收
 - `.autoplant on|off|status|interval ms|radius N|max N|spacing N`
 - `.autoarmor on|off|status|interval ms|radius N|now|debug on|off`
-- `.autofish on|off|status|interval ms|radius N|now|debug on|off`
+- 智能钓鱼：`node scripts/fish.js start --count=8`，`status` / `cancel` / `resume` 查询与控制。保留生鳕鱼/鲑鱼供喂猫，详见 [钓鱼目标](docs/fishing.md)。
 - `.swim on|off|status`
 - `.follow status|debug on|off|door on|off|dig on|off|parkour on|off|towers on|off`
 - `.voice status|play <path>|play path=<path>` — 查看语音插件状态或通过 Simple Voice Chat 发送音频文件

@@ -32,6 +32,7 @@ function install (bot, { on, dlog, state, registerCleanup, log }) {
   function isProtected (name) {
     const n = String(name || '').toLowerCase()
     if (!n) return false
+    if (require('./inventory-reservations').held(state, n)) return true
     if (n.endsWith('_sapling')) return true
     if (n.endsWith('_axe') || n.endsWith('_pickaxe') || n.endsWith('_shovel') || n.endsWith('_hoe') || n.endsWith('_sword')) return true
     if (['fishing_rod','shears','shield','bow','crossbow','flint_and_steel','bucket','water_bucket','lava_bucket','milk_bucket'].includes(n)) return true

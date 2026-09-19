@@ -1,4 +1,8 @@
 module.exports = function registerController (ctx) {
+  ctx.register('fishing_goal', args => {
+    const r = ctx.bot.state?.fishingApi?.configure(args.op, args.args || {}) || {ok:false,error:'fishing_unavailable'}
+    return {...r,msg:r.ok?'Fishing goal updated':r.error}
+  })
   ctx.register('life_configure', args => {
     const result = ctx.bot.state?.lifeApi?.configure(args.op, args.args || {}) || { ok: false, error: 'life_unavailable' }
     return { ...result, msg: result.ok ? 'Autonomous life configured' : result.error }
