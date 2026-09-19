@@ -46,19 +46,7 @@ node scripts/botctl.js schema observe
 
 `detail()` 先做 `what` 归一化（alias -> canonical），再按 canonical handler 分发。
 
-当前支持（含别名归一后）：
-
-- `containers`
-- `players`
-- `hostiles`
-- `entities` / `nearby_entities`
-- `animals` / `passives`
-- `cats`
-- `cows`
-- `signs`
-- `space_snapshot` / `environment` / `room_probe`
-- `inventory`
-- `blocks`
+完整列表以 live schema 与 `docs/interaction.generated.md` 为准，不再手工维护。
 
 未知 `what` 必须返回 `ok:false` 且携带明确错误信息。
 
@@ -106,3 +94,7 @@ node scripts/botctl.js dry observe_detail what=environment radius=12
 ```
 
 如果容器读取失败，请检查返回中是否包含 `openError/openErrors`，没有则视为契约退化。
+
+## 运行时诊断
+
+`what=runtime` 返回有界内存/GC/事件循环采样，在尚未 spawn 时也可查询。样本缺失返回 `error=diagnostics_unavailable`；详见 `docs/runtime-diagnostics.md`。动作层必须透传 observer 的 error/openErrors 等诊断字段。

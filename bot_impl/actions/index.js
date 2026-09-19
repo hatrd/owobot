@@ -3,6 +3,7 @@ const { Vec3 } = require('vec3')
 const pvp = require('../pvp')
 const observer = require('../agent/observer')
 const skillRunnerMod = require('../agent/runner')
+const { validateToolArgs } = require('../action-tool-schemas')
 const { TOOL_SPECS } = require('../action-tool-specs')
 
 const TOOL_METADATA = TOOL_SPECS.map((spec) => {
@@ -147,7 +148,9 @@ function install (bot, options = {}) {
       if (!toolMeta) return { ok: false, msg: '工具不在白名单', blocks: ['not_allowlisted'] }
       const fn = ctx.registry.get(name)
       if (!fn) return { ok: false, msg: '未知工具', blocks: ['unknown_tool'] }
-      const safeArgs = (args && typeof args === 'object') ? args : {}
+      const safeArgs = args === undefined ? {} : args
+      const validation = validateToolArgs(name, safeArgs)
+      if (!validation.ok) return validation
 
       if (toolMeta.dryCapability === 'read_only') {
         try {
@@ -185,7 +188,11 @@ function install (bot, options = {}) {
     if (!fn) return { ok: false, msg: '未知工具' }
     return Promise
       .resolve()
-      .then(() => fn(args || {}))
+      .then(() => {
+        const safeArgs = args === undefined ? {} : args
+        const validation = validateToolArgs(tool, safeArgs)
+        return validation.ok ? fn(safeArgs) : validation
+      })
       .catch((e) => {
         const errMsg = String(e?.message || e)
         try { ctx.log?.error && ctx.log.error('action error', { tool, err: errMsg }) } catch {}

@@ -46,13 +46,9 @@ function parseKeyValueArgs (tokens) {
     if (!k) continue
     args[k] = v
   }
-  // Light coercion for common numeric fields.
+  // JSON syntax supplies explicit numbers, booleans, arrays and objects.
   for (const k of Object.keys(args)) {
-    const v = args[k]
-    if (typeof v !== 'string') continue
-    if (!/^-?\d+(\.\d+)?$/.test(v.trim())) continue
-    const n = Number(v)
-    if (Number.isFinite(n)) args[k] = n
+    try { args[k] = JSON.parse(args[k]) } catch {}
   }
   return args
 }

@@ -19,6 +19,8 @@ This project keeps long-lived state in `bot_impl/index.js` so that hot reloads c
 | `loginPassword` | `string?` | Optional cached server password used by `auto-login`. |
 | `voiceChat` | `object` | Simple Voice Chat runtime state (`enabled/available/pluginLoaded/connected`) with last error, last speaker, and last played audio path/time. |
 | `aiRecentReplies` | `Map<string, number>` | Tracks recent AI replies to avoid greeting someone immediately after chatting with them. |
+| `runtimeDiagnostics` | `object` | Bounded memory/GC/event-loop samples, reload count and cleanup handle; see runtime-diagnostics.md. |
+| `aiToolDecisions` | `Array<object>` | Last 100 structured model tool decisions; also written to logs for replay. |
 | `aiCallMonitor` | `object` | Records every external AI request attempt by source/status/path/schema/bodyKeys/duration. Non-mainline sources are blocked by default through `state.ai.externalCalls`. |
 
 All collections are normalised (`Map`/`Set`/`Array`) each time `activate()` runs so modules can depend on consistent shapes.
@@ -41,7 +43,7 @@ All collections are normalised (`Map`/`Set`/`Array`) each time `activate()` runs
 Single source of truth lives in `bot_impl/action-tool-specs.js` (`TOOL_SPECS`).
 
 - `bot_impl/actions/index.js` derives runtime metadata (`TOOL_NAMES`, allowlist checks) from that file.
-- `bot_impl/ai-chat/tool-schemas.js` also derives action tool definitions from the same source, then overlays parameter schemas.
+- `bot_impl/action-tool-schemas.js` defines action parameters for both execution validation and AI tool generation.
 
 Run `node scripts/list-tools.js` to output the current allowlist as JSON.
 

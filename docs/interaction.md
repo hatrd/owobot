@@ -115,7 +115,7 @@ Options:
 Limitations:
 
 - `botctl.js` only parses `key=value` args (no positional sugar).
-- Values are strings by default; a few numeric-looking fields are auto-coerced to numbers.
+- Values use JSON syntax for numbers, booleans, arrays and objects; other values remain strings.
 - If your value contains spaces, quote it in the shell (e.g. `text="hello world"`).
 
 ### Protocol (NDJSON)
@@ -161,15 +161,16 @@ Use one command to verify the full interaction chain after each change:
 npm run interaction:dry
 ```
 
-It verifies, in order:
+It verifies the following paths (including explicit schema coverage):
 
 1) `hello` (control plane reachable)
 2) `tool.list` (allowlist coherence)
-3) `observe.snapshot` (observer structured state)
-4) `observe.prompt` (prompt rendering)
-5) `observe.detail` (focused read path; default `containers`)
-6) `tool.dry` (dry-run execution path)
-7) `tool.dry observe_detail` (read-only dry output, includes nearby container contents)
+3) `tool.schema` (no missing/stale schemas; registration mismatch also fails)
+4) `observe.snapshot` (observer structured state)
+5) `observe.prompt` (prompt rendering)
+6) `observe.detail` (focused read path; default `containers`)
+7) `tool.dry` (dry-run execution path)
+8) `tool.dry observe_detail` (read-only dry output, includes nearby container contents)
 
 By default, it dry-runs `pickup` with `radius=12`. Override if needed:
 
@@ -239,3 +240,5 @@ Recommended resilient mode (auto-restart + inherited stdin/stdout):
 
 - Bot is running but `hello` says `hasBot: false`
   - The process started but the Mineflayer bot is not created yet, or crashed early. Check stdout/logfile.
+
+Runtime diagnostics: `node scripts/botctl.js dry observe_detail what=runtime max=20` (read-only; see `docs/runtime-diagnostics.md`). Natural-language chatdry returns unknown intent and does not call a model.

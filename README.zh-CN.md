@@ -56,7 +56,7 @@
 - 动作类：描述需求即可，DeepSeek 会通过 function calling 自动选择安全工具（`node scripts/list-tools.js` 可查看完整 schema）。
 - 多段回复：系统 prompt 允许模型返回 `say{"steps":[...]}`；如果 provider 把它当纯文本返回，执行器会按精确 JSON 结构转换为 `say` 脚本，不会把 `say{}` 原样发到公屏。
 - 安全默认：不攻击玩家（除非明确“追击 <玩家名>”、“追杀 <玩家名>”或“攻击 <玩家名>”）、不挖掘（除非 `dig:true`）。
-- 立即停止：说“停止/停下/停止追击/不要攻击/stop/cancel”→ `reset{}`。
+- 立即停止：使用 `owk /stop`（或 `/reset`，需带机器人触发词），无需等待模型；自然语言“停下”等由模型判定并调用 `reset{}`。
 
 常用示例
 - 驻守当前位置清怪：说 “owk, 驻守当前位置清怪” → `defend_area{}`
@@ -149,3 +149,7 @@
 运行时环境变量均可被 CLI 覆盖：
 - `--host`、`--port`、`--username|--user`、`--auth`、`--password`、`--greet on|off`
 示例：`npm start -- --host my.server --port 25565 --username MyBot --greet off`
+
+运行时内存排查：`node scripts/botctl.js dry observe_detail what=runtime max=20`，见 `docs/runtime-diagnostics.md`。
+
+外接 LLM / 行为热加载 / 画面观察的设计提案：`docs/external-controller.md`（尚未实现）。

@@ -32,14 +32,19 @@ NVIDIA Nemotron 的 `/v1/chat/completions` 请求使用官方
 
 ```
 玩家消息 → 触发词检测 (bot名前3字符) → 预处理
-    ├── 立即命令: 下坐/停止 → actions 直接执行
-    ├── 记忆写入/撤销: "记住..." / "忘记..." / "别叫我..." → 写入或禁用长期记忆
-    └── LLM 调用: classifyIntent → callAI → 工具执行或文本回复
+    ├── 精确命令: /stop、/reset、/dismount → actions 直接执行
+    └── 自然语言: normalizeIntent() 返回 unknown → callAI → 模型选择工具或文本回复
 ```
 
 入站玩家身份统一由 `bot_impl/incoming-chat.js` 在 Mineflayer 边界解析：优先使用 `message` 事件携带的结构化 sender UUID 对齐 `bot.players`，当服务器聊天插件不再渲染 `<玩家名> 内容` 时补发标准 `chat` 事件并按 `<玩家名> 内容` 输出日志；同一结构化 `playerChat` 不再进入 system-message 分支，避免上下文同时出现 `<p>` 与重复 `<s>`。文本格式解析仅保留为旧服兼容回退，不从自然语言猜玩家身份。
 
-补充：`callAI` 采用有上限的工具循环（读取 `state.ai.maxToolCallsPerTurn/maxToolCalls`，默认 6 次、最大 16 次）：每轮把工具执行结果（含 observe 结构化摘要）回填到下一轮上下文，让模型继续决策。若 loop 进行中收到新玩家输入，会触发中断并把增量消息实时注入当前 loop；达到上限后返回阶段性总结，避免 observe 复读/循环。同一轮内模型重复给出完全相同的工具名和参数时会直接短路，不再重复执行工具或继续消耗下一次模型请求。`say`、`feedback`、`plan_mode`、`write_memory`、`add_commitment` 这类已完成出站回复或状态写入的确定性工具会直接结束本轮 loop，不再为“总结工具结果”额外发起下一次 LLM 请求；`goto/pickup/deposit/withdraw/sort_chests` 等长动作工具、`use_item/equip/toss/dismount` 等确定性短动作工具、`reset/stop/stop_all/skill_status/skill_cancel` 等本地控制/状态工具、`query_player_stats/query_leaderboard/announce_daily_star` 等本地统计工具、`people_commitments_list/dedupe/clear` 等本地承诺管理工具、`voice_speak` 等已产生出站效果的工具执行后也直接结束本轮，使用工具返回消息作为对外结果，不再追加一次 LLM 总结。明显的统计/排行榜聊天会在主聊天限流前走本地只读工具，不消耗 provider 调用或 LLM 限流额度；明显的机器人当前坐标查询会直接读取 `bot.entity.position` 回复；明显的附近实体、玩家、背包、容器、猫/动物、告示牌等只读观察查询，以及读书/列书、语音状态、承诺/待办列表查询，也会直接走本地 `observe_detail/observe_players/read_book/voice_status/people_commitments_list`，不先调用模型。纯查询型 `observe_detail/observe_players/read_book/voice_status` 在非 action 意图下同样直接结束；action 意图仍会把观察结果回填给模型，让“观察后继续捡/移动/处理”的链路可继续决策。provider 请求使用精简 tool schema：保留工具名、顶层说明和参数结构，但移除参数内部 description，控制面 `tool.schema` 仍保留完整说明。每次请求都会按当前 context profile 的 `maxInputTokens` 约束 provider 输入预算：先扣除本轮 tool schema token，再对可膨胀上下文段做硬裁剪，保留系统提示、时间元信息、当前用户输入和当前玩家锚点，避免长期记忆/画像/聊天日志增长或工具 schema 叠加后把单次请求撑爆。
+`classifyIntent` 和自然语言本地查询捷径已移除。未知意图使用完整工具目录，由主聊天模型通过结构化工具调用判定语义，不额外请求一次分类模型。`normalizeIntent` 只接受显式对象；内部已知的 greet/plan/query/action 仍可使用窄上下文。`chatdry` 完全离线，返回 unknown 与可用工具，不伪装成理解了输入。
+
+`callAI` 使用有上限的工具循环（默认 6 次、最大 16 次），相同工具和参数的重复调用会短路。unknown/action 的观察结果回填给模型；不会自动追加 pickup。显式 query/chat 的只读结果可直接结束。确定性动作、发送消息和记忆写入完成后结束本轮；更长规划由 plan_mode 推进。pending 消息可中断正在进行的模型请求并注入工具循环。
+
+每轮先扣除工具 schema token，再裁剪上下文。补齐参数后，model_context 总输入预算为 12000，plan_context 为 8000，既有 chat/task 为 5000、局部观察为 3600。完整目录会提高自然语言主线的输入成本；后续可通过显式工具目录查询缩减，不能重新用关键词猜意图。
+
+模型工具决策记录在 `state.aiToolDecisions`（最多 100 条，单次参数 JSON 最大 32 KiB），并写入 `ai.tool.decision` / `ai.tool.result` 日志，保留 seq、actor、tool、args、时间和返回结果，event 证据不受普通日志级别过滤。status=returned 表示执行器返回，业务成功与否仍以工具结果为准。记忆写入与撤销分别通过 write_memory / forget_memory，持久化由记忆服务负责。
 主线对话的 completion 预算也按 context profile 分档，而不是所有请求都预留 `state.ai.maxTokensPerCall`：greet≤160、普通聊天/行动/tool loop≤640、plan≤768，并继续受 `state.ai.maxTokensPerCall` 硬上限约束；预算预检按实际分档后的 `max_tokens` 估算，避免所有请求都按 1024 completion 虚高计费预留。
 
 工具 schema 不再全量发送给每个工具轮次。`executor` 只根据结构化 `intent.topic/kind` 选择本轮需要的工具簇：例如观察/拾取类请求只发送 `say/feedback/skip/observe_detail/pickup/collect` 等少量工具；普通聊天也会暴露基础回复/观察/记忆/计划工具，避免模型在混合聊天+动作请求中按系统提示手搓不存在的工具名；普通 `kind=action` 默认带观察、移动、基础物品/容器操作，钓鱼/喂动物/采矿/耕作等专门工具留给明确 topic 或计划模式；计划模式才发送更宽的工具集。
@@ -61,7 +66,7 @@ NVIDIA Nemotron 的 `/v1/chat/completions` 请求使用官方
 ## 3. 会话激活与跟进
 
 - `activateSession(username)`: 触发后保持 60s 活跃窗口
-- 活跃窗口内：若玩家继续说普通聊天，先进入静默合并窗口，默认 5s（可用 `state.ai.followupDelayMs` 覆盖）后触发一次“跟进调用”；窗口内多句 followup 会合并成一次 `main_chat`，并在发起外部请求前复用 `state.ai.limits` 频率门，避免一句一调用或纯 followup 绕过限流。flush 时会逐条剥离明显统计/排行榜/只读观察/当前位置等本地 followup：全是本地查询时不调用 LLM，混合批次只把剩余普通聊天送入 provider，避免本地查询重复占用 prompt token。成功的主线 LLM 轮都会计入频率统计，即使模型只调用了 `say`/工具而没有返回文本 reply。自动推进的 plan step 也复用同一频率门，限流时直接停止计划，避免一次 `plan_mode` 继续放大成多次主线外部调用。停止/下坐/记忆/忘记等本地高优先级命令仍立即处理。
+- 活跃窗口内：若玩家继续说普通聊天，先进入静默合并窗口，默认 5s（可用 `state.ai.followupDelayMs` 覆盖）后触发一次“跟进调用”；窗口内多句 followup 会合并成一次 `main_chat`，并在发起外部请求前复用 `state.ai.limits` 频率门，避免一句一调用或纯 followup 绕过限流。flush 保留完整批次交给模型判断，不再用关键词剥离查询。成功的主线 LLM 轮都会计入频率统计，即使模型只调用了 `say`/工具而没有返回文本 reply。自动推进的 plan step 也复用同一频率门，限流时直接停止计划，避免一次 `plan_mode` 继续放大成多次主线外部调用。只有精确的 /stop、/reset、/dismount 命令立即处理；自然语言停止、查询、记忆请求均走主模型。
 - 触发词重新出现延长会话
 
 ## 4. 上下文构建
@@ -92,7 +97,7 @@ NVIDIA Nemotron 的 `/v1/chat/completions` 请求使用官方
    - Namespacing：长期记忆条目含 `scope=player|global` + `owners[]`；召回会按 `actor` 强过滤，避免跨玩家污染
    - Feedback：`refs` 由反馈链路使用，显式正/负反馈会影响 `count/effectiveness`，并更新 `lastPositiveFeedback` 参与 recency/decay
    - 格式：`长期记忆: 1. ... | 2. ...`
-   - 撤销：玩家说“忘记/删除记忆/别叫我…”会把匹配记忆标记为 disabled（不再注入）
+   - 撤销：模型在理解玩家撤销请求后调用 forget_memory{query}，只禁用当前玩家拥有的匹配记忆（不再注入）
 7. `contextPrompt`（system）：`executor.buildContextPrompt(username)`，由三段拼接：
    - `当前对话玩家: <name>`
    - `xmlCtx`：`contextBus.buildXml({ maxEntries, windowSec, includeGaps:true })`（`state.ai.context.recentCount/recentWindowSec`）；默认注入视图会截短过长玩家行，并限制已发给游戏的 bot/tool echo（各保留最近 3 条，单条也截短），只压 prompt，不丢 `state.aiContextBus` 原始记录；profile 的 recent/window 是场景上限，用户显式设置更小值时取更小值，`recentCount=0` 时只保留当前玩家锚点，不注入历史聊天
@@ -115,7 +120,7 @@ NVIDIA Nemotron 的 `/v1/chat/completions` 请求使用官方
 - 会话摘要发给外部模型前会压缩聊天摘录：最多保留 48 行、单行约 100 字、摘录约 3200 字；单轮 summary 队列最多尝试 2 次外部模型调用，超出后改用本地摘要，避免积压会话一次性追账；短会话走本地摘要并直接跳过 `people_inspector`，规则命中的画像/承诺由本地 patch 落盘，不再为同一段短聊天追加 LLM 抽取；显式放开 `people_inspector` 时只发送最多 48 行、单行约 120 字、摘录约 3000 字，并只携带一份字段级裁剪的画像/承诺 JSON 快照（profile≈180 字、commitment≈160 字、每类≤12 条），输出预算固定 256 tokens，且共享 summary 队列的单轮外部调用预算。
 - 显式放开 `dialogue_aggregation` 时，小时/日/周聚合只发送头尾最多 24 条既有摘要，单条约 80 字、摘要列表约 2200 字内，输出预算固定 96 tokens；单轮聚合最多尝试 2 次外部模型调用，本地低信号聚合不占用这 2 次模型预算，积压窗口留到后续轮次继续处理，避免历史堆积后一次性追账。
 - `state.aiRecent` 溢出时的 `overflow_summary` 只在后台源被允许时触发；请求会压到最近 40 行、单行 80 字、prompt 约 2200 字内，输出预算固定 96 tokens，避免为 20-40 字摘要预留大额 completion。同一时间只保留 1 个 provider 摘要请求，重叠溢出会写本地短摘要，避免聊天爆量时并发追账。
-- `memory_rewrite` 是默认后台源之一，开启 background 后会整理玩家显式“记住”指令；显式坐标事实（如“基地坐标是 100,64,200”）会先本地结构化落盘，不触发 rewrite；同一玩家同一记忆文本在待处理/同批队列里会去重，单轮队列处理最多尝试 2 次外部模型调用，剩余任务留在队列等待后续轮次，避免积压记忆一次性追账；发给模型前会裁剪 request/original/recent/context/existing triggers，输出预算固定 256 tokens，避免单条记忆整理预留大额 completion 或携带整段上下文。
+- `memory_rewrite` 服务仍可处理已有后台队列，但聊天入口不再按关键词入队或本地解析坐标落盘；新请求由主模型显式调用 write_memory 保存。
 - 存储：`state.aiDialogues`（max 60，持久化到 `data/ai-memory.json`）；raw 摘要保存 `summaryKey=username:startSeq:endSeq`，同一会话 seq 窗口已保存后不会再次排队调用外部 summary，避免 expire/reset/restart 重复触发。
 - 注入：`memory.dialogue.buildPrompt(username)` → `对话记忆：\n...`
 - 选取策略：优先包含该玩家的记录，并按时间桶挑选（3d/7d/15d/30d，各自有上限）

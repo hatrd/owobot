@@ -123,6 +123,17 @@ async function main () {
     }
   })
 
+  const schema = await call(sockPath, token, 'tool.schema', {}, timeoutMs)
+  ensureCtlOk('tool.schema', schema.res)
+  const report = schema.res?.result?.report
+  if (!report || report.missingSchema?.length || report.staleSchema?.length) {
+    throw new Error(`tool.schema incomplete: ${JSON.stringify(report)}`)
+  }
+  if (list.res.result.missing?.length || list.res.result.extra?.length) {
+    throw new Error(`tool.list registration mismatch: ${JSON.stringify(list.res.result)}`)
+  }
+  checks.push({ check: 'tool.schema', ok: true, durationMs: schema.durationMs, result: report })
+
   const snapshot = await call(sockPath, token, 'observe.snapshot', {
     args: { invTop: 8, nearPlayerRange: 16, nearPlayerMax: 8, dropsRange: 8, dropsMax: 8 }
   }, timeoutMs)

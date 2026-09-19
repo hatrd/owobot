@@ -98,6 +98,8 @@ function getLogger (ns) {
   function should (want) { return LEVELS[want] <= levelForNs(key) }
   function fmt (lvl, args) { return [`[${lvl.toUpperCase()}][${key}]`, ...args] }
   return {
+    // Structured evidence is independent of human-facing verbosity filters.
+    event: (event, data) => console.log(...fmt('event', [JSON.stringify({ event, data })])),
     debug: (...args) => { if (should('debug')) console.log(...fmt('debug', args)) },
     info: (...args) => { if (should('info')) console.log(...fmt('info', args)) },
     warn: (...args) => { if (should('warn')) console.warn(...fmt('warn', args)) },

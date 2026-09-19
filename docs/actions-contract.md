@@ -49,7 +49,9 @@
 
 ### 4.1 默认 dry：`validate_only`
 
-`dry()` 默认只做参数与可执行性验证，不模拟世界状态。
+`dry()` 默认只做参数 schema 与注册验证，不模拟世界状态。`dry` 与 `run` 使用 `bot_impl/action-tool-schemas.js` 的同一份 Ajv 校验；缺少必填字段、类型不符或被 schema 禁止的额外字段返回 `{ ok:false, blocks:["bad_args"], errors:[...] }`，不会调用动作。
+
+参数不会被执行层自动强转类型。`botctl key=value` 按 JSON 值解析数字、布尔、数组、对象，解析失败保留字符串；例如 `dig=false`、`names='["oak_log"]'`。旧工具声明 `additionalProperties:true` 的扩展字段仍允许通过；这不等于未声明字段也已得到类型校验。
 
 ### 4.2 只读 dry：`read_only`
 
@@ -70,7 +72,7 @@
 
 1. 在合适模块实现并 `register('tool_name', fn)`。
 2. 更新 `bot_impl/action-tool-specs.js` 中的 `TOOL_SPECS`（名称与 dry 能力）。
-3. 在 `bot_impl/ai-chat/tool-schemas.js` 补参数 schema（可缺省，缺省会自动回落通用 object 并在 schema report 里暴露）。
+3. 在 `bot_impl/action-tool-schemas.js` 补参数 schema（必填；缺失、重复或过期 schema 会阻止加载）。
 4. 明确 dry 能力级别（`validate_only` 或 `read_only`）。
 5. 校验返回结构统一。
 6. 运行 `npm run interaction:docgen` 刷新交互 schema 文档。

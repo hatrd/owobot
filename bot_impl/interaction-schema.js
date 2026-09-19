@@ -3,7 +3,7 @@ const path = require('path')
 
 const actionsMod = require('./actions')
 const observer = require('./agent/observer')
-const toolSchemas = require('./ai-chat/tool-schemas')
+const toolSchemas = require('./action-tool-schemas')
 const controlPlaneContract = require('./control-plane-contract')
 
 const DEFAULT_PARAMETERS = { type: 'object', properties: {}, additionalProperties: true }

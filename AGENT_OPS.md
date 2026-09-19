@@ -178,3 +178,7 @@ tr '\0' '\n' </proc/$botpid/environ | rg '^(MC_HOST|MC_PORT|MC_USERNAME|DEEPSEEK
 - 热重载规则：`docs/hot-reload.md`
 - AI 管线：`docs/ai-chat.md`
 - 工具和观察契约：`docs/actions-contract.md`、`docs/observer-contract.md`
+
+## 内存取证
+
+使用 `node scripts/botctl.js dry observe_detail what=runtime max=20` 读取有界采样；先执行 `npm run interaction:dry`。结合日志中的 `runtime.sample` 与 keepAliveError 对齐时间，具体字段、单位与分析边界见 `docs/runtime-diagnostics.md`。不要只看一次 RSS 就认定泄漏。

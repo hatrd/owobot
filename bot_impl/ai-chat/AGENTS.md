@@ -45,13 +45,14 @@
 
 ## Tool schema 边界
 - action 工具名来源于 `bot_impl/action-tool-specs.js` 的 `TOOL_SPECS`（单一真相）。
-- 本目录只负责“参数 schema/描述”覆盖，不再维护独立工具名清单。
-- `tool-schemas.js` 中缺失显式参数 schema 时，会落到默认 object schema，并出现在 `tool.schema.report.missingSchema`。
-- 新增 action 工具时，优先补齐参数 schema，避免模型调用歧义。
+- 动作参数由 `../action-tool-schemas.js` 统一提供，dry/run/AI 共用；本目录只组合 AI 专有工具。
+- 动作参数统一在 `../action-tool-schemas.js`；缺失、重复或过期 schema 会阻止加载。此目录的 `tool-schemas.js` 只负责 AI 专有工具及 provider 格式。
+- 新增 action 工具必须同时补齐参数 schema；dry/run 使用 Ajv 校验，失败返回 bad_args 与 errors。
 
 ## 强制验证（与仓库总规一致）
 - `node --check bot_impl/ai-chat.js`
 - `node --check bot_impl/ai-chat/executor.js`
+- `node --check bot_impl/action-tool-schemas.js`
 - `node --check bot_impl/ai-chat/tool-schemas.js`
 - `npm run bot:reload`
 - `node scripts/botctl.js schema tool`

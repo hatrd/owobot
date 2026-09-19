@@ -238,7 +238,7 @@ function createAiCliHandler (options = {}) {
           try {
             const targetPlayer = rest[0] || ''
             const query = rest.slice(targetPlayer ? 1 : 0).join(' ').trim()
-            const intent = typeof H.classifyIntent === 'function' ? H.classifyIntent(query) : { topic: 'generic', nearby: false, kind: 'chat' }
+            const intent = H.normalizeIntent()
             const profile = typeof H.selectContextProfile === 'function' ? H.selectContextProfile(intent) : null
             const scoped = Boolean(targetPlayer)
             if (typeof buildMetaContext === 'function') {

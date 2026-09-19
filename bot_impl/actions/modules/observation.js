@@ -5,10 +5,10 @@ module.exports = function registerObservation (ctx) {
   async function observe_detail (args = {}) {
     try {
       const r = await Promise.resolve(observer.detail(bot, args || {}))
-      return { ok: Boolean(r && r.ok), msg: (r && r.msg) || '无', data: r && r.data }
+      return { ...r, ok: Boolean(r && r.ok), msg: (r && r.msg) || '无', data: r && r.data }
     } catch (e) {
       try { log?.warn && log.warn('observe_detail error', e?.message || e) } catch {}
-      return fail('观察失败，请稍后再试~')
+      return fail('观察失败，请稍后再试~', { error: String(e?.message || e) })
     }
   }
 

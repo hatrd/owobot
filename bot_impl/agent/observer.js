@@ -1343,6 +1343,7 @@ const DETAIL_WHAT_ALIASES = Object.freeze({
 })
 
 const DETAIL_WHAT_CANONICAL = Object.freeze([
+  'runtime',
   'containers',
   'players',
   'hostiles',
@@ -1357,6 +1358,7 @@ const DETAIL_WHAT_CANONICAL = Object.freeze([
 ])
 
 const DETAIL_WHAT_DESCRIPTIONS = Object.freeze({
+  runtime: 'Bounded process memory, GC, event loop and collection size history; available before spawn.',
   containers: 'Inspect nearby containers in read-only mode with diagnostic fields on failures.',
   players: 'Nearby players from mineflayer runtime state.',
   hostiles: 'Nearby hostile mobs.',
@@ -1407,6 +1409,7 @@ function getDetailSchema () {
 
 function detail (bot, args = {}) {
   const what = normalizeDetailWhat(args.what)
+  if (what === 'runtime') return require('../runtime-diagnostics').read(bot, args)
   const radius = parsePositiveInt(args.radius, 16, 1)
   const max = parsePositiveInt(args.max, 24, 1)
   const namedOnlyArg = parseObserveBoolArg(args.namedOnly ?? args.named ?? args.nametagOnly ?? args.nameTagOnly)

@@ -25,7 +25,7 @@ const INLINE_TOOL_ALIASES = {
 const INLINE_TOOL_ALIAS_NAMES = Object.keys(INLINE_TOOL_ALIASES).sort((a, b) => b.length - a.length)
 const REPLY_TOOL_NAMES = ['say', 'feedback', 'skip']
 const CONTROL_TOOL_NAMES = ['stop_listen', 'reset', 'stop', 'stop_all']
-const MEMORY_TOOL_NAMES = ['write_memory', 'add_commitment']
+const MEMORY_TOOL_NAMES = ['write_memory', 'forget_memory', 'add_commitment']
 const PLAN_TOOL_NAMES = ['plan_mode']
 const OBSERVE_TOOL_NAMES = ['observe_detail', 'observe_players', 'read_book', 'voice_status']
 const MOVEMENT_TOOL_NAMES = ['goto', 'goto_block', 'follow_player', 'mount_near', 'mount_player', 'dismount', 'use_item', 'equip', 'toss']
@@ -195,43 +195,6 @@ function createChatExecutor ({
     return lines.join('\n')
   }
 
-  async function filterLocalPendingBatch (batch) {
-    const out = []
-    for (const entry of Array.isArray(batch) ? batch : []) {
-      if (!entry || entry.source !== 'followup') {
-        out.push(entry)
-        continue
-      }
-      const parts = Array.isArray(entry.parts) ? entry.parts : []
-      const rawParts = Array.isArray(entry.rawParts) ? entry.rawParts : []
-      const keepParts = []
-      const keepRawParts = []
-      for (let i = 0; i < parts.length; i++) {
-        const text = String(parts[i] || '').trim()
-        if (!text) continue
-        const raw = typeof rawParts[i] === 'string' ? rawParts[i] : text
-        const intent = classifyIntent(text)
-        const handled = await maybeHandleLocalQuery({
-          username: entry.username,
-          text,
-          raw,
-          source: 'followup',
-          intent,
-          reasonTag: 'followup'
-        })
-        if (handled) continue
-        keepParts.push(text)
-        keepRawParts.push(raw)
-      }
-      if (!keepParts.length) continue
-      out.push({
-        ...entry,
-        parts: keepParts,
-        rawParts: keepRawParts
-      })
-    }
-    return out.filter(Boolean)
-  }
 
   function buildPendingInterruptNote (batch) {
     try {
@@ -287,7 +250,7 @@ function createChatExecutor ({
   }
 
   function selectToolFunctionsForIntent (intent = {}, options = {}) {
-    if (options?.toolProfile === 'all' || options?.allTools === true) return TOOL_FUNCTIONS
+    if (intent?.kind === 'unknown' || options?.toolProfile === 'all' || options?.allTools === true) return TOOL_FUNCTIONS
     const topic = String(intent?.topic || '').toLowerCase()
     const kind = String(intent?.kind || '').toLowerCase()
     const names = [...REPLY_TOOL_NAMES]
@@ -339,9 +302,6 @@ function createChatExecutor ({
   async function processPendingBatch (batch) {
     if (!Array.isArray(batch) || !batch.length) return
     if (ctrl.busy) return
-    const filteredBatch = await filterLocalPendingBatch(batch)
-    if (!filteredBatch.length) return
-    batch = filteredBatch
     const owner = (() => {
       for (let i = batch.length - 1; i >= 0; i--) {
         const entry = batch[i]
@@ -361,12 +321,7 @@ function createChatExecutor ({
       return joined ? `${e.username}: ${joined}` : ''
     }).filter(Boolean).join('\n')
     const source = batch.some(e => e && e.source === 'trigger') ? 'trigger' : 'followup'
-    const lastText = (() => {
-      const lastEntry = batch[batch.length - 1]
-      const parts = Array.isArray(lastEntry?.parts) ? lastEntry.parts : []
-      return parts.length ? String(parts[parts.length - 1] || '') : ''
-    })()
-    const intent = classifyIntent(lastText || content)
+    const intent = H.normalizeIntent()
     if (source === 'followup') {
       const allowed = canProceed(owner)
       if (!allowed.ok) {
@@ -596,188 +551,6 @@ function createChatExecutor ({
     return out
   }
 
-  function classifyIntent (text) {
-    if (typeof H.classifyIntent === 'function') return H.classifyIntent(text)
-    return { topic: 'generic', nearby: false, kind: 'chat' }
-  }
-
-  function stripBotMentionPrefix (text) {
-    try {
-      const trig = triggerWord()
-      const raw = String(text || '').trim()
-      if (!trig) return raw
-      return raw
-        .replace(new RegExp('^(' + trig + '[:：,，。.!！\\s]*)+', 'i'), '')
-        .replace(/^[:：,，。.!！\s]+/, '')
-        .trim()
-    } catch {
-      return String(text || '').trim()
-    }
-  }
-
-  function extractPlayerNameForStats (text, fallback) {
-    const cleaned = stripBotMentionPrefix(text)
-    const fallbackName = String(fallback || '').trim()
-    const tokens = String(cleaned || '').match(/[A-Za-z0-9_]{2,32}/g) || []
-    const ignored = new Set([
-      String(bot?.username || '').toLowerCase(),
-      'stats', 'stat', 'rank', 'ranking', 'leaderboard', 'online', 'chat', 'death', 'deaths', 'score', 'today', 'yesterday'
-    ])
-    for (const token of tokens) {
-      const lower = token.toLowerCase()
-      if (ignored.has(lower)) continue
-      return token
-    }
-    return fallbackName
-  }
-
-  function inferStatsType (text) {
-    const raw = String(text || '')
-    const lower = raw.toLowerCase()
-    if (/在线时长|在线|online/.test(lower)) return 'online'
-    if (/发言|聊天次数|聊天|chat/.test(lower)) return 'chat'
-    if (/死亡次数|死亡|death|deaths/.test(lower)) return 'deaths'
-    return 'all'
-  }
-
-  function inferStatsPeriod (text) {
-    const raw = String(text || '')
-    const lower = raw.toLowerCase()
-    if (/今天|今日|today/.test(lower)) return 'today'
-    if (/昨天|昨日|yesterday/.test(lower)) return 'yesterday'
-    return 'all'
-  }
-
-  function inferPlayerStatsPeriod (text) {
-    return inferStatsPeriod(text) === 'today' ? 'today' : 'all'
-  }
-
-  function inferLeaderboardType (text) {
-    const raw = String(text || '')
-    const lower = raw.toLowerCase()
-    if (/在线时长|在线|online/.test(lower)) return 'online'
-    if (/发言|聊天|chat/.test(lower)) return 'chat'
-    if (/死亡|death|deaths/.test(lower)) return 'deaths'
-    return 'score'
-  }
-
-  function inferLocalObserveQuery (text, intent = {}) {
-    const raw = String(text || '')
-    const lower = raw.toLowerCase()
-    const kind = String(intent?.kind || '').toLowerCase()
-    if (kind === 'action') return null
-    const topic = String(intent?.topic || '').toLowerCase()
-    const asksInfo = /有(什么|啥|哪些)|看看|看下|查(看|一下)?|列(一下|出)?|多少|谁|what|list|show|observe|look/.test(lower)
-    if (!asksInfo && topic !== 'players' && topic !== 'drops' && topic !== 'observe') return null
-
-    const radius = /容器|箱子|chest|barrel|container|熔炉|炉子|furnace/.test(lower) ? 20 : 32
-    const max = 20
-    if (topic === 'players' || /玩家|谁在线|谁.*附近|附近.*谁|online|player/.test(lower)) {
-      return { tool: 'observe_players', args: { radius, max: 20 } }
-    }
-    if (topic === 'drops' || /掉落|战利|loot|drop/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'entities', radius, max } }
-    }
-    if (/背包|物品栏|inventory/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'inventory', max: 30 } }
-    }
-    if (/容器|箱子|盒子|潜影盒|shulker|chest|barrel|container|熔炉|炉子|furnace|hopper/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'containers', radius, max: 8 } }
-    }
-    if (/牌子|告示牌|sign/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'signs', radius, max: 8 } }
-    }
-    if (/猫|cat/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'cats', radius, max: 10 } }
-    }
-    if (/牛|cow/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'cows', radius, max: 10 } }
-    }
-    if (/动物|animal/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'animals', radius, max } }
-    }
-    if (/怪物|敌对|hostile|mob/.test(lower)) {
-      return { tool: 'observe_detail', args: { what: 'hostiles', radius, max } }
-    }
-    if (/实体|生物|附近|周围|near|around|entity|entities/.test(lower) || topic === 'observe') {
-      return { tool: 'observe_detail', args: { what: 'entities', radius, max } }
-    }
-    return null
-  }
-
-  function inferLocalReadOnlyQuery (text, intent = {}, username = '') {
-    const raw = String(text || '')
-    const lower = raw.toLowerCase()
-    const kind = String(intent?.kind || '').toLowerCase()
-    if (kind === 'action') return null
-    const topic = String(intent?.topic || '').toLowerCase()
-    const asksInfo = /看看|看下|查(看|一下)?|检查|读(一下)?|列(一下|出)?|状态|status|read|list|show|check/.test(lower)
-    if (!asksInfo && topic !== 'voice' && topic !== 'commitment') return null
-
-    if (/语音|voice/.test(lower) && /状态|status|连接|connected|enabled|可用|开着|打开/.test(lower)) {
-      return { tool: 'voice_status', args: {}, topic: 'voice' }
-    }
-    if (/书|书本|book|written_book|writable_book/.test(lower)) {
-      const list = /列(一下|出)?|有哪些|有什么|列表|list|show/.test(lower)
-      return { tool: 'read_book', args: { list }, topic: 'book' }
-    }
-    if (topic === 'commitment' || /承诺|待办|todo|promise|commitment/.test(lower)) {
-      const mode = /全部|所有|all/.test(lower)
-        ? 'all'
-        : (/完成|已做|关闭|closed|done|failed/.test(lower) ? 'closed' : 'pending')
-      const player = extractPlayerNameForStats(text, username)
-      return {
-        tool: 'people_commitments_list',
-        args: { mode, player },
-        topic: 'commitment'
-      }
-    }
-    return null
-  }
-
-  function isObviousBotPositionQuery (text, intent = {}) {
-    const raw = String(text || '')
-    const lower = raw.toLowerCase()
-    const kind = String(intent?.kind || '').toLowerCase()
-    if (kind === 'action') return false
-    const topic = String(intent?.topic || '').toLowerCase()
-    if (topic !== 'position' && !/(坐标|座标|坐標|位置|where|location|position|coords?)/.test(lower)) return false
-
-    const cleaned = stripBotMentionPrefix(raw)
-    const cleanedLower = cleaned.toLowerCase()
-    if (/(基地|家|home|base|warp|传送点|村庄|矿洞)/.test(cleanedLower)) return false
-
-    return /你(现在|当前|目前)?(在)?(哪里|哪儿|哪边|哪|什么位置|哪个位置|坐标|座标|坐標)/.test(cleanedLower) ||
-      /你.*(当前|目前|所在|位置|坐标|座标|坐標)/.test(cleanedLower) ||
-      /(现在|当前|目前).*(坐标|座标|坐標|位置)/.test(cleanedLower) ||
-      /(where are you|your\s+(position|location|coords?)|bot\s+(position|location|coords?)|current\s+(position|location|coords?))/i.test(cleanedLower)
-  }
-
-  function buildLocalBotPositionReply () {
-    const pos = bot?.entity?.position
-    if (!pos) return ''
-    const toCoord = (value) => {
-      const n = Number(value)
-      return Number.isFinite(n) ? Math.round(n) : 0
-    }
-    const x = toCoord(pos.x)
-    const y = toCoord(pos.y)
-    const z = toCoord(pos.z)
-    const dim = (() => {
-      try { return String(bot?.game?.dimension || '').trim() } catch { return '' }
-    })()
-    return dim ? `当前位置: ${x}, ${y}, ${z} | 维度: ${dim}` : `当前位置: ${x}, ${y}, ${z}`
-  }
-
-  async function runLocalActionTool (tool, args = {}) {
-    try {
-      return await actions.run(tool, args || {})
-    } catch (err) {
-      log?.warn && log.warn('local query tool error', err?.message || err)
-      return { ok: false, msg: '查询失败，请稍后再试~', error: String(err?.message || err) }
-    }
-  }
-
   function clearPlan (reason = 'unknown') {
     if (ctrl.planTimer) {
       try { clearTimeout(ctrl.planTimer) } catch {}
@@ -895,6 +668,7 @@ function createChatExecutor ({
   }
 
   async function callAI (username, content, intent, options = {}) {
+    intent = H.normalizeIntent(intent)
     const { key, baseUrl, path, pathOverride, model, maxReplyLen } = state.ai
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     if (!key) throw new Error('AI key not configured')
@@ -1317,28 +1091,7 @@ function createChatExecutor ({
     const low = String(toolName || '').toLowerCase()
     if (!READ_ONLY_QUERY_TOOL_NAMES.includes(low)) return false
     const kind = String(intent?.kind || '').toLowerCase()
-    if (kind !== 'action') return true
-    const topic = String(intent?.topic || '').toLowerCase()
-    return ['drops', 'observe', 'players'].includes(topic)
-  }
-
-  function shouldAutoPickupAfterDropObservation (toolName, intent = {}) {
-    const low = String(toolName || '').toLowerCase()
-    if (low !== 'observe_detail') return false
-    const topic = String(intent?.topic || '').toLowerCase()
-    const kind = String(intent?.kind || '').toLowerCase()
-    return topic === 'drops' && kind === 'action'
-  }
-
-  function buildPickupArgsFromObserveArgs (args = {}) {
-    const out = { what: 'drops' }
-    const radius = Number(args?.radius)
-    if (Number.isFinite(radius) && radius > 0) out.radius = radius
-    const max = Number(args?.max)
-    if (Number.isFinite(max) && max > 0) out.max = max
-    const timeoutMs = Number(args?.timeoutMs)
-    if (Number.isFinite(timeoutMs) && timeoutMs > 0) out.timeoutMs = timeoutMs
-    return out
+    return kind === 'query' || kind === 'chat'
   }
 
   function shouldHaltAfterToolResult (toolName, intent = {}) {
@@ -1513,7 +1266,33 @@ function createChatExecutor ({
     }
   }
 
-  async function handleToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun = false, dryEvents = null, continueAfterToolResult = false, suppressActionReply = false }) {
+  // Keep a bounded, structured decision journal for replay/debugging across reloads.
+  async function handleToolReply (input) {
+    if (input.dryRun) return executeToolReply(input)
+    const argsJson = JSON.stringify(input.payload.args ?? {})
+    if (Buffer.byteLength(argsJson) > 32768) return { halt: true, result: 'tool_args_too_large', fallbackReply: '工具参数过大。' }
+    const records = state.aiToolDecisions = Array.isArray(state.aiToolDecisions) ? state.aiToolDecisions : []
+    state.aiToolDecisionSeq = (Number(state.aiToolDecisionSeq) || 0) + 1
+    const decision = { seq: state.aiToolDecisionSeq, at: now(), actor: input.username, tool: input.payload.tool, args: JSON.parse(argsJson), status: 'started' }
+    records.push(decision)
+    if (records.length > 100) records.splice(0, records.length - 100)
+    log?.event?.('ai.tool.decision', decision)
+    try {
+      const output = await executeToolReply(input)
+      decision.status = 'returned'
+      decision.result = output.result
+      return output
+    } catch (error) {
+      decision.status = 'threw'
+      decision.error = String(error?.message || error)
+      throw error
+    } finally {
+      decision.finishedAt = now()
+      log?.event?.('ai.tool.result', decision)
+    }
+  }
+
+  async function executeToolReply ({ payload, speech, username, content, intent, maxReplyLen, memoryRefs, dryRun = false, dryEvents = null, continueAfterToolResult = false, suppressActionReply = false }) {
     const replyLimit = Number.isFinite(maxReplyLen) && maxReplyLen > 0 ? Math.floor(maxReplyLen) : undefined
     const result = (resultText, fallbackReply = '') => ({ result: String(resultText || 'ok'), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
     const halt = (resultText = 'halt', fallbackReply = '') => ({ halt: true, result: String(resultText), fallbackReply: H.trimReply(String(fallbackReply || ''), replyLimit) })
@@ -1563,19 +1342,6 @@ function createChatExecutor ({
       }
       const summary = buildActionResultSummary({ toolName, res: dryRes })
       appendDry('tool.result', { tool: toolName, result: compactJsonValue(dryRes, 0), summary })
-      if (shouldAutoPickupAfterDropObservation(toolName, intent) && dryRes?.ok !== false && isActionToolAllowed('pickup')) {
-        const pickupArgs = buildPickupArgsFromObserveArgs(payload.args || {})
-        appendDry('tool.call', { tool: 'pickup', args: pickupArgs })
-        let pickupDryRes
-        try {
-          pickupDryRes = actions.dry ? await actions.dry('pickup', pickupArgs) : { ok: false, msg: 'dry-run unsupported' }
-        } catch (err) {
-          pickupDryRes = { ok: false, msg: 'dry-run failed', error: String(err?.message || err) }
-        }
-        const pickupSummary = buildActionResultSummary({ toolName: 'pickup', res: pickupDryRes })
-        appendDry('tool.result', { tool: 'pickup', result: compactJsonValue(pickupDryRes, 0), summary: pickupSummary })
-        return halt([summary, pickupSummary].filter(Boolean).join(' ; '))
-      }
       if (shouldHaltAfterToolResult(toolName, intent)) return continueAfterToolResult ? result(summary) : halt(summary)
       return result(summary)
     }
@@ -1638,6 +1404,15 @@ function createChatExecutor ({
       if (state.ai.trace && log?.info) log.info('tool write_memory ->', { text: normalized, author, source, importance, ok: added.ok })
       if (!added.ok) return halt('write_memory_failed', '记忆没有保存下来~')
       return halt('write_memory_saved', speech ? '' : '记住啦~')
+    }
+    if (toolName === 'forget_memory') {
+      const query = typeof payload.args?.query === 'string' ? payload.args.query.trim() : ''
+      if (!query) return halt('forget_memory_invalid', '请指定要忘记的内容。')
+      const changed = memory.longTerm.disableMemories?.({ query, actor: username, reason: 'tool:forget_memory', scope: 'owned' })
+      if (!changed?.ok) return halt('forget_memory_failed', '记忆没有修改。')
+      const count = changed.disabled?.length || 0
+      try { contextBus?.pushEvent('memory.disabled', JSON.stringify({ actor: username, count })) } catch {}
+      return halt('forget_memory_done', count ? '好，我不再这样说了。' : '没有找到匹配的记忆。')
     }
     if (toolName === 'add_commitment') {
       const actionRaw = payload.args?.action
@@ -1739,18 +1514,6 @@ function createChatExecutor ({
     const finalText = H.trimReply(baseMsg || fallback, replyLimit)
     if (finalText && !suppressActionReply) pulse.sendChatReply(username, finalText, { reason: `tool_${toolName}`, memoryRefs })
     const summary = buildActionResultSummary({ toolName, res })
-    if (shouldAutoPickupAfterDropObservation(toolName, intent) && res?.ok !== false && isActionToolAllowed('pickup')) {
-      const pickupArgs = buildPickupArgsFromObserveArgs(payload.args || {})
-      try { contextBus?.pushEvent('tool.intent', 'pickup') } catch {}
-      const pickupRes = await runActionTool('pickup', pickupArgs)
-      if (state.ai.trace && log?.info) log.info('tool ->', 'pickup', pickupArgs, pickupRes)
-      const pickupBaseMsg = pickupRes && typeof pickupRes === 'object' ? (pickupRes.msg || '') : ''
-      const pickupFallback = pickupRes && pickupRes.ok ? '完成啦~' : '这次没成功！'
-      const pickupText = H.trimReply(pickupBaseMsg || pickupFallback, replyLimit)
-      if (pickupText) pulse.sendChatReply(username, pickupText, { reason: 'tool_pickup', memoryRefs })
-      const pickupSummary = buildActionResultSummary({ toolName: 'pickup', res: pickupRes })
-      return halt([summary, pickupSummary].filter(Boolean).join(' ; '))
-    }
     if (shouldHaltAfterToolResult(toolName, intent)) return continueAfterToolResult ? result(summary) : halt(summary)
     return result(summary)
   }
@@ -1759,9 +1522,7 @@ function createChatExecutor ({
     const actor = String(username || 'dry_user').trim() || 'dry_user'
     const text = String(content || '').trim()
     if (!text) return { ok: false, error: 'missing content' }
-    const intent = (options && typeof options.intent === 'object' && options.intent)
-      ? options.intent
-      : classifyIntent(text)
+    const intent = H.normalizeIntent(options.intent)
     const withTools = options?.withTools !== false
     const maxToolCalls = Number(options?.maxToolCalls)
     const profile = typeof H.selectContextProfile === 'function'
@@ -1805,18 +1566,6 @@ function createChatExecutor ({
     }
   }
 
-  function classifyStopCommand (text) {
-    try {
-      const t = String(text || '').toLowerCase()
-      const tCN = String(text || '')
-      if (/(don't|do not)\s*reset/.test(t)) return false
-      if (/不要.*重置|别.*重置|不要.*复位|别.*复位/.test(tCN)) return false
-      if (/(stop|cancel|abort|reset)/i.test(t)) return true
-      if (/停止|停下|别动|取消|终止|重置|复位|归位|不要.*(追|打|攻击)|停止追击|停止攻击|停止清怪/.test(tCN)) return true
-      return false
-    } catch { return false }
-  }
-
   async function processChatContent (username, content, raw, source) {
     if (!state.ai.enabled) return
     let text = String(content || '').trim()
@@ -1825,84 +1574,12 @@ function createChatExecutor ({
     pulse.activateSession(username, source)
     pulse.touchConversationSession(username)
     const reasonTag = source === 'followup' ? 'followup' : 'trigger'
-    if (/(下坐|下车|下马|dismount|停止\s*(骑|坐|骑乘|乘坐)|不要\s*(骑|坐)|别\s*(骑|坐))/i.test(text)) {
-      try {
-        const res = await actions.run('dismount', {})
-        pulse.sendChatReply(username, res.ok ? (res.msg || '好的') : (`失败: ${res.msg || '未知'}`), { reason: `${reasonTag}_tool` })
-      } catch {}
-      return
-    }
-    if (classifyStopCommand(text)) {
-      clearPlan('stop_message')
-      try {
-        await actions.run('reset', {})
-      } catch {}
-      pulse.sendChatReply(username, '好的', { reason: `${reasonTag}_stop` })
-      return
-    }
-    // Memory commands are high-priority and should not be delayed/dropped by pending batching.
-    const forget = memory.longTerm.extractForgetCommand ? memory.longTerm.extractForgetCommand(text) : null
-    if (forget) {
-      const res = (() => {
-        if (forget.query && memory.longTerm.disableMemories) {
-          return memory.longTerm.disableMemories({ query: forget.query, actor: username, reason: forget.kind || 'forget', scope: 'owned' })
-        }
-        if (forget.mode === 'self_nickname' && memory.longTerm.disableSelfNicknameMemories) {
-          return memory.longTerm.disableSelfNicknameMemories({ actor: username, reason: forget.kind || 'revoke' })
-        }
-        return { ok: false, disabled: [] }
-      })()
-      const disabledCount = Array.isArray(res.disabled) ? res.disabled.length : 0
-      if (disabledCount && contextBus) {
-        try { contextBus.pushEvent('memory.disabled', `${username}:${disabledCount}`) } catch {}
-      }
-      if (forget.kind === 'revoke') {
-        const q = String(forget.query || '').trim().slice(0, 24)
-        if (q) {
-          const pref = `${username}不希望被称为“${q}”。`
-          try { memory.longTerm.addEntry?.({ text: pref, author: username, source: 'player', importance: 2 }) } catch {}
-        }
-      }
-      if (!disabledCount) {
-        pulse.sendChatReply(username, '我没找到要忘的那条记忆…你说更具体点？', { reason: 'memory_forget_none' })
-        return
-      }
-      pulse.sendChatReply(username, '好，我不再这样说了。', { reason: 'memory_forget' })
-      return
-    }
-    const memoryText = memory.longTerm.extractCommand(text)
-    if (memoryText) {
-      const localReject = typeof memory.longTerm.shouldRejectCommandLocally === 'function'
-        ? memory.longTerm.shouldRejectCommandLocally(memoryText)
-        : null
-      if (localReject?.reject) {
-        pulse.sendChatReply(username, localReject.reason ? `这句记不住：${localReject.reason}` : '这句记不住喵~', { reason: 'memory_reject_local' })
-        return
-      }
-      const localSaved = typeof memory.longTerm.trySaveStructuredCommandLocally === 'function'
-        ? memory.longTerm.trySaveStructuredCommandLocally(memoryText, username)
-        : null
-      if (localSaved?.ok) {
-        pulse.sendChatReply(username, localSaved.msg || '记住啦~', { reason: 'memory_local' })
-        return
-      }
-      if (!state.ai?.key) {
-        pulse.sendChatReply(username, '现在记不住呀，AI 没开~', { reason: 'memory_key' })
-        return
-      }
-      const job = {
-        id: `mem_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
-        player: username,
-        text: memoryText,
-        original: raw,
-        recent: memory.rewrite.recentSnippet(6),
-        createdAt: now(),
-        source: 'player',
-        attempts: 0,
-        context: collectMemoryContext(memoryText)
-      }
-      memory.rewrite.enqueueJob(job)
-      pulse.sendChatReply(username, '收到啦，我整理一下~', { reason: 'memory_queue' })
+    // Explicit command grammar, never substring matching of natural language.
+    const command = new Map([['/stop', 'reset'], ['/reset', 'reset'], ['/dismount', 'dismount']]).get(text)
+    if (command) {
+      if (command === 'reset') clearPlan('explicit_stop')
+      const res = await actions.run(command, {})
+      pulse.sendChatReply(username, res?.msg || (res?.ok ? '好的' : '执行失败'), { reason: `${reasonTag}_command` })
       return
     }
     // Pending rule: while an AI request is in-flight, accumulate incoming chat;
@@ -1918,10 +1595,8 @@ function createChatExecutor ({
       scheduleFollowupFlush()
       return
     }
-    const intent = classifyIntent(text)
+    const intent = H.normalizeIntent()
     if (state.ai.trace && log?.info) { try { log.info('intent ->', intent) } catch {} }
-    const acted = await maybeHandleLocalQuery({ username, text, raw, source, intent, reasonTag })
-    if (acted) return
     const allowed = canProceed(username)
     if (!allowed.ok) {
       if (state.ai?.limits?.notify !== false) {
@@ -1952,86 +1627,6 @@ function createChatExecutor ({
       ctrl.busy = false
       flushPending()
     }
-  }
-
-  async function maybeHandleLocalQuery ({ username, text, raw, source, intent, reasonTag }) {
-    const topic = String(intent?.topic || '').toLowerCase()
-    if (isObviousBotPositionQuery(text, intent)) {
-      const textOut = H.trimReply(buildLocalBotPositionReply(), state.ai?.maxReplyLen)
-      if (textOut) {
-        pulse.sendChatReply(username, textOut, {
-          reason: `${reasonTag || source || 'chat'}_local_position`
-        })
-        return true
-      }
-    }
-    let local = null
-    if (topic === 'stats' || topic === 'leaderboard') {
-      local = topic === 'leaderboard'
-        ? {
-            tool: 'query_leaderboard',
-            args: {
-              type: inferLeaderboardType(text),
-              period: inferStatsPeriod(text),
-              limit: 5
-            },
-            topic
-          }
-        : {
-            tool: 'query_player_stats',
-            args: {
-              name: extractPlayerNameForStats(text, username),
-              period: inferPlayerStatsPeriod(text),
-              type: inferStatsType(text)
-            },
-            topic
-          }
-    } else {
-      const readOnly = inferLocalReadOnlyQuery(text, intent, username)
-      if (readOnly) local = readOnly
-      else {
-        const observe = inferLocalObserveQuery(text, intent)
-        if (observe) local = { ...observe, topic: 'observe' }
-      }
-    }
-    if (!local) return false
-    const { tool, args } = local
-    try { contextBus?.pushEvent('tool.intent', tool) } catch {}
-    const res = await runLocalActionTool(tool, args)
-    if (tool === 'observe_detail' || tool === 'observe_players') {
-      try {
-        const line = buildObserveContextLine({ toolName: tool, args, res })
-        if (line) contextBus?.pushTool?.(line)
-      } catch {}
-    }
-    const msg = res && typeof res === 'object' ? (res.msg || res.error || '') : ''
-    const textOut = H.trimReply(msg || (res?.ok === false ? '查询失败' : '查到了'), state.ai?.maxReplyLen)
-    if (textOut) {
-      pulse.sendChatReply(username, textOut, {
-        reason: `${reasonTag || source || 'chat'}_local_${local.topic || topic || 'query'}`,
-        toolUsed: tool
-      })
-    }
-    return true
-  }
-
-  function collectMemoryContext (memoryText) {
-    try {
-      const pos = (() => {
-        const entityPos = bot.entity?.position
-        if (!entityPos) return null
-        return { x: Math.round(entityPos.x), y: Math.round(entityPos.y), z: Math.round(entityPos.z) }
-      })()
-      const dim = (() => {
-        try {
-          const rawDim = bot.game?.dimension
-          if (typeof rawDim === 'string' && rawDim.length) return rawDim
-        } catch {}
-        return null
-      })()
-      if (!pos) return null
-      return { position: pos, dimension: dim, radius: 50, featureHint: memoryText }
-    } catch { return null }
   }
 
   async function handleChat (username, message) {

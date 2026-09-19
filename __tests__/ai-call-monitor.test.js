@@ -656,7 +656,7 @@ test('memory rewrite caps external calls per queue run', async () => {
   }
 })
 
-test('low-signal memory commands do not enqueue memory rewrite LLM calls', async () => {
+test('memory requests reach the main model without a background rewrite', async () => {
   const sent = []
   const state = {
     ai: {
@@ -691,7 +691,7 @@ test('low-signal memory commands do not enqueue memory rewrite LLM calls', async
       ok: true,
       status: 200,
       json: async () => ({
-        choices: [{ message: { role: 'assistant', content: '{"status":"reject","reason":"低价值"}' } }]
+        choices: [{ message: { role: 'assistant', content: '这条不需要保存。' } }]
       })
     }
   }
@@ -736,7 +736,7 @@ test('low-signal memory commands do not enqueue memory rewrite LLM calls', async
     await executor.processChatContent('Alice', '记住 666666666666', '记住 666666666666', 'trigger')
     await new Promise(resolve => setTimeout(resolve, 30))
 
-    assert.equal(calls, 0)
+    assert.equal(calls, 2)
     assert.equal(state.aiCallMonitor.bySource.memory_rewrite?.ok || 0, 0)
     assert.equal(state.aiMemory.queue.length, 0)
     assert.equal(sent.some(row => row.meta?.reason === 'memory_queue'), false)
@@ -745,7 +745,7 @@ test('low-signal memory commands do not enqueue memory rewrite LLM calls', async
   }
 })
 
-test('coordinate memory command is saved locally without memory rewrite LLM call', async () => {
+test('coordinate memory is saved only through an explicit model write_memory call', async () => {
   const sent = []
   const state = {
     ai: {
@@ -780,7 +780,7 @@ test('coordinate memory command is saved locally without memory rewrite LLM call
       ok: true,
       status: 200,
       json: async () => ({
-        choices: [{ message: { role: 'assistant', content: '{"status":"ok","instruction":"基地坐标是100,64,200"}' } }]
+        choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'save_1', type: 'function', function: { name: 'write_memory', arguments: JSON.stringify({ text: '基地坐标是100,64,200' }) } }] } }]
       })
     }
   }
@@ -824,16 +824,14 @@ test('coordinate memory command is saved locally without memory rewrite LLM call
     await executor.processChatContent('Alice', '记住 基地坐标是 100,64,200', '记住 基地坐标是 100,64,200', 'trigger')
     await new Promise(resolve => setTimeout(resolve, 30))
 
-    assert.equal(calls, 0)
+    assert.equal(calls, 1)
     assert.equal(state.aiCallMonitor.bySource.memory_rewrite?.ok || 0, 0)
     assert.equal(state.aiMemory.queue.length, 0)
     assert.equal(state.aiMemory.entries.length, 1)
-    assert.equal(state.aiMemory.entries[0].location.x, 100)
-    assert.equal(state.aiMemory.entries[0].location.y, 64)
-    assert.equal(state.aiMemory.entries[0].location.z, 200)
-    assert.match(state.aiMemory.entries[0].summary, /基地/)
+    assert.match(state.aiMemory.entries[0].text, /基地坐标是100,64,200/)
     assert.equal(sent.some(row => row.meta?.reason === 'memory_queue'), false)
-    assert.equal(sent.some(row => row.meta?.reason === 'memory_local'), true)
+    assert.equal(state.aiToolDecisions[0].tool, 'write_memory')
+    assert.equal(state.aiToolDecisions[0].status, 'returned')
   } finally {
     global.fetch = oldFetch
   }
@@ -1177,7 +1175,7 @@ test('executor delays and merges idle followups into one main chat call', async 
   }
 })
 
-test('executor answers obvious pending observe followup locally without extra main chat call', async () => {
+test('executor routes pending observation followups to the main model', async () => {
   let t = 1000
   const now = () => t
   const state = {
@@ -1268,17 +1266,16 @@ test('executor answers obvious pending observe followup locally without extra ma
     await executor.handleChat('Alice', '附近有什么实体')
     await new Promise(resolve => setTimeout(resolve, 70))
 
-    assert.equal(fetchCalls, 1, 'obvious observe followup should not call provider again')
-    assert.deepEqual(toolRuns.map(entry => entry.tool), ['observe_detail'])
-    assert.equal(toolRuns[0].args.what, 'entities')
-    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), true)
-    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
+    assert.equal(fetchCalls, 2, 'observation semantics must be decided by the provider')
+    assert.deepEqual(toolRuns, [])
+    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), false)
+    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 2)
   } finally {
     global.fetch = oldFetch
   }
 })
 
-test('executor answers multiple local-only followups without a merged main chat call', async () => {
+test('executor batches multiple observation followups into one model request', async () => {
   let t = 1000
   const now = () => t
   const state = {
@@ -1371,17 +1368,17 @@ test('executor answers multiple local-only followups without a merged main chat 
     await executor.handleChat('Alice', '你现在坐标在哪')
     await new Promise(resolve => setTimeout(resolve, 70))
 
-    assert.equal(fetchCalls, 1, 'local-only followup batch should not call provider again')
-    assert.deepEqual(toolRuns.map(entry => entry.tool), ['observe_detail'])
-    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), true)
-    assert.equal(sent.some(row => /当前位置: 0, 64, 0/.test(row.text)), true)
-    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 1)
+    assert.equal(fetchCalls, 2, 'followups should share one provider request')
+    assert.deepEqual(toolRuns, [])
+    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), false)
+    assert.equal(sent.some(row => /当前位置: 0, 64, 0/.test(row.text)), false)
+    assert.equal(state.aiCallMonitor.bySource.main_chat.ok, 2)
   } finally {
     global.fetch = oldFetch
   }
 })
 
-test('executor strips local followups before merging remaining chat into provider prompt', async () => {
+test('executor retains observation and chat followups in the same provider prompt', async () => {
   let t = 1000
   const now = () => t
   const state = {
@@ -1476,10 +1473,10 @@ test('executor strips local followups before merging remaining chat into provide
     await new Promise(resolve => setTimeout(resolve, 70))
 
     assert.equal(bodies.length, 2)
-    assert.deepEqual(toolRuns.map(entry => entry.tool), ['observe_detail'])
-    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), true)
+    assert.deepEqual(toolRuns, [])
+    assert.equal(sent.some(row => /附近实体1个/.test(row.text)), false)
     const promptText = (bodies[1].messages || bodies[1].input || []).map(m => m.content || '').join('\n')
-    assert.doesNotMatch(promptText, /附近有什么实体/)
+    assert.match(promptText, /附近有什么实体/)
     assert.match(promptText, /顺便你刚才说的再解释一下/)
   } finally {
     global.fetch = oldFetch

@@ -141,7 +141,7 @@ function selectContextProfile (intent = {}, options = {}) {
       includeDialogue: true,
       includeRecent: true,
       withTools: true,
-      maxInputTokens: 6500
+      maxInputTokens: 8000
     }
   }
 
@@ -152,6 +152,7 @@ function selectContextProfile (intent = {}, options = {}) {
   if (explicit === 'plan' || explicit === 'loop' || explicit === 'tool_loop' || explicit === 'plan_context') return clone('plan_context')
 
   if (reason === 'look_greet' || reason === 'auto-look' || reason === 'auto_look') return clone('greet_minimal')
+  if (kind === 'unknown') return { ...clone('task_context'), name: 'model_context', maxInputTokens: 12000 }
   if (topic === 'greet' && nearby) return clone('greet_minimal')
   if (topic === 'plan') return clone('plan_context')
   if (['drops', 'players'].includes(topic)) return clone('local_observe_context')
@@ -160,22 +161,19 @@ function selectContextProfile (intent = {}, options = {}) {
   return clone('chat_context')
 }
 
-function classifyIntent (text) {
-  const trimmed = String(text || '').trim()
-  const lower = trimmed.toLowerCase()
-  const intent = { topic: 'generic', nearby: false, kind: 'chat' }
-  if (!trimmed) return intent
-  if (/^\/tpa\s+/i.test(trimmed)) return { topic: 'command', nearby: false, kind: 'command' }
-  if (/座标|坐标|坐標|在哪|哪里|哪儿|哪边|where|location|position|位置/.test(lower)) intent.topic = 'position'
-  if (/谁在线|在线.*谁|附近.*谁|谁.*附近|附近.*玩家|玩家.*附近|player|玩家|同行|online/.test(lower)) intent.topic = 'players'
-  if (/掉落|战利|loot|drop/.test(lower)) intent.topic = 'drops'
-  if (/排行榜|排行|榜单|leaderboard|rank(ing)?/.test(lower)) intent.topic = 'leaderboard'
-  if (intent.topic !== 'leaderboard' && /统计|在线时长|发言|聊天次数|死亡次数|活跃度|stats?\b/.test(lower)) intent.topic = 'stats'
-  if (/承诺|待办|todo|promise|commitment/.test(lower)) intent.topic = 'commitment'
-  if (/附近|near|around|周围/.test(lower)) intent.nearby = true
-  if (/攻击|追击|追杀|清怪|清理|守护|防守|保护|护卫|跟随|跟着|跟我|跟上|跟来|移动|走到|走去|过去|去到|站到|站在|到.+上|到.+边|follow|kill|defend|hunt|guard|escort|move|walk|go to|goto/.test(lower)) intent.kind = 'action'
-  if (intent.topic === 'generic' && /观察|看看|look|observe/.test(lower)) intent.topic = 'observe'
-  return intent
+// Natural language is interpreted by the provider's structured tool calls.
+// Only callers with explicit structured intent may narrow context/tool scope.
+function normalizeIntent (value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { topic: 'generic', nearby: false, kind: 'unknown' }
+  }
+  const topics = ['generic', 'greet', 'plan', 'drops', 'players', 'position', 'observe', 'stats', 'leaderboard', 'people', 'commitment', 'voice', 'command']
+  const kinds = ['chat', 'action', 'command', 'query']
+  return {
+    topic: topics.includes(value.topic) ? value.topic : 'generic',
+    nearby: value.nearby === true,
+    kind: kinds.includes(value.kind) ? value.kind : 'unknown'
+  }
 }
 
 function stripInternalMessageFields (msg, options = {}) {
@@ -582,7 +580,7 @@ module.exports = {
   trimReply,
   buildContextPrompt,
   selectContextProfile,
-  classifyIntent,
+  normalizeIntent,
   stripInternalMessageFields,
   fitMessagesToTokenBudget,
   projectedCostForCall,

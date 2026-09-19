@@ -498,7 +498,7 @@ test('chat profile includes group people records for Minecraft chat', async () =
   }
 })
 
-test('non-action Chinese chat containing 打 stays on non-action chat profile', async () => {
+test('non-action Chinese chat containing 打 leaves tool selection to the provider', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
   const harness = makeExecutor({
     recent,
@@ -516,16 +516,16 @@ test('non-action Chinese chat containing 打 stays on non-action chat profile', 
     assert.equal(harness.calls.length, 1)
     const call = harness.calls[0]
     assert.equal(Array.isArray(call.body.tools), true)
-    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), false)
+    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), true)
     const text = promptTextFromCall(call)
     assert.match(text, /不该注入的游戏状态/)
-    assert.ok(providerInputTokensFromCall(call) <= 5000, `expected chat input <= 5000 tokens, got ${providerInputTokensFromCall(call)}`)
+    assert.ok(providerInputTokensFromCall(call) <= 12000, `expected chat input <= 12000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
 })
 
-test('casual Chinese chat containing 哪有 stays on non-action chat profile', async () => {
+test('casual Chinese chat containing 哪有 leaves tool selection to the provider', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
   const harness = makeExecutor({
     recent,
@@ -543,16 +543,16 @@ test('casual Chinese chat containing 哪有 stays on non-action chat profile', a
     assert.equal(harness.calls.length, 1)
     const call = harness.calls[0]
     assert.equal(Array.isArray(call.body.tools), true)
-    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), false)
+    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), true)
     const text = promptTextFromCall(call)
     assert.match(text, /不该注入的位置游戏状态/)
-    assert.ok(providerInputTokensFromCall(call) <= 5000, `expected casual 哪有 chat input <= 5000 tokens, got ${providerInputTokensFromCall(call)}`)
+    assert.ok(providerInputTokensFromCall(call) <= 12000, `expected casual 哪有 chat input <= 12000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
 })
 
-test('casual Chinese chat containing 谁懂 stays on non-action chat profile', async () => {
+test('casual Chinese chat containing 谁懂 leaves tool selection to the provider', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-02-14', count: 80, chars: 220 })
   const harness = makeExecutor({
     recent,
@@ -570,10 +570,10 @@ test('casual Chinese chat containing 谁懂 stays on non-action chat profile', a
     assert.equal(harness.calls.length, 1)
     const call = harness.calls[0]
     assert.equal(Array.isArray(call.body.tools), true)
-    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), false)
+    assert.equal(call.body.tools.some(tool => tool?.function?.name === 'goto_block'), true)
     const text = promptTextFromCall(call)
     assert.match(text, /不该注入的玩家观察状态/)
-    assert.ok(providerInputTokensFromCall(call) <= 5000, `expected casual 谁懂 chat input <= 5000 tokens, got ${providerInputTokensFromCall(call)}`)
+    assert.ok(providerInputTokensFromCall(call) <= 12000, `expected casual 谁懂 chat input <= 12000 tokens, got ${providerInputTokensFromCall(call)}`)
   } finally {
     harness.restore()
   }
@@ -614,7 +614,7 @@ test('tool loop does not repeat identical tool calls from a stuck model', async 
     )
     const calledTools = (res.dryEvents || []).filter(e => e.type === 'tool.call').map(e => e.tool)
     assert.deepEqual(calledTools, ['observe_detail'])
-    assert.equal(harness.calls.length, 1, `expected no follow-up model call after observe, got ${harness.calls.length}`)
+    assert.equal(harness.calls.length, 2, `expected repeated tool call to short circuit, got ${harness.calls.length}`)
   } finally {
     harness.restore()
   }
@@ -769,70 +769,6 @@ test('local stats tool result halts without a second model call', async () => {
   }
 })
 
-test('obvious player stats chat is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({
-    recent,
-    actionResults: {
-      query_player_stats: { ok: true, msg: 'Alice 总计: 在线1h20m, 发言12条, 死亡0次' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 查一下 Alice 的统计')
-    assert.equal(harness.calls.length, 0, `expected player stats query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['query_player_stats'])
-    assert.equal(harness.toolRuns[0].args.name, 'Alice')
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /Alice 总计/)
-  } finally {
-    harness.restore()
-  }
-})
-
-test('local player stats query bypasses main chat rate limit without provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const nowTs = Date.now()
-  const harness = makeExecutor({
-    recent,
-    aiOverrides: { limits: { userPerMin: 1, notify: true } },
-    aiStats: { global: [nowTs], perUser: new Map([['kuleizi', [nowTs]]]) },
-    actionResults: {
-      query_player_stats: { ok: true, msg: 'Alice 总计: 在线1h20m, 发言12条, 死亡0次' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 查一下 Alice 的统计')
-    assert.equal(harness.calls.length, 0, `expected local stats query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['query_player_stats'])
-    assert.equal(harness.toolRuns[0].args.name, 'Alice')
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /Alice 总计/)
-    assert.doesNotMatch(harness.sent[0].text, /太快/)
-  } finally {
-    harness.restore()
-  }
-})
-
-test('obvious leaderboard chat is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({
-    recent,
-    actionResults: {
-      query_leaderboard: { ok: true, msg: '总活跃度榜: 1.Alice(42) 2.Bob(30)' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 活跃度排行榜')
-    assert.equal(harness.calls.length, 0, `expected leaderboard query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['query_leaderboard'])
-    assert.equal(harness.toolRuns[0].args.type, 'score')
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /活跃度榜/)
-  } finally {
-    harness.restore()
-  }
-})
-
 test('local people commitment tool result halts without a second model call', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({
@@ -866,27 +802,6 @@ test('local people commitment tool result halts without a second model call', as
     assert.equal(res.reply, '')
     assert.equal(harness.sent.length, 1)
     assert.match(harness.sent[0].text, /ok|完成/)
-  } finally {
-    harness.restore()
-  }
-})
-
-test('obvious people commitment list chat is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({
-    recent,
-    actionResults: {
-      people_commitments_list: { ok: true, msg: 'Alice 待办承诺: 1. 帮 Alice 找回家路线' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('Alice', 'owkowk 看一下我还有哪些承诺')
-    assert.equal(harness.calls.length, 0, `expected commitment list query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['people_commitments_list'])
-    assert.equal(harness.toolRuns[0].args.mode, 'pending')
-    assert.equal(harness.toolRuns[0].args.player, 'Alice')
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /待办承诺/)
   } finally {
     harness.restore()
   }
@@ -930,42 +845,6 @@ test('read-only observe query halts without a second model call', async () => {
   }
 })
 
-test('obvious nearby entity query is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({
-    recent,
-    actionResults: {
-      observe_detail: { ok: true, msg: '附近实体1个(半径32): cat「方头耄耋」 12.9m' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 附近有什么实体')
-    assert.equal(harness.calls.length, 0, `expected obvious nearby entity query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['observe_detail'])
-    assert.equal(harness.toolRuns[0].args.what, 'entities')
-    assert.equal(harness.toolRuns[0].args.radius, 32)
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /附近实体1个/)
-  } finally {
-    harness.restore()
-  }
-})
-
-test('obvious bot position query is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({ recent })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 你现在坐标在哪')
-    assert.equal(harness.calls.length, 0, `expected bot position query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.equal(harness.toolRuns.length, 0)
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /当前位置/)
-    assert.match(harness.sent[0].text, /0,\s*64,\s*0/)
-  } finally {
-    harness.restore()
-  }
-})
-
 test('location knowledge query is not mistaken for bot position', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({ recent, assistantContent: '我想一下基地的位置。' })
@@ -980,47 +859,7 @@ test('location knowledge query is not mistaken for bot position', async () => {
   }
 })
 
-test('obvious book read query is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({
-    recent,
-    actionResults: {
-      read_book: { ok: true, msg: '书本[1] OwO Diary: 第一页内容' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 读一下背包里的书')
-    assert.equal(harness.calls.length, 0, `expected book query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['read_book'])
-    assert.equal(harness.toolRuns[0].args.list, false)
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /OwO Diary/)
-  } finally {
-    harness.restore()
-  }
-})
-
-test('obvious voice status query is answered locally without a provider call', async () => {
-  const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
-  const harness = makeExecutor({
-    recent,
-    actionResults: {
-      voice_status: { ok: true, msg: '语音状态: connected' }
-    }
-  })
-  try {
-    await harness.executor.handleChat('kuleizi', 'owkowk 检查语音状态')
-    assert.equal(harness.calls.length, 0, `expected voice status query to avoid provider fetch, got ${harness.calls.length}`)
-    assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['voice_status'])
-    assert.deepEqual(harness.toolRuns[0].args, {})
-    assert.equal(harness.sent.length, 1)
-    assert.match(harness.sent[0].text, /connected/)
-  } finally {
-    harness.restore()
-  }
-})
-
-test('read-only observe action halts without a second model call before pickup', async () => {
+test('observe then pickup requires an explicit model decision after observing', async () => {
   const recent = makeRecentFromLogShape({ day: '2026-01-31', count: 10, chars: 80 })
   const harness = makeExecutor({
     recent,
@@ -1043,7 +882,7 @@ test('read-only observe action halts without a second model call before pickup',
           }
         ]
       },
-      { role: 'assistant', content: '二次总结不应该发生' }
+      { role: 'assistant', content: '', tool_calls: [{ id: 'pickup_2', type: 'function', function: { name: 'pickup', arguments: '{}' } }] }
     ]
   })
   try {
@@ -1053,7 +892,7 @@ test('read-only observe action halts without a second model call before pickup',
       { topic: 'drops', kind: 'action', nearby: true },
       { inlineUserContent: true }
     )
-    assert.equal(harness.calls.length, 1, `expected observe action to avoid follow-up LLM call, got ${harness.calls.length}`)
+    assert.equal(harness.calls.length, 2, `expected observe result to return to model for explicit pickup, got ${harness.calls.length}`)
     assert.equal(res.reply, '')
     assert.deepEqual(harness.toolRuns.map(entry => entry.tool), ['observe_detail', 'pickup'])
     assert.equal(harness.sent.length, 2)
@@ -1370,7 +1209,7 @@ test('generic action uses a narrow default tool schema without unrelated resourc
     assert.equal(toolNames.includes('mine_ore'), false)
     assert.equal(toolNames.includes('harvest'), false)
     const toolTokens = H.estTokensFromText(JSON.stringify(call.body.tools))
-    assert.ok(toolTokens < 2700, `expected generic action tool schema < 2700 tokens, got ${toolTokens}`)
+    assert.ok(toolTokens < 3200, `expected generic action tool schema < 3200 tokens, got ${toolTokens}`)
   } finally {
     harness.restore()
   }
@@ -1419,16 +1258,93 @@ test('plan context keeps broader context but caps log-shaped prompt below plan b
     )
     const text = promptTextFromCall(harness.calls[0])
     const tokens = H.estTokensFromText(text)
-    assert.ok(tokens < 6500, `expected plan prompt < 6500 tokens, got ${tokens}`)
+    assert.ok(tokens < 8000, `expected plan prompt < 8000 tokens, got ${tokens}`)
     assert.ok(tokens < HISTORICAL_2026_02_14_AVG_INPUT_TOKENS, `expected plan prompt below historical avg ${HISTORICAL_2026_02_14_AVG_INPUT_TOKENS}, got ${tokens}`)
     assert.match(text, /游戏上下文/)
     assert.match(text, /长期记忆/)
     assert.match(text, /对话摘要/)
     assert.equal(Array.isArray(harness.calls[0].body.tools), true)
     const toolTokens = H.estTokensFromText(JSON.stringify(harness.calls[0].body.tools))
-    assert.ok(toolTokens < 5000, `expected compact plan tool schema < 5000 tokens, got ${toolTokens}`)
+    assert.ok(toolTokens < 5500, `expected compact plan tool schema < 5500 tokens, got ${toolTokens}`)
     assert.equal((text.match(/<p |<b /g) || []).length <= 20, true)
   } finally {
     harness.restore()
   }
+})
+
+
+test('natural language reaches the provider without regex-selected actions', async () => {
+  for (const text of ['查一下 Alice 的统计', '附近有什么实体', '你在哪里', '读一下背包里的书', '检查语音状态', '列出我的承诺', '不要攻击我', '停止是什么意思', '不要下马', 'constructor']) {
+    const h = makeExecutor({ recent: [] })
+    try {
+      await h.executor.handleChat('Alice', `owkowk ${text}`)
+      assert.equal(h.calls.length, 1, text)
+      assert.deepEqual(h.toolRuns, [], text)
+      const tools = h.calls[0].body.tools.map(t => t.function.name)
+      for (const name of ['query_player_stats', 'observe_detail', 'read_book', 'voice_status', 'reset', 'mine_ore']) assert.ok(tools.includes(name), name)
+      assert.ok(providerInputTokensFromCall(h.calls[0]) <= 12000)
+    } finally { h.restore() }
+  }
+})
+
+test('explicit stop remains immediate and works while provider is rate limited', async () => {
+  const now = Date.now()
+  const h = makeExecutor({ recent: [], aiOverrides: { limits: { userPerMin: 1 } }, aiStats: { global: [now], perUser: new Map([['Alice', [now]]]) } })
+  try {
+    await h.executor.handleChat('Alice', 'owkowk /stop')
+    assert.equal(h.calls.length, 0)
+    assert.deepEqual(h.toolRuns.map(t => t.tool), ['reset'])
+  } finally { h.restore() }
+})
+
+test('natural language queries obey provider limits instead of local keyword bypass', async () => {
+  const now = Date.now()
+  const h = makeExecutor({ recent: [], aiOverrides: { limits: { userPerMin: 1, notify: true } }, aiStats: { global: [now], perUser: new Map([['Alice', [now]]]) } })
+  try {
+    await h.executor.handleChat('Alice', 'owkowk 查一下 Alice 的统计')
+    assert.equal(h.calls.length, 0)
+    assert.deepEqual(h.toolRuns, [])
+    assert.match(h.sent[0].text, /太快/)
+  } finally { h.restore() }
+})
+
+test('offline preview reports unknown intent without interpreting text', async () => {
+  const h = makeExecutor({ recent: [] })
+  try {
+    const r = await h.executor.dryDialogue('Alice', '不要捡东西，只看看')
+    assert.equal(r.intent.kind, 'unknown')
+    assert.equal(r.provider.wouldCall, false)
+    assert.equal(h.calls.length, 0)
+    assert.deepEqual(h.toolRuns, [])
+    const explicit = await h.executor.dryDialogue('Alice', 'input', { intent: { kind: 'query', topic: 'players' } })
+    assert.ok(explicit.availableTools.includes('observe_players'))
+    assert.ok(!explicit.availableTools.includes('mine_ore'))
+  } finally { h.restore() }
+})
+
+test('observation alone never invents an automatic pickup', async () => {
+  const h = makeExecutor({ recent: [], assistantMessages: [
+    { role: 'assistant', content: '', tool_calls: [{ id: 'observe', type: 'function', function: { name: 'observe_detail', arguments: '{"what":"entities"}' } }] },
+    { role: 'assistant', content: '看到了，先不要捡。' }
+  ] })
+  try {
+    await h.executor.callAI('Alice', '先看看掉落', { kind: 'action', topic: 'drops' })
+    assert.deepEqual(h.toolRuns.map(t => t.tool), ['observe_detail'])
+    assert.equal(h.calls.length, 2)
+  } finally { h.restore() }
+})
+
+test('memory revocation requires a structured tool and is scoped to the current actor', async () => {
+  const changes = []
+  const memory = makeMemory()
+  memory.longTerm.disableMemories = args => { changes.push(args); return { ok: true, disabled: ['m1'] } }
+  const h = makeExecutor({ recent: [], memory, assistantMessages: [
+    { role: 'assistant', content: '', tool_calls: [{ id: 'forget', type: 'function', function: { name: 'forget_memory', arguments: '{"query":"旧昵称"}' } }] }
+  ] })
+  try {
+    await h.executor.handleChat('Alice', 'owkowk 忘记旧昵称')
+    assert.deepEqual(changes, [{ query: '旧昵称', actor: 'Alice', reason: 'tool:forget_memory', scope: 'owned' }])
+    assert.equal(h.calls.length, 1)
+    assert.match(h.sent[0].text, /不再这样说/)
+  } finally { h.restore() }
 })

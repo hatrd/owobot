@@ -7,7 +7,7 @@ import {
   projectedCostForCall,
   canAfford,
   selectContextProfile,
-  classifyIntent,
+  normalizeIntent,
   extractAssistantText,
   stripReasoningText,
   isResponsesApiPath,
@@ -142,10 +142,12 @@ test('extractInlineToolCallsFromText parses consecutive exact structured tool te
   assert.deepEqual(extractInlineToolCallsFromText('say{"text":"hi"} 这不是工具尾巴', ['say']), [])
 })
 
-test('classifyIntent treats follow/protect/hunt commands as actions', () => {
-  assert.deepEqual(classifyIntent('owk，跟随我'), { topic: 'generic', nearby: false, kind: 'action' })
-  assert.deepEqual(classifyIntent('owk，追杀我'), { topic: 'generic', nearby: false, kind: 'action' })
-  assert.deepEqual(classifyIntent('owk，保护 Ameyaku'), { topic: 'generic', nearby: false, kind: 'action' })
+test('normalizeIntent never classifies natural language and accepts only structured fields', () => {
+  for (const text of ['跟随我', '不要攻击我', '停止是什么意思', '附近有什么猫', '/tpa Alice']) {
+    assert.deepEqual(normalizeIntent(text), { topic: 'generic', nearby: false, kind: 'unknown' })
+  }
+  assert.deepEqual(normalizeIntent({ topic: 'observe', kind: 'query', nearby: true }), { topic: 'observe', kind: 'query', nearby: true })
+  assert.deepEqual(normalizeIntent({ topic: 'invalid', kind: 'invalid', nearby: 'true' }), { topic: 'generic', nearby: false, kind: 'unknown' })
 })
 
 test('estTokensFromText approximates chars/4 ceil', () => {
@@ -216,7 +218,7 @@ test('selectContextProfile maps structured intent to explicit context budgets', 
   assert.ok(action.memoryQueryRecentCount > 0)
   assert.ok(action.maxInputTokens <= 5000)
 
-  const move = classifyIntent('owk，随便说点啥，然后移动到草方块上')
+  const move = normalizeIntent({ topic: 'generic', kind: 'action' })
   assert.equal(move.kind, 'action')
 
   const localObserve = selectContextProfile({ topic: 'drops', kind: 'action' }, {})

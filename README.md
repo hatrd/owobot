@@ -20,6 +20,8 @@ This repository is a hot-reloadable Mineflayer bot project with an AI chat/contr
 - Interaction contract (first-class): `docs/interaction.md`
 - Interaction schema snapshot (generated): `docs/interaction.generated.md`
 - Hot reload manual: `docs/hot-reload.md`
+- Memory/GC/event-loop diagnostics: `docs/runtime-diagnostics.md`
+- External LLM and hot-loaded behavior proposal: `docs/external-controller.md`
 - Runtime shared-state map: `docs/runtime-map.md`
 - Actions contract (tool register/dry/run): `docs/actions-contract.md`
 - Observer contract (snapshot/prompt/detail): `docs/observer-contract.md`

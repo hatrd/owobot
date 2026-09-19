@@ -177,7 +177,7 @@ test('executor ignores out-of-scope production LLM action after say without leak
   const productionText = 'say{"steps":["我穿的不是下界合金套吗喵","哼"]} defend_player{"name":"izieluk"}'
   const harness = makeHarness({ llmContent: productionText })
   try {
-    await harness.executor.processChatContent('izieluk', 'owkowk 身上穿的装备叫什么', 'izieluk: owkowk 身上穿的装备叫什么', 'trigger')
+    await harness.executor.callAI('izieluk', '身上穿的装备叫什么', { topic: 'observe', kind: 'query' })
     await waitFor(() => harness.sent.length >= 2 || harness.sent.some(line => line.includes('say{')))
     assert.deepEqual(harness.sent, ['我穿的不是下界合金套吗喵', '哼'])
     assert.deepEqual(harness.toolRuns, [])

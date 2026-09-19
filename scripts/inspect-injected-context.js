@@ -198,9 +198,7 @@ async function main () {
     try { pulse.captureChat(player, query) } catch {}
   }
 
-  const intent = typeof H.classifyIntent === 'function'
-    ? H.classifyIntent(query)
-    : { topic: 'generic', nearby: false, kind: 'chat' }
+  const intent = H.normalizeIntent()
   const profile = typeof H.selectContextProfile === 'function'
     ? H.selectContextProfile(intent, args)
     : {
