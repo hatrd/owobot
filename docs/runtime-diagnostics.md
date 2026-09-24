@@ -1,6 +1,6 @@
 # 内存与事件循环排查
 
-`runtime-diagnostics` 模块每 30 秒采样一次，`state.runtimeDiagnostics.samples` 最多 240 条（约两小时）。热重载保留数据，回收旧 timer、GC observer 和事件循环 histogram 后重新启动；重启进程会清空内存样本。每五分钟以及模块激活、连接断开时输出一条 `runtime.sample` 结构化 JSON 到正常日志，供跨重启对比。这些 event 证据不受 `.log` 的 verbosity 过滤；文件落盘仍由进程的 MC_LOG_FILE/MC_LOG_DIR 配置控制。
+`runtime-diagnostics` 模块每 30 秒采样一次，`state.runtimeDiagnostics.samples` 最多 240 条（约两小时）。热重载保留数据，回收旧 timer、GC observer 和事件循环 histogram 后重新启动；重启进程会清空内存样本。采样不会自动写入日志，可通过下方 read-only dry 按需查询。
 
 只读取证：
 
@@ -20,12 +20,12 @@ node scripts/botctl.js dry observe_detail what=runtime max=20
 - `listeners`：bot 与 client 的事件监听器数量及各事件分布。
 - `reloads`：本诊断模块在同一 shared state 的安装次数。激活样本较早，cleanups/listeners 尚未完成整轮安装；对比重载前后请用后续 interval 样本。
 
-先收集同等负载下的一段样本，再对齐断线和 AI 错误时间：
+先收集同等负载下的一段样本，再与日志中的断线和 AI 错误时间对齐：
 
 ```bash
-rg -n 'runtime.sample|keepAliveError|Bot error|ai error' logs/bot-YYYY-MM-DD.log
+rg -n 'keepAliveError|Bot error|ai error' logs/bot-YYYY-MM-DD.log
 ```
 
 RSS 上升而 heapUsed 回落可能与原生分配、区块缓存或堆保留有关；不能仅凭 RSS 判定泄漏。若 GC 后堆低点持续升高，再看哪个计数同步增长。若 maxMs 与 keepalive 超时接近，继续查同步计算、GC 暂停或大量区块加载。若采样长期停止，先检查进程与事件循环是否仍响应，而非把陈旧样本当健康状态。
 
-历史基线：2026-09-18 03:51（Asia/Shanghai）断线日志记录 RSS 1122 MB、heapUsed 792 MB；2026-09-19 改造前 RSS 约 1.14 GiB。这只证明需要观测，不证明已定位泄漏。此模块用于形成后续诊断证据，不自动杀进程或宣称修复内存问题。
+历史基线：2026-09-18 03:51（Asia/Shanghai）断线日志记录 RSS 1122 MB、heapUsed 792 MB；2026-09-19 改造前 RSS 约 1.14 GiB。2026-09-25 修复热重载模块缓存的父子引用后，诊断采样继续保留在内存，不再自动打印。此模块不自动杀进程。

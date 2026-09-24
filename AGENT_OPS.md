@@ -133,7 +133,7 @@ rg -n 'ERROR|FATAL|\[WARN\]|ai error|external call|keepAlive|reconnect|Connected
 - `HTTP 429`：限流或额度耗尽；记录时间、模型、重试间隔，不要高频重试。
 - `timeout`：区分 provider 请求超时和 Minecraft keepalive 超时；分别检查 connectivity、DNS 和服务器连接。
 - `getaddrinfo ENOTFOUND/EAI_AGAIN`：服务器或 provider DNS/网络问题，不要把它误判成代码回归。
-- `client timed out after 30000 milliseconds`：Minecraft keepalive 失败；同时记录 RSS/heap，若内存异常升高，先有序重启 watcher，再继续定位泄漏。
+- `client timed out after 30000 milliseconds`：Minecraft keepalive 失败；通过 `observe_detail what=runtime` 查看 RSS/heap，若内存异常升高，先有序重启 watcher，再继续定位泄漏。
 - `voicechat ... noop packets`：语音插件不可用的降级警告，不等于文字聊天故障。
 
 进程和内存证据：
@@ -181,4 +181,4 @@ tr '\0' '\n' </proc/$botpid/environ | rg '^(MC_HOST|MC_PORT|MC_USERNAME|DEEPSEEK
 
 ## 内存取证
 
-使用 `node scripts/botctl.js dry observe_detail what=runtime max=20` 读取有界采样；先执行 `npm run interaction:dry`。结合日志中的 `runtime.sample` 与 keepAliveError 对齐时间，具体字段、单位与分析边界见 `docs/runtime-diagnostics.md`。不要只看一次 RSS 就认定泄漏。
+使用 `node scripts/botctl.js dry observe_detail what=runtime max=20` 读取有界采样；先执行 `npm run interaction:dry`。结合样本时间与日志中的 keepAliveError 对齐，具体字段、单位与分析边界见 `docs/runtime-diagnostics.md`。不要只看一次 RSS 就认定泄漏。

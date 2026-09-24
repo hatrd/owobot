@@ -2,7 +2,6 @@
 const { monitorEventLoopDelay, PerformanceObserver } = require('node:perf_hooks')
 const SAMPLE_MS = 30000
 const MAX_SAMPLES = 240
-const LOG_MS = 300000
 
 function size (value) {
   if (value instanceof Map || value instanceof Set) return value.size
@@ -37,7 +36,7 @@ function collectSample (bot, reason = 'interval', telemetry = {}) {
   }
 }
 
-function install (bot, { state = bot.state, on, registerCleanup, log } = {}) {
+function install (bot, { state = bot.state, on, registerCleanup } = {}) {
   const d = state.runtimeDiagnostics = state.runtimeDiagnostics || {}
   if (typeof d.stop === 'function') d.stop()
   d.samples = Array.isArray(d.samples) ? d.samples.slice(-MAX_SAMPLES) : []
@@ -65,10 +64,6 @@ function install (bot, { state = bot.state, on, registerCleanup, log } = {}) {
     gc = { count: 0, durationMs: 0, maxMs: 0 }
     d.samples.push(current)
     if (d.samples.length > MAX_SAMPLES) d.samples.splice(0, d.samples.length - MAX_SAMPLES)
-    if (reason !== 'interval' || !d.lastLoggedAt || current.at - d.lastLoggedAt >= LOG_MS) {
-      d.lastLoggedAt = current.at
-      log?.event?.('runtime.sample', current)
-    }
   }
   const timer = setInterval(sample, SAMPLE_MS)
   timer.unref?.()

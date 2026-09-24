@@ -123,17 +123,6 @@ let reconnectAttempts = 0
 const RECONNECT_MAX_DELAY_MS = 30000
 const RECONNECT_BASE_DELAY_MS = 1000
 
-function formatMemUsage () {
-  try {
-    const m = process.memoryUsage && process.memoryUsage()
-    if (!m) return ''
-    const fmt = (n) => Math.round((n || 0) / (1024 * 1024)) + 'MB'
-    return `rss=${fmt(m.rss)} heapUsed=${fmt(m.heapUsed)} heapTotal=${fmt(m.heapTotal)}`
-  } catch {
-    return ''
-  }
-}
-
 function deactivateAttachedPlugin (targetBot) {
   if (!targetBot || deactivatedBotPlugins.has(targetBot)) return
   const targetPlugin = targetBot.__mcbotPlugin
@@ -194,7 +183,7 @@ function attachCoreBotListeners(targetBot) {
   targetBot.on('kicked', (reason) => {
     try {
       const detail = typeof reason === 'string' ? reason : JSON.stringify(reason)
-      console.log(`[${ts()}] Kicked by server:`, detail, formatMemUsage())
+      console.log(`[${ts()}] Kicked by server:`, detail)
     } catch {}
     deactivateAttachedPlugin(targetBot)
     disposeClosedBot(targetBot)
@@ -202,7 +191,7 @@ function attachCoreBotListeners(targetBot) {
   })
   targetBot.on('end', (reason) => {
     try {
-      console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '', formatMemUsage())
+      console.log(`[${ts()}] Bot connection closed`, reason ? `(${reason})` : '')
     } catch {}
     deactivateAttachedPlugin(targetBot)
     disposeClosedBot(targetBot)
@@ -255,6 +244,7 @@ rl.on('line', (line) => {
 
 // Hot-reloadable implementation loader (directory-based)
 const pluginRoot = path.resolve(__dirname, 'bot_impl')
+const { clearModuleTree } = require('./scripts/lib/clear-module-tree')
 let sharedState = { pendingGreets: new Map(), greetedPlayers: new Set(), readyForGreeting: false, extinguishing: false }
 
 // --- Control plane (Unix socket, NDJSON) ---
@@ -609,9 +599,7 @@ if (reloadGatePath) {
 }
 
 function clearPluginCache() {
-  for (const id of Object.keys(require.cache)) {
-    if (id.startsWith(pluginRoot + path.sep)) delete require.cache[id]
-  }
+  clearModuleTree(pluginRoot)
 }
 
 function loadPlugin() {

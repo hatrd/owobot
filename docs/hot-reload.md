@@ -3,6 +3,7 @@
 ## 重载闸门
 - 仓库默认启用 `open_fire` 闸门。只有在完成 `bot_impl/` 里的修改后执行 `touch open_fire` 才会触发热重载，避免半成品上线。
 - 重载时保持 `bot_impl/` 的模块导出纯净，所有共享状态放到 `state`，避免跨模块污染导致的幽灵状态。
+- 清除 `require.cache` 时同时移除父模块 `children` 中的旧 `bot_impl/` 引用，避免反复重载后旧代码树常驻内存。
 
 ## 启动模式
 - 热重载后 `spawn` 事件不保证会再次触发。所有 watcher/timer 必须通过守卫式的 `start()` 函数自我初始化。

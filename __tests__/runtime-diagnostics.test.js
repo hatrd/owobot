@@ -10,12 +10,14 @@ test('runtime telemetry survives reload, stays bounded, and is readable before s
   bot.entities = { a: {}, b: {} }
   bot.world = { getColumns: () => [1, 2, 3] }
   const cleanups = []
-  const env = { state: bot.state, registerCleanup: fn => cleanups.push(fn) }
+  const logged = []
+  const env = { state: bot.state, registerCleanup: fn => cleanups.push(fn), log: { event: (event, data) => logged.push({ event, data }) } }
   try {
     diagnostics.install(bot, env)
     const oldStop = bot.state.runtimeDiagnostics.stop
     const first = observer.detail(bot, { what: 'runtime' })
     assert.equal(first.ok, true)
+    assert.equal(logged.length, 0)
     assert.equal(first.data.samples[0].counts.entities, 2)
     assert.equal(first.data.samples[0].counts.columns, 3)
     assert.equal(first.data.samples[0].counts.aiRecent, 1)
